@@ -1,4 +1,5 @@
 # BlenderMCP - Blender Model Context Protocol Integration
+[![smithery badge](https://smithery.ai/badge/@ahujasid/blender-mcp)](https://smithery.ai/server/@ahujasid/blender-mcp)
 
 BlenderMCP connects Blender to Claude AI through the Model Context Protocol (MCP), allowing Claude to directly interact with and control Blender. This integration enables prompt assisted 3D modeling, scene creation, and manipulation.
 
@@ -18,6 +19,14 @@ The system consists of two main components:
 2. **MCP Server (`src/blender_mcp/server.py`)**: A Python server that implements the Model Context Protocol and connects to the Blender addon
 
 ## Installation
+
+### Installing via Smithery
+
+To install blender-mcp for Claude Desktop automatically via [Smithery](https://smithery.ai/server/@ahujasid/blender-mcp):
+
+```bash
+npx -y @smithery/cli install @ahujasid/blender-mcp --client claude
+```
 
 ### Prerequisites
 
