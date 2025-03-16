@@ -2,12 +2,22 @@
 
 BlenderMCP connects Blender to Claude AI through the Model Context Protocol (MCP), allowing Claude to directly interact with and control Blender. This integration enables prompt assisted 3D modeling, scene creation, and manipulation.
 
-## Release notes (1.1.0)
+## Release notes (1.2.0)
 
-- Added support for Poly Haven assets through their API
+- Added Geometry Nodes functionality support, allowing control of Blender's Geometry Nodes system through natural language
+- Support for creating common Geometry Nodes setups such as arrays, point scattering, deformation, and boolean operations
+- Support for creating Geometry Nodes setups through natural language descriptions
+- Support for getting and modifying Geometry Nodes modifier information
+- 新增几何节点(Geometry Nodes)功能支持，允许通过自然语言控制Blender的几何节点系统
+- 支持创建常见的几何节点设置，如阵列、散点分布、变形和布尔操作
+- 支持通过自然语言描述创建几何节点设置
+- 支持获取和修改几何节点修改器信息
 - For newcomers, you can go straight to Installation. For existing users, see the points below
 - Download the latest addon.py file and replace the older one, then add it to Blender
 - Delete the MCP server from Claude and add it back again, and you should be good to go!
+- 对于新用户，请直接查看安装说明。对于现有用户，请查看下面的更新说明
+- 下载最新的addon.py文件并替换旧文件，然后将其添加到Blender中
+- 从Claude中删除MCP服务器并重新添加，然后就可以开始使用了！
 
 ## Features
 
@@ -19,10 +29,11 @@ BlenderMCP connects Blender to Claude AI through the Model Context Protocol (MCP
 
 ## Components
 
-The system consists of two main components:
+The system consists of three main components:
 
 1. **Blender Addon (`addon.py`)**: A Blender addon that creates a socket server within Blender to receive and execute commands
 2. **MCP Server (`src/blender_mcp/server.py`)**: A Python server that implements the Model Context Protocol and connects to the Blender addon
+3. **Geometry Nodes Module (`src/blender_mcp/geometry_nodes.py`)**: A Python module that provides functions for creating and manipulating Geometry Nodes in Blender
 
 ## Installation
 
@@ -123,6 +134,19 @@ Once the config file has been set on Claude, and the addon is running on Blender
 - `search_polyhaven_assets` - Search for assets on PolyHaven with optional category filtering
 - `download_polyhaven_asset` - Download and import a PolyHaven asset into Blender
 
+#### Geometry Nodes Tools / 几何节点工具
+
+- `create_geometry_nodes` - Create a Geometry Nodes setup with precise control over nodes and connections
+- `create_common_geometry_node_setup` - Create predefined Geometry Nodes setups like arrays, point scattering, deformation, or boolean operations
+- `create_geometry_nodes_from_description` - Create Geometry Nodes setups based on natural language descriptions
+- `get_geometry_nodes_info` - Get information about Geometry Nodes modifiers on an object
+- `modify_geometry_nodes` - Modify properties of Geometry Nodes modifiers
+- `create_geometry_nodes` - 创建一个几何节点设置，允许精确控制节点和连接
+- `create_common_geometry_node_setup` - 创建预定义的几何节点设置，如阵列、散点分布、变形或布尔操作
+- `create_geometry_nodes_from_description` - 根据自然语言描述创建几何节点设置
+- `get_geometry_nodes_info` - 获取对象上的几何节点修改器信息
+- `modify_geometry_nodes` - 修改几何节点修改器的属性
+
 To see everything in Poly Haven, [see here](https://polyhaven.com/)
 
 ### Example Commands
@@ -137,6 +161,21 @@ Here are some examples of what you can ask Claude to do:
 - "Create a sphere and place it above the cube"
 - "Make the lighting like a studio"
 - "Point the camera at the scene, and make it isometric"
+
+#### Geometry Nodes Example Commands / 几何节点示例命令
+
+- "Create a 3x3 grid array on the cube with spacing of 2"
+- "Randomly distribute 100 points on the sphere surface"
+- "Apply noise deformation to the cube with strength of 0.5"
+- "Perform a boolean subtraction operation on the cube using a sphere of size 1.5"
+- "Create a wave deformation effect and apply it to the plane"
+- "Add a Geometry Nodes modifier to the cube to create a fractal effect"
+- "在立方体上创建一个3x3的网格阵列，间距为2"
+- "在球体表面上随机分布100个点"
+- "使用噪波变形立方体，强度为0.5"
+- "使用球体对立方体进行布尔减法操作，球体大小为1.5"
+- "创建一个波浪变形效果，应用到平面上"
+- "在立方体上添加几何节点修改器，创建一个分形效果"
 
 ## Troubleshooting
 

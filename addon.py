@@ -90,7 +90,7 @@ class BlenderMCPServer:
                                 command = json.loads(self.buffer.decode('utf-8'))
                                 # If successful, clear the buffer and process command
                                 self.buffer = b''
-                                response = self.execute_command(command)
+                                response = self.handle_command(command)
                                 response_json = json.dumps(response)
                                 self.client.sendall(response_json.encode('utf-8'))
                             except json.JSONDecodeError:
@@ -121,6 +121,65 @@ class BlenderMCPServer:
             print(f"Server error: {str(e)}")
             
         return 0.1  # Continue timer with 0.1 second interval
+
+    def handle_command(self, command):
+        """Handle a command received from the client"""
+        try:
+            command_type = command.get("type", "")
+            params = command.get("params", {})
+            
+            # Log the command
+            print(f"Handling command: {command_type}")
+            
+            # Dispatch to the appropriate handler
+            if command_type == "get_scene_info":
+                result = self.get_scene_info()
+            elif command_type == "get_object_info":
+                result = self.get_object_info(params.get("name", ""))
+            elif command_type == "create_primitive":
+                result = self.create_primitive(params)
+            elif command_type == "set_object_property":
+                result = self.set_object_property(params)
+            elif command_type == "create_object":
+                result = self.create_object(params)
+            elif command_type == "modify_object":
+                result = self.modify_object(params)
+            elif command_type == "delete_object":
+                result = self.delete_object(params)
+            elif command_type == "set_material":
+                result = self.set_material(params)
+            elif command_type == "execute_code":
+                result = self.execute_code(params.get("code", ""))
+            elif command_type == "get_polyhaven_categories":
+                result = self.get_polyhaven_categories()
+            elif command_type == "search_polyhaven_assets":
+                result = self.search_polyhaven_assets(params)
+            elif command_type == "download_polyhaven_asset":
+                result = self.download_polyhaven_asset(
+                    params.get("asset_id", ""),
+                    params.get("asset_type", ""),
+                    params.get("resolution", "1k"),
+                    params.get("file_format", None)
+                )
+            elif command_type == "get_polyhaven_status":
+                result = self.get_polyhaven_status()
+            elif command_type == "set_texture":
+                result = self.set_texture(params.get("object_name", ""), params.get("texture_id", ""))
+            # 添加几何节点相关的命令处理
+            elif command_type == "create_geometry_nodes":
+                result = self.create_geometry_nodes(params)
+            elif command_type == "get_geometry_nodes_info":
+                result = self.get_geometry_nodes_info(params)
+            elif command_type == "modify_geometry_nodes":
+                result = self.modify_geometry_nodes(params)
+            else:
+                result = {"error": f"Unknown command type: {command_type}"}
+            
+            return {"status": "success", "result": result}
+        except Exception as e:
+            print(f"Error handling command: {str(e)}")
+            traceback.print_exc()
+            return {"status": "error", "message": str(e)}
 
     def execute_command(self, command):
         """Execute a command in the main Blender thread"""
@@ -1167,6 +1226,42 @@ class BlenderMCPServer:
                             2. Check the 'Use assets from Poly Haven' checkbox
                             3. Restart the connection to Claude"""
         }
+
+    # 添加几何节点相关的方法
+    
+    def create_geometry_nodes(self, params):
+        """创建几何节点设置"""
+        try:
+            # 这个方法不直接实现几何节点创建
+            # 而是通过execute_code方法执行由MCP服务器生成的代码
+            # 所有的几何节点功能都通过execute_code实现
+            return {"message": "几何节点命令通过execute_code方法处理"}
+        except Exception as e:
+            print(f"Error creating geometry nodes: {str(e)}")
+            traceback.print_exc()
+            raise Exception(f"创建几何节点时出错: {str(e)}")
+    
+    def get_geometry_nodes_info(self, params):
+        """获取几何节点信息"""
+        try:
+            # 这个方法不直接实现几何节点信息获取
+            # 而是通过execute_code方法执行由MCP服务器生成的代码
+            return {"message": "几何节点信息通过execute_code方法获取"}
+        except Exception as e:
+            print(f"Error getting geometry nodes info: {str(e)}")
+            traceback.print_exc()
+            raise Exception(f"获取几何节点信息时出错: {str(e)}")
+    
+    def modify_geometry_nodes(self, params):
+        """修改几何节点设置"""
+        try:
+            # 这个方法不直接实现几何节点修改
+            # 而是通过execute_code方法执行由MCP服务器生成的代码
+            return {"message": "几何节点修改通过execute_code方法处理"}
+        except Exception as e:
+            print(f"Error modifying geometry nodes: {str(e)}")
+            traceback.print_exc()
+            raise Exception(f"修改几何节点时出错: {str(e)}")
 
 # Blender UI Panel
 class BLENDERMCP_PT_Panel(bpy.types.Panel):
