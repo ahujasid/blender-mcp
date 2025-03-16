@@ -13,6 +13,9 @@ logging.basicConfig(level=logging.INFO,
                     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger("BlenderMCPServer")
 
+# Import geometry nodes module
+from .geometry_nodes import create_geometry_nodes_setup, create_common_geometry_setup, parse_natural_language_to_geometry_nodes
+
 @dataclass
 class BlenderConnection:
     host: str
@@ -690,6 +693,254 @@ def asset_creation_strategy() -> str:
     - No suitable PolyHaven asset exists
     - The task specifically requires a basic material/color
     """
+
+@mcp.tool()
+def create_geometry_nodes(ctx: Context, object_name: str, setup_name: str, nodes: List[Dict[str, Any]], links: List[Dict[str, Any]]) -> str:
+    """
+    创建一个几何节点设置，允许精确控制节点和连接。
+    
+    Parameters:
+    - object_name: 要添加几何节点修改器的对象名称
+    - setup_name: 几何节点修改器和节点组的名称
+    - nodes: 节点定义列表，每个节点包含id、type、name、location和params
+    - links: 节点连接列表，每个连接包含from_node、from_socket、to_node和to_socket
+    """
+    try:
+        # 获取全局连接
+        blender = get_blender_connection()
+        
+        # 生成几何节点设置代码
+        code = create_geometry_nodes_setup({
+            "object_name": object_name,
+            "setup_name": setup_name,
+            "nodes": nodes,
+            "links": links
+        })
+        
+        # 在Blender中执行代码
+        result = blender.send_command("execute_code", {"code": code})
+        return f"几何节点设置已创建: {setup_name}"
+    except Exception as e:
+        logger.error(f"创建几何节点时出错: {str(e)}")
+        return f"创建几何节点时出错: {str(e)}"
+
+@mcp.tool()
+def create_common_geometry_node_setup(ctx: Context, object_name: str, setup_type: str, **setup_params) -> str:
+    """
+    创建一个预定义的几何节点设置，如阵列、散点分布、变形或布尔操作。
+    
+    Parameters:
+    - object_name: 要添加几何节点修改器的对象名称
+    - setup_type: 设置类型 (array, scatter, deform, boolean)
+    - **setup_params: 特定于设置类型的参数
+    
+    对于array类型:
+    - count_x, count_y, count_z: 每个方向的实例数量
+    - spacing_x, spacing_y, spacing_z: 每个方向的间距
+    
+    对于scatter类型:
+    - count: 点的数量
+    - seed: 随机种子
+    - density_max: 最大密度
+    
+    对于deform类型:
+    - deform_type: 变形类型 (noise, wave)
+    - strength: 变形强度
+    
+    对于boolean类型:
+    - operation: 布尔操作 (DIFFERENCE, UNION, INTERSECT)
+    - primitive_type: 图元类型 (cube, sphere, cylinder)
+    - primitive_size: 图元大小
+    - primitive_location: 图元位置 [x, y, z]
+    """
+    try:
+        # 获取全局连接
+        blender = get_blender_connection()
+        
+        # 生成几何节点设置代码
+        code = create_common_geometry_setup({
+            "type": setup_type,
+            "object_name": object_name,
+            "setup_params": setup_params
+        })
+        
+        # 在Blender中执行代码
+        result = blender.send_command("execute_code", {"code": code})
+        return f"几何节点设置已创建: {setup_type.capitalize()}"
+    except Exception as e:
+        logger.error(f"创建几何节点时出错: {str(e)}")
+        return f"创建几何节点时出错: {str(e)}"
+
+@mcp.tool()
+def create_geometry_nodes_from_description(ctx: Context, object_name: str, description: str) -> str:
+    """
+    根据自然语言描述创建几何节点设置。
+    
+    Parameters:
+    - object_name: 要添加几何节点修改器的对象名称
+    - description: 几何节点设置的自然语言描述
+    
+    示例描述:
+    - "创建一个3x3的网格阵列，间距为2"
+    - "在表面上随机分布100个点"
+    - "使用噪波变形，强度为0.5"
+    - "使用球体进行布尔减法操作，大小为1.5"
+    """
+    try:
+        # 获取全局连接
+        blender = get_blender_connection()
+        
+        # 解析自然语言描述并生成几何节点设置代码
+        code = parse_natural_language_to_geometry_nodes({
+            "description": description,
+            "object_name": object_name
+        })
+        
+        # 在Blender中执行代码
+        result = blender.send_command("execute_code", {"code": code})
+        return f"根据描述创建了几何节点设置: '{description}'"
+    except Exception as e:
+        logger.error(f"创建几何节点时出错: {str(e)}")
+        return f"创建几何节点时出错: {str(e)}"
+
+@mcp.tool()
+def get_geometry_nodes_info(ctx: Context, object_name: str) -> str:
+    """
+    获取对象上的几何节点修改器信息。
+    
+    Parameters:
+    - object_name: 要获取几何节点信息的对象名称
+    """
+    try:
+        # 获取全局连接
+        blender = get_blender_connection()
+        
+        # 生成代码来获取几何节点信息
+        code = f"""
+import bpy
+import json
+
+obj = bpy.data.objects.get('{object_name}')
+if not obj:
+    result = {{"error": f"对象 {object_name} 未找到"}}
+else:
+    modifiers = []
+    for mod in obj.modifiers:
+        if mod.type == 'NODES':
+            mod_info = {{
+                "name": mod.name,
+                "show_viewport": mod.show_viewport,
+                "show_render": mod.show_render
+            }}
+            
+            # 获取节点组信息
+            if mod.node_group:
+                node_group = mod.node_group
+                nodes = []
+                
+                for node in node_group.nodes:
+                    node_info = {{
+                        "name": node.name,
+                        "type": node.type,
+                        "location": [node.location.x, node.location.y]
+                    }}
+                    nodes.append(node_info)
+                
+                mod_info["node_group"] = {{
+                    "name": node_group.name,
+                    "nodes_count": len(nodes),
+                    "nodes": nodes
+                }}
+            
+            modifiers.append(mod_info)
+    
+    if modifiers:
+        result = {{"modifiers": modifiers}}
+    else:
+        result = {{"message": f"对象 {object_name} 没有几何节点修改器"}}
+
+json.dumps(result)
+"""
+        
+        # 在Blender中执行代码
+        result = blender.send_command("execute_code", {"code": code})
+        
+        # 解析结果
+        try:
+            info = json.loads(result.get("result", "{}"))
+            return json.dumps(info, indent=2)
+        except:
+            return f"获取几何节点信息时出错: 无法解析结果"
+    except Exception as e:
+        logger.error(f"获取几何节点信息时出错: {str(e)}")
+        return f"获取几何节点信息时出错: {str(e)}"
+
+@mcp.tool()
+def modify_geometry_nodes(ctx: Context, object_name: str, modifier_name: str, enabled: bool = None) -> str:
+    """
+    修改几何节点修改器的属性。
+    
+    Parameters:
+    - object_name: 对象名称
+    - modifier_name: 修改器名称
+    - enabled: 是否启用修改器
+    """
+    try:
+        # 获取全局连接
+        blender = get_blender_connection()
+        
+        # 生成代码来修改几何节点修改器
+        code = f"""
+import bpy
+
+obj = bpy.data.objects.get('{object_name}')
+if not obj:
+    result = {{"error": f"对象 {object_name} 未找到"}}
+else:
+    mod = obj.modifiers.get('{modifier_name}')
+    if not mod:
+        result = {{"error": f"修改器 {modifier_name} 未找到"}}
+    elif mod.type != 'NODES':
+        result = {{"error": f"修改器 {modifier_name} 不是几何节点修改器"}}
+    else:
+        # 修改属性
+        changes = []
+"""
+        
+        if enabled is not None:
+            code += f"""
+        mod.show_viewport = {str(enabled).lower()}
+        mod.show_render = {str(enabled).lower()}
+        changes.append("enabled = {str(enabled)}")
+"""
+        
+        code += f"""
+        if changes:
+            result = {{"message": f"修改了几何节点修改器 {modifier_name}: " + ", ".join(changes)}}
+        else:
+            result = {{"message": f"没有对几何节点修改器 {modifier_name} 进行更改"}}
+
+result
+"""
+        
+        # 在Blender中执行代码
+        result = blender.send_command("execute_code", {"code": code})
+        
+        # 解析结果
+        try:
+            info = result.get("result", {})
+            if isinstance(info, str):
+                info = json.loads(info)
+            
+            if "error" in info:
+                return f"修改几何节点时出错: {info['error']}"
+            else:
+                return info.get("message", "几何节点修改器已更新")
+        except:
+            return f"修改几何节点时出错: 无法解析结果"
+    except Exception as e:
+        logger.error(f"修改几何节点时出错: {str(e)}")
+        return f"修改几何节点时出错: {str(e)}"
 
 # Main execution
 
