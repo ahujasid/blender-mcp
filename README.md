@@ -27,22 +27,28 @@ The system consists of two main components:
 
 ## Installation
 
+ads
 
 ### Prerequisites
 
 - Blender 3.0 or newer
 - Python 3.10 or newer
-- uv package manager: 
+- uv package manager:
 
 **If you're on Mac, please install uv as**
+
 ```bash
 brew install uv
 ```
+
 **On Windows**
+
 ```bash
-powershell -c "irm https://astral.sh/uv/install.ps1 | iex" 
+powershell -c "irm https://astral.sh/uv/install.ps1 | iex"
 ```
+
 and then
+
 ```bash
 set Path=C:\Users\nntra\.local\bin;%Path%
 ```
@@ -50,7 +56,6 @@ set Path=C:\Users\nntra\.local\bin;%Path%
 Otherwise installation instructions are on their website: [Install uv](https://docs.astral.sh/uv/getting-started/installation/)
 
 **⚠️ Do not proceed before installing UV**
-
 
 ### Claude for Desktop Integration
 
@@ -60,14 +65,12 @@ Go to Claude > Settings > Developer > Edit Config > claude_desktop_config.json t
 
 ```json
 {
-    "mcpServers": {
-        "blender": {
-            "command": "uvx",
-            "args": [
-                "blender-mcp"
-            ]
-        }
+  "mcpServers": {
+    "blender": {
+      "command": "uvx",
+      "args": ["blender-mcp"]
     }
+  }
 }
 ```
 
@@ -87,14 +90,14 @@ uvx blender-mcp
 
 1. Download the `addon.py` file from this repo
 1. Open Blender
-2. Go to Edit > Preferences > Add-ons
-3. Click "Install..." and select the `addon.py` file
-4. Enable the addon by checking the box next to "Interface: Blender MCP"
-
+1. Go to Edit > Preferences > Add-ons
+1. Click "Install..." and select the `addon.py` file
+1. Enable the addon by checking the box next to "Interface: Blender MCP"
 
 ## Usage
 
 ### Starting the Connection
+
 ![BlenderMCP in the sidebar](assets/addon-instructions.png)
 
 1. In Blender, go to the 3D View sidebar (press N if not visible)
@@ -111,13 +114,12 @@ Once the config file has been set on Claude, and the addon is running on Blender
 
 #### Capabilities
 
-- Get scene and object information 
+- Get scene and object information
 - Create, delete and modify shapes
 - Apply or create materials for objects
 - Execute any Python code in Blender
 - Download the right models, assets and HDRIs through [Poly Haven](https://polyhaven.com/)
 - AI generated 3D models through [Hyper3D Rodin](https://hyper3d.ai/)
-
 
 ### Example Commands
 
@@ -128,7 +130,7 @@ Here are some examples of what you can ask Claude to do:
 - Give a reference image, and create a Blender scene out of it [Demo](https://www.youtube.com/watch?v=FDRb03XPiRo)
 - "Generate a 3D model of a garden gnome through Hyper3D"
 - "Get information about the current scene, and make a threejs sketch from it" [Demo](https://www.youtube.com/watch?v=jxbNI5L7AH8)
-- "Make this car red and metallic" 
+- "Make this car red and metallic"
 - "Create a sphere and place it above the cube"
 - "Make the lighting like a studio"
 - "Point the camera at the scene, and make it isometric"
@@ -139,7 +141,6 @@ Here are some examples of what you can ask Claude to do:
 - **Timeout errors**: Try simplifying your requests or breaking them into smaller steps
 - **Poly Haven integration**: Claude is sometimes erratic with its behaviour
 - **Have you tried turning it off and on again?**: If you're still having connection errors, try restarting both Claude and the Blender server
-
 
 ## Technical Details
 
@@ -153,9 +154,8 @@ The system uses a simple JSON-based protocol over TCP sockets:
 ## Limitations & Security Considerations
 
 - The `execute_blender_code` tool allows running arbitrary Python code in Blender, which can be powerful but potentially dangerous. Use with caution in production environments. ALWAYS save your work before using it.
-- Poly Haven requires downloading models, textures, and HDRI images. If you do not want to use it, please turn it off in the checkbox in Blender. 
+- Poly Haven requires downloading models, textures, and HDRI images. If you do not want to use it, please turn it off in the checkbox in Blender.
 - Complex operations might need to be broken down into smaller steps
-
 
 ## Contributing
 
