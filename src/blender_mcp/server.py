@@ -52,6 +52,7 @@ class BlenderConnection:
         """Receive the complete response, potentially in multiple chunks"""
         chunks = []
         # Use a consistent timeout value that matches the addon's timeout
+        original_timeout = sock.gettimeout()
         sock.settimeout(15.0)  # Match the addon's timeout
         
         try:
@@ -77,9 +78,13 @@ class BlenderConnection:
                         # Incomplete JSON, continue receiving
                         continue
                 except socket.timeout:
-                    # If we hit a timeout during receiving, break the loop and try to use what we have
+                    # If we hit a timeout during receiving and we have data, 
+                    # try to parse what we have before giving up
                     logger.warning("Socket timeout during chunked receive")
-                    break
+                    if chunks:
+                        break
+                    else:
+                        raise socket.timeout("Socket timeout with no data received")
                 except (ConnectionError, BrokenPipeError, ConnectionResetError) as e:
                     logger.error(f"Socket connection error during receive: {str(e)}")
                     raise  # Re-raise to be handled by the caller
@@ -88,19 +93,28 @@ class BlenderConnection:
         except Exception as e:
             logger.error(f"Error during receive: {str(e)}")
             raise
+        finally:
+            # Restore original timeout
+            if original_timeout is not None:
+                sock.settimeout(original_timeout)
             
         # If we get here, we either timed out or broke out of the loop
         # Try to use what we have
         if chunks:
             data = b''.join(chunks)
-            logger.info(f"Returning data after receive completion ({len(data)} bytes)")
+            logger.info(f"Returning potentially incomplete data after receive completion ({len(data)} bytes)")
             try:
                 # Try to parse what we have
-                json.loads(data.decode('utf-8'))
+                result = json.loads(data.decode('utf-8'))
                 return data
-            except json.JSONDecodeError:
-                # If we can't parse it, it's incomplete
-                raise Exception("Incomplete JSON response received")
+            except json.JSONDecodeError as e:
+                # If we can't parse it, log details but return what we have anyway
+                # so the caller can try to recover
+                logger.warning(f"Incomplete JSON response received: {str(e)}")
+                logger.warning(f"Partial data: {data[:100]}...")
+                # For some responses, partial data might still be valuable
+                # but we need to inform the caller it's incomplete
+                raise Exception(f"Incomplete JSON response received: {str(e)}")
         else:
             raise Exception("No data received")
 
@@ -201,6 +215,7 @@ mcp = FastMCP(
 # Global connection for resources (since resources can't access context)
 _blender_connection = None
 _polyhaven_enabled = False  # Add this global variable
+_connection_lock = asyncio.Lock()  # Add thread lock for connection management
 
 def get_blender_connection():
     """Get or create a persistent Blender connection"""
@@ -231,9 +246,23 @@ def get_blender_connection():
             _blender_connection = None
             raise Exception("Could not connect to Blender. Make sure the Blender addon is running.")
         logger.info("Created new persistent connection to Blender")
+        
+        # Also update PolyHaven status when creating a new connection
+        try:
+            result = _blender_connection.send_command("get_polyhaven_status")
+            _polyhaven_enabled = result.get("enabled", False)
+        except Exception as e:
+            logger.warning(f"Could not check PolyHaven status: {str(e)}")
+            _polyhaven_enabled = False
     
     return _blender_connection
 
+async def get_blender_connection_async():
+    """Thread-safe version of get_blender_connection"""
+    global _blender_connection, _polyhaven_enabled, _connection_lock
+    
+    async with _connection_lock:
+        return get_blender_connection()
 
 @mcp.tool()
 def get_scene_info(ctx: Context) -> str:
@@ -752,6 +781,8 @@ def generate_hyper3d_model_via_images(
         return f"Error: Conflict parameters given!"
     if input_image_paths is None and input_image_urls is None:
         return f"Error: No image given!"
+    
+    images = None
     if input_image_paths is not None:
         if not all(os.path.exists(i) for i in input_image_paths):
             return "Error: not all image paths are valid!"
@@ -762,9 +793,11 @@ def generate_hyper3d_model_via_images(
                     (Path(path).suffix, base64.b64encode(f.read()).decode("ascii"))
                 )
     elif input_image_urls is not None:
-        if not all(urlparse(i) for i in input_image_paths):
+        if not all(urlparse(i) for i in input_image_urls):
             return "Error: not all image URLs are valid!"
-        images = input_image_urls.copy()
+        # Format URLs as expected by the Blender addon
+        images = input_image_urls
+    
     try:
         blender = get_blender_connection()
         result = blender.send_command("create_rodin_job", {
@@ -810,6 +843,10 @@ def poll_rodin_job_status(
         If status other than "COMPLETED", "IN_PROGRESS", "IN_QUEUE" showed up, the generating process might be failed.
         This is a polling API, so only proceed if the status are finally determined ("COMPLETED" or some failed state).
     """
+    # Validate that exactly one parameter is provided
+    if (subscription_key is None and request_id is None) or (subscription_key is not None and request_id is not None):
+        return "Error: Please provide either subscription_key or request_id, but not both or neither."
+    
     try:
         blender = get_blender_connection()
         kwargs = {}
@@ -845,6 +882,10 @@ def import_generated_asset(
     Only give one of {task_uuid, request_id} based on the Hyper3D Rodin Mode!
     Return if the asset has been imported successfully.
     """
+    # Validate that exactly one parameter is provided
+    if (task_uuid is None and request_id is None) or (task_uuid is not None and request_id is not None):
+        return "Error: Please provide either task_uuid or request_id, but not both or neither."
+    
     try:
         blender = get_blender_connection()
         kwargs = {
