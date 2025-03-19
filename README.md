@@ -8,10 +8,10 @@ Give feedback, get inspired, and build on top of the MCP: [Discord](https://disc
 
 ## Release notes (1.1.0)
 
-- Added support for Poly Haven assets through their API
-- Added support to prompt 3D models using Hyper3D Rodin
-- For newcomers, you can go straight to Installation. For existing users, see the points below
-- Download the latest addon.py file and replace the older one, then add it to Blender
+- Added support for Poly Haven assets through their API.
+- Added support to prompt 3D models using Hyper3D Rodin.
+- For newcomers, you can go straight to Installation. For existing users, see the points below.
+- Download the latest addon.py file and replace the older one, then add it to Blender.
 - Delete the MCP server from Claude and add it back again, and you should be good to go!
 
 ## Features
