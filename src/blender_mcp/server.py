@@ -54,6 +54,7 @@ class BlenderConnection:
         if self.sock:
             try:
                 self.sock.close()
+                logger.info("Disconnected from Blender successfully.")
             except Exception as e:
                 logger.error(f"Error disconnecting from Blender: {str(e)}")
             finally:
