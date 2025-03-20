@@ -18,25 +18,36 @@ logging.basicConfig(level=logging.INFO,
 logger = logging.getLogger("BlenderMCPServer")
 
 @dataclass
+# Implement retry mechanism and better error handling in BlenderConnection
 class BlenderConnection:
-    host: str
-    port: int
-    sock: socket.socket = None  # Changed from 'socket' to 'sock' to avoid naming conflict
-    
+    def __init__(self, host: str, port: int, max_retries: int = 3, retry_delay: float = 1.0):
+        self.host = host
+        self.port = port
+        self.max_retries = max_retries
+        self.retry_delay = retry_delay
+        self.sock = None
+
     def connect(self) -> bool:
-        """Connect to the Blender addon socket server"""
-        if self.sock:
-            return True
+        for attempt in range(self.max_retries):
+            try:
+                self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                self.sock.settimeout(5.0)  # Connection timeout
+                self.sock.connect((self.host, self.port))
+                logger.info(f"Connected to Blender at {self.host}:{self.port}")
+                return True
+            except socket.timeout:
+                logger.warning(f"Connection attempt {attempt + 1} timed out")
+            except ConnectionRefusedError:
+                logger.warning(f"Connection attempt {attempt + 1} refused")
+            except Exception as e:
+                logger.error(f"Connection attempt {attempt + 1} failed: {str(e)}")
             
-        try:
-            self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            self.sock.connect((self.host, self.port))
-            logger.info(f"Connected to Blender at {self.host}:{self.port}")
-            return True
-        except Exception as e:
-            logger.error(f"Failed to connect to Blender: {str(e)}")
-            self.sock = None
-            return False
+            if attempt < self.max_retries - 1:
+                time.sleep(self.retry_delay)
+                
+        logger.error(f"Failed to connect after {self.max_retries} attempts")
+        self.sock = None
+        return False
     
     def disconnect(self):
         """Disconnect from the Blender addon"""
