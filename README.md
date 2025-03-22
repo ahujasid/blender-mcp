@@ -95,6 +95,24 @@ Run blender-mcp without installing it permanently through uvx. Go to Cursor Sett
 uvx blender-mcp
 ```
 
+For Windows users, go to Settings > MCP > Add Server, add a new server with the following settings:
+
+```json
+{
+    "mcpServers": {
+        "blender": {
+            "command": "cmd",
+            "args": [
+                "/c",
+                "uvx",
+                "blender-mcp"
+            ]
+        }
+    }
+}
+```
+
+
 [Cursor setup video](https://www.youtube.com/watch?v=wgWsJshecac)
 
 **⚠️ Only run one instance of the MCP server (either on Cursor or Claude Desktop), not both**
