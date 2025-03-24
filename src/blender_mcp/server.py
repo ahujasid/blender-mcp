@@ -3,6 +3,7 @@ from mcp.server.fastmcp import FastMCP, Context, Image
 import socket
 import json
 import asyncio
+import argparse
 import logging
 from dataclasses import dataclass
 from contextlib import asynccontextmanager
@@ -923,9 +924,19 @@ def asset_creation_strategy() -> str:
 
 # Main execution
 
+parser = argparse.ArgumentParser()
+parser.add_argument("--transport", type=str, default="stdio", help="Transport type (stdio, sse)")
+parser.add_argument("--host", type=str, default="localhost", help="Host for the sse server")
+parser.add_argument("--port", type=int, default=8000, help="Port for the sse server")
+
 def main():
     """Run the MCP server"""
-    mcp.run()
+    args = parser.parse_args()
+
+    mcp.settings.host = args.host
+    mcp.settings.port = args.port
+    mcp.settings.log_level = 'INFO'
+    mcp.run(args.transport)
 
 if __name__ == "__main__":
     main()
