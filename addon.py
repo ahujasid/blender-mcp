@@ -1314,6 +1314,8 @@ class BlenderMCPServer:
                 return self.create_rodin_job_main_site(*args, **kwargs)
             case "FAL_AI":
                 return self.create_rodin_job_fal_ai(*args, **kwargs)
+            case "TRIPO3D_AI":
+                return self.create_rodin_job_tripo3d_ai(*args, **kwargs)
             case _:
                 return f"Error: Unknown Hyper3D Rodin mode!"
 
@@ -1383,6 +1385,8 @@ class BlenderMCPServer:
                 return self.poll_rodin_job_status_main_site(*args, **kwargs)
             case "FAL_AI":
                 return self.poll_rodin_job_status_fal_ai(*args, **kwargs)
+            case "TRIPO3D_AI":
+                return self.poll_rodin_job_status_tripo3d_ai(*args, **kwargs)
             case _:
                 return f"Error: Unknown Hyper3D Rodin mode!"
 
@@ -1412,6 +1416,86 @@ class BlenderMCPServer:
         )
         data = response.json()
         return data
+
+    def poll_rodin_job_status_tripo3d_ai(self, request_id: str):
+        """Query Tripo3D task status"""
+        try:
+            response = requests.get(
+                f"https://api.tripo3d.ai/v2/openapi/task/{request_id}",
+                headers={
+                    "Authorization": f"Bearer {bpy.context.scene.blendermcp_hyper3d_api_key}",
+                }
+            )
+
+            if response.status_code != 200:
+                return {"error": f"API request failed with status code {response.status_code}: {response.text}"}
+
+            data = response.json()
+
+            # get output data
+            output_data = data.get("data", {}).get("output", {})
+            # get mode URL
+            model_url = output_data.get("pbr_model") or output_data.get("model") or output_data.get("base_model")
+
+            if not model_url:
+                return {
+                    "status": data.get("code"),
+                    "message": data.get("message", "Model URL not available yet"),
+                }
+
+            return {
+                "status": data.get("code"),
+                "message": data.get("message", "Model URL ready"),
+                "model_url": model_url
+            }
+
+        except Exception as e:
+            return {"error": str(e)}
+
+    def create_rodin_job_tripo3d_ai(
+            self,
+            text_prompt: str=None,
+            images: list[tuple[str, str]]=None,
+            bbox_condition=None
+        ):
+        """Call Tripo3D API to create a 3D model generation task"""
+        try:
+            if not text_prompt:
+                return {"error": "Text prompt is required for Tripo3D"}
+
+            # Prepare request data
+            req_data = {
+                "type": "text_to_model",
+                "prompt": text_prompt
+            }
+
+            # Add bbox_condition to request if provided
+            if bbox_condition:
+                req_data["bbox_condition"] = bbox_condition
+
+            # Send API request
+            response = requests.post(
+                "https://api.tripo3d.ai/v2/openapi/task",
+                headers={
+                    "Authorization": f"Bearer {bpy.context.scene.blendermcp_hyper3d_api_key}",
+                    "Content-Type": "application/json",
+                },
+                json=req_data
+            )
+
+            # Check response status
+            if response.status_code != 200:
+                return {"error": f"API request failed with status code {response.status_code}: {response.text}"}
+
+            data = response.json()
+            return {
+                "request_id": data["data"]["task_id"],  # Used for subsequent task status queries
+                "status": data.get("code"),
+                "message": data.get("message", "Task created successfully")
+            }
+
+        except Exception as e:
+            return {"error": str(e)}
 
     @staticmethod
     def _clean_imported_glb(filepath, mesh_name=None):
@@ -1459,7 +1543,6 @@ class BlenderMCPServer:
             else:
                 print("Error: Expected an empty node with one mesh child or a single mesh object.")
                 return
-        
         # Rename the mesh if needed
         try:
             if mesh_obj and mesh_obj.name is not None and mesh_name:
@@ -1478,6 +1561,8 @@ class BlenderMCPServer:
                 return self.import_generated_asset_main_site(*args, **kwargs)
             case "FAL_AI":
                 return self.import_generated_asset_fal_ai(*args, **kwargs)
+            case "TRIPO3D_AI":
+                return self.import_generated_asset_tripo3d_ai(*args, **kwargs)
             case _:
                 return f"Error: Unknown Hyper3D Rodin mode!"
 
@@ -1602,6 +1687,76 @@ class BlenderMCPServer:
             }
         except Exception as e:
             return {"succeed": False, "error": str(e)}
+
+    def import_generated_asset_tripo3d_ai(self, request_id: str, name: str):
+        """Fetch the generated asset, import into blender"""
+        try:
+            # First get the latest task status to obtain download link
+            status_response = self.poll_rodin_job_status_tripo3d_ai(request_id)
+            if "error" in status_response:
+                return {"succeed": False, "error": status_response["error"]}
+
+            if not status_response.get("model_url"):
+                return {"succeed": False, "error": "Model URL not available"}
+
+            # Create temporary file
+            temp_file = tempfile.NamedTemporaryFile(
+                delete=False,
+                prefix=request_id,
+                suffix=".glb",
+            )
+
+            try:
+                # Download model file
+                response = requests.get(status_response["model_url"], stream=True)
+                response.raise_for_status()
+
+                # Write to temporary file
+                for chunk in response.iter_content(chunk_size=8192):
+                    temp_file.write(chunk)
+
+                temp_file.close()
+
+            except Exception as e:
+                # Clean up temporary file
+                temp_file.close()
+                os.unlink(temp_file.name)
+                return {"succeed": False, "error": str(e)}
+
+            try:
+                # Import model
+                obj = self._clean_imported_glb(
+                    filepath=temp_file.name,
+                    mesh_name=name
+                )
+
+                # Prepare return result
+                result = {
+                    "name": obj.name,
+                    "type": obj.type,
+                    "location": [obj.location.x, obj.location.y, obj.location.z],
+                    "rotation": [obj.rotation_euler.x, obj.rotation_euler.y, obj.rotation_euler.z],
+                    "scale": [obj.scale.x, obj.scale.y, obj.scale.z],
+                }
+
+                if obj.type == "MESH":
+                    bounding_box = self._get_aabb(obj)
+                    result["world_bounding_box"] = bounding_box
+
+                return {
+                    "succeed": True, **result
+                }
+            except Exception as e:
+                return {"succeed": False, "error": str(e)}
+            finally:
+                # Clean up temporary file
+                try:
+                    os.unlink(temp_file.name)
+                except:
+                    pass
+
+        except Exception as e:
+            return {"succeed": False, "error": str(e)}
     #endregion
 
 # Blender UI Panel
@@ -1712,6 +1867,7 @@ def register():
         items=[
             ("MAIN_SITE", "hyper3d.ai", "hyper3d.ai"),
             ("FAL_AI", "fal.ai", "fal.ai"),
+            ("TRIPO3D_AI", "tripo3d.ai", "tripo3d.ai"),
         ],
         default="MAIN_SITE"
     )
