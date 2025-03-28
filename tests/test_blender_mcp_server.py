@@ -195,8 +195,7 @@ async def test_server_lifespan():
                 mock_get_connection.assert_called_once()
                 mock_connection.disconnect.assert_not_called()
             
-            # Wait for cleanup to complete
-            await asyncio.sleep(0)
+            # Verify disconnect was called after context exit
             mock_connection.disconnect.assert_called_once()
 
 
