@@ -1,9 +1,8 @@
 import pytest
 import socket
 import json
-from unittest.mock import patch, MagicMock, call, AsyncMock
+from unittest.mock import patch, MagicMock
 from blender_mcp.server import BlenderConnection, get_blender_connection, server_lifespan, mcp
-import asyncio
 
 
 @pytest.fixture
@@ -18,12 +17,12 @@ def test_connection_lifecycle(blender_connection):
         mock_socket.return_value = mock_socket_instance
         
         # Test connection
-        assert blender_connection.connect() == True
+        assert blender_connection.connect()
         mock_socket.assert_called_once_with(socket.AF_INET, socket.SOCK_STREAM)
         mock_socket_instance.connect.assert_called_once_with(('127.0.0.1', 1234))
         
         # Test repeated connection
-        assert blender_connection.connect() == True
+        assert blender_connection.connect()
         # Ensure no new socket is created
         mock_socket.assert_called_once()
         
@@ -40,7 +39,7 @@ def test_connection_failure(blender_connection):
         mock_socket_instance.connect.side_effect = socket.error("Connection refused")
         mock_socket.return_value = mock_socket_instance
         
-        assert blender_connection.connect() == False
+        assert not blender_connection.connect()
         assert blender_connection.sock is None
 
 
@@ -265,7 +264,7 @@ def test_create_object():
         from blender_mcp.server import create_object
         result = create_object(ctx, type="CUBE")
         assert "Created CUBE object" in result
-        mock_connection.send_command.assert_called_with(
+        mock_connection.send_command.assert_called_once_with(
             "create_object",
             {
                 "type": "CUBE",
@@ -298,7 +297,7 @@ def test_modify_object():
             visible=True
         )
         assert "Modified object" in result
-        mock_connection.send_command.assert_called_with(
+        mock_connection.send_command.assert_called_once_with(
             "modify_object",
             {
                 "name": "Cube",
@@ -325,7 +324,7 @@ def test_delete_object():
         from blender_mcp.server import delete_object
         result = delete_object(ctx, name="Cube")
         assert "Deleted object" in result
-        mock_connection.send_command.assert_called_with(
+        mock_connection.send_command.assert_called_once_with(
             "delete_object",
             {"name": "Cube"}
         )
@@ -351,7 +350,7 @@ def test_set_material():
             color=[1, 0, 0]
         )
         assert "Applied material" in result
-        mock_connection.send_command.assert_called_with(
+        mock_connection.send_command.assert_called_once_with(
             "set_material",
             {
                 "object_name": "Cube",
@@ -377,7 +376,7 @@ def test_execute_blender_code():
         from blender_mcp.server import execute_blender_code
         result = execute_blender_code(ctx, code=test_code)
         assert "Code executed successfully" in result
-        mock_connection.send_command.assert_called_with(
+        mock_connection.send_command.assert_called_once_with(
             "execute_code",
             {"code": test_code}
         )
@@ -396,7 +395,7 @@ def test_polyhaven_integration():
         mock_tool.return_value = json.dumps({"enabled": True})
         with patch.object(mcp, "tool", return_value=mock_tool):
             result = mcp.tool("get_polyhaven_status")(ctx)
-            assert json.loads(result)["enabled"] == True
+            assert json.loads(result)["enabled"]
         
         # Test get_polyhaven_categories
         mock_categories = {"hdris": ["indoor", "outdoor"]}
@@ -415,6 +414,10 @@ def test_polyhaven_integration():
         with patch.object(mcp, "tool", return_value=mock_tool):
             result = mcp.tool("search_polyhaven_assets")(ctx)
             assert json.loads(result) == mock_assets
+            # Verify the command and parameters sent
+            mock_connection.send_command.assert_called_once_with(
+                "search_polyhaven_assets", {}
+            )
         
         # Test download_polyhaven_asset
         mock_download = {"status": "success"}
@@ -428,6 +431,11 @@ def test_polyhaven_integration():
                 asset_type="hdris"
             )
             assert json.loads(result) == mock_download
+            # Verify the command and parameters sent
+            mock_connection.send_command.assert_called_once_with(
+                "download_polyhaven_asset",
+                {"asset_id": "test_asset", "asset_type": "hdris"}
+            )
 
 
 def test_hyper3d_integration():
@@ -443,7 +451,7 @@ def test_hyper3d_integration():
         mock_tool.return_value = json.dumps({"enabled": True})
         with patch.object(mcp, "tool", return_value=mock_tool):
             result = mcp.tool("get_hyper3d_status")(ctx)
-            assert json.loads(result)["enabled"] == True
+            assert json.loads(result)["enabled"]
         
         # Test generate_hyper3d_model_via_text
         mock_generation = {
@@ -483,4 +491,4 @@ def test_hyper3d_integration():
                 name="generated_model",
                 task_uuid="test_uuid"
             )
-            assert json.loads(result) == mock_import 
+            assert json.loads(result) == mock_import
