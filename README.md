@@ -89,10 +89,24 @@ Go to Claude > Settings > Developer > Edit Config > claude_desktop_config.json t
 
 ### Cursor integration
 
-Run blender-mcp without installing it permanently through uvx. Go to Cursor Settings > MCP and paste this as a command.
+For Mac users, go to Settings > MCP and paste the following 
 
-```bash
-uvx blender-mcp
+- To use as a global server, use "add new global MCP server" button and paste
+- To use as a project specific server, create `.cursor/mcp.json` in the root of the project and paste
+
+
+```json
+{
+    "mcpServers": {
+        "blender": {
+            "command": "command",
+            "args": [
+                "uvx",
+                "blender-mcp"
+            ]
+        }
+    }
+}
 ```
 
 For Windows users, go to Settings > MCP > Add Server, add a new server with the following settings:
@@ -111,7 +125,6 @@ For Windows users, go to Settings > MCP > Add Server, add a new server with the 
     }
 }
 ```
-
 
 [Cursor setup video](https://www.youtube.com/watch?v=wgWsJshecac)
 
