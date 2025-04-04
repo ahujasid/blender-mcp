@@ -151,6 +151,7 @@ Once the config file has been set on Claude, and the addon is running on Blender
 - Execute any Python code in Blender
 - Download the right models, assets and HDRIs through [Poly Haven](https://polyhaven.com/)
 - AI generated 3D models through [Hyper3D Rodin](https://hyper3d.ai/)
+- Geometry Node Module To Create procedural modeling and geometry generation
 
 
 ### Example Commands
@@ -167,9 +168,20 @@ Here are some examples of what you can ask Claude to do:
 - "Make the lighting like a studio"
 - "Point the camera at the scene, and make it isometric"
 
+
+## Geometry Node Module Example Commands
+
+- "Create a simple procedural table"
+- "Create a simple procedural chair"
+- "Create a simple procedural car"
+- "Use geometry nodes to create points distributed on a sphere surface with exposed radius and density parameters"
+- "Use geometry nodes to create a noise-deformed sphere with exposed strength parameter"
+
+
 ## Hyper3D integration
 
 Hyper3D's free trial key allows you to generate a limited number of models per day. If the daily limit is reached, you can wait for the next day's reset or obtain your own key from hyper3d.ai and fal.ai.
+
 
 ## Troubleshooting
 
