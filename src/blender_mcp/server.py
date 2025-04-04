@@ -275,185 +275,9 @@ def get_object_info(ctx: Context, object_name: str) -> str:
 
 
 @mcp.tool()
-def create_object(
-    ctx: Context,
-    type: str = "CUBE",
-    name: str = None,
-    location: List[float] = None,
-    rotation: List[float] = None,
-    scale: List[float] = None,
-    # Torus-specific parameters
-    align: str = "WORLD",
-    major_segments: int = 48,
-    minor_segments: int = 12,
-    mode: str = "MAJOR_MINOR",
-    major_radius: float = 1.0,
-    minor_radius: float = 0.25,
-    abso_major_rad: float = 1.25,
-    abso_minor_rad: float = 0.75,
-    generate_uvs: bool = True
-) -> str:
-    """
-    Create a new object in the Blender scene.
-    
-    Parameters:
-    - type: Object type (CUBE, SPHERE, CYLINDER, PLANE, CONE, TORUS, EMPTY, CAMERA, LIGHT)
-    - name: Optional name for the object
-    - location: Optional [x, y, z] location coordinates
-    - rotation: Optional [x, y, z] rotation in radians
-    - scale: Optional [x, y, z] scale factors (not used for TORUS)
-    
-    Torus-specific parameters (only used when type == "TORUS"):
-    - align: How to align the torus ('WORLD', 'VIEW', or 'CURSOR')
-    - major_segments: Number of segments for the main ring
-    - minor_segments: Number of segments for the cross-section
-    - mode: Dimension mode ('MAJOR_MINOR' or 'EXT_INT')
-    - major_radius: Radius from the origin to the center of the cross sections
-    - minor_radius: Radius of the torus' cross section
-    - abso_major_rad: Total exterior radius of the torus
-    - abso_minor_rad: Total interior radius of the torus
-    - generate_uvs: Whether to generate a default UV map
-    
-    Returns:
-    A message indicating the created object name.
-    """
-    try:
-        # Get the global connection
-        blender = get_blender_connection()
-        
-        # Set default values for missing parameters
-        loc = location or [0, 0, 0]
-        rot = rotation or [0, 0, 0]
-        sc = scale or [1, 1, 1]
-        
-        params = {
-            "type": type,
-            "location": loc,
-            "rotation": rot,
-        }
-        
-        if name:
-            params["name"] = name
-
-        if type == "TORUS":
-            # For torus, the scale is not used.
-            params.update({
-                "align": align,
-                "major_segments": major_segments,
-                "minor_segments": minor_segments,
-                "mode": mode,
-                "major_radius": major_radius,
-                "minor_radius": minor_radius,
-                "abso_major_rad": abso_major_rad,
-                "abso_minor_rad": abso_minor_rad,
-                "generate_uvs": generate_uvs
-            })
-            result = blender.send_command("create_object", params)
-            return f"Created {type} object: {result['name']}"
-        else:
-            # For non-torus objects, include scale
-            params["scale"] = sc
-            result = blender.send_command("create_object", params)
-            return f"Created {type} object: {result['name']}"
-    except Exception as e:
-        logger.error(f"Error creating object: {str(e)}")
-        return f"Error creating object: {str(e)}"
-
-
-@mcp.tool()
-def modify_object(
-    ctx: Context,
-    name: str,
-    location: List[float] = None,
-    rotation: List[float] = None,
-    scale: List[float] = None,
-    visible: bool = None
-) -> str:
-    """
-    Modify an existing object in the Blender scene.
-    
-    Parameters:
-    - name: Name of the object to modify
-    - location: Optional [x, y, z] location coordinates
-    - rotation: Optional [x, y, z] rotation in radians
-    - scale: Optional [x, y, z] scale factors
-    - visible: Optional boolean to set visibility
-    """
-    try:
-        # Get the global connection
-        blender = get_blender_connection()
-        
-        params = {"name": name}
-        
-        if location is not None:
-            params["location"] = location
-        if rotation is not None:
-            params["rotation"] = rotation
-        if scale is not None:
-            params["scale"] = scale
-        if visible is not None:
-            params["visible"] = visible
-            
-        result = blender.send_command("modify_object", params)
-        return f"Modified object: {result['name']}"
-    except Exception as e:
-        logger.error(f"Error modifying object: {str(e)}")
-        return f"Error modifying object: {str(e)}"
-
-@mcp.tool()
-def delete_object(ctx: Context, name: str) -> str:
-    """
-    Delete an object from the Blender scene.
-    
-    Parameters:
-    - name: Name of the object to delete
-    """
-    try:
-        # Get the global connection
-        blender = get_blender_connection()
-        
-        result = blender.send_command("delete_object", {"name": name})
-        return f"Deleted object: {name}"
-    except Exception as e:
-        logger.error(f"Error deleting object: {str(e)}")
-        return f"Error deleting object: {str(e)}"
-
-@mcp.tool()
-def set_material(
-    ctx: Context,
-    object_name: str,
-    material_name: str = None,
-    color: List[float] = None
-) -> str:
-    """
-    Set or create a material for an object.
-    
-    Parameters:
-    - object_name: Name of the object to apply the material to
-    - material_name: Optional name of the material to use or create
-    - color: Optional [R, G, B] color values (0.0-1.0)
-    """
-    try:
-        # Get the global connection
-        blender = get_blender_connection()
-        
-        params = {"object_name": object_name}
-        
-        if material_name:
-            params["material_name"] = material_name
-        if color:
-            params["color"] = color
-            
-        result = blender.send_command("set_material", params)
-        return f"Applied material to {object_name}: {result.get('material_name', 'unknown')}"
-    except Exception as e:
-        logger.error(f"Error setting material: {str(e)}")
-        return f"Error setting material: {str(e)}"
-
-@mcp.tool()
 def execute_blender_code(ctx: Context, code: str) -> str:
     """
-    Execute arbitrary Python code in Blender.
+    Execute arbitrary Python code in Blender. Make sure to do it step-by-step by breaking it into smaller chunks.
     
     Parameters:
     - code: The Python code to execute
@@ -891,7 +715,7 @@ def asset_creation_strategy() -> str:
             Hyper3D Rodin is good at generating 3D models for single item.
             So don't try to:
             1. Generate the whole scene with one shot
-            2. Generate ground using Rodin
+            2. Generate ground using Hyper3D
             3. Generate parts of the items separately and put them together afterwards
 
             Use get_hyper3d_status() to verify its status
@@ -926,21 +750,12 @@ def asset_creation_strategy() -> str:
                - The nodes list doesn't need to manually specify GroupNodeInput/Output as default input/output nodes will be created automatically
                - You can specify input_sockets with default values that will be set automatically
 
-    2. If all integrations are disabled or when falling back to basic tools:
-       - create_object() for basic primitives (CUBE, SPHERE, CYLINDER, etc.)
-       - set_material() for basic colors and materials
-    
-    3. When including an object into scene, ALWAYS make sure that the name of the object is meanful.
-
-    4. Always check the world_bounding_box for each item so that:
+    3. Always check the world_bounding_box for each item so that:
         - Ensure that all objects that should not be clipping are not clipping.
         - Items have right spatial relationship.
     
-    5. After giving the tool location/scale/rotation information (via create_object() and modify_object()),
-       double check the related object's location, scale, rotation, and world_bounding_box using get_object_info(),
-       so that the object is in the desired location.
 
-    Only fall back to basic creation tools when:
+    Only fall back to scripting when:
     - PolyHaven and Hyper3D are disabled
     - A simple primitive is explicitly requested
     - No suitable PolyHaven asset exists
