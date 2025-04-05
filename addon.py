@@ -12,6 +12,8 @@ import traceback
 import os
 import shutil
 from bpy.props import StringProperty, IntProperty, BoolProperty, EnumProperty
+import io
+from contextlib import redirect_stdout
 
 bl_info = {
     "name": "Blender MCP",
@@ -334,8 +336,14 @@ class BlenderMCPServer:
         try:
             # Create a local namespace for execution
             namespace = {"bpy": bpy}
-            exec(code, namespace)
-            return {"executed": True}
+
+            # Capture stdout during execution, and return it as result
+            capture_buffer = io.StringIO()
+            with redirect_stdout(capture_buffer):
+                exec(code, namespace)
+            
+            captured_output = capture_buffer.getvalue()
+            return {"executed": True, "result": captured_output}
         except Exception as e:
             raise Exception(f"Code execution error: {str(e)}")
     
