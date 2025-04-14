@@ -524,6 +524,49 @@ def _process_bbox(original_bbox: list[float] | list[int] | None) -> list[int] | 
         raise ValueError("Incorrect number range: bbox must be bigger than zero!")
     return [int(float(i) / max(original_bbox) * 100) for i in original_bbox] if original_bbox else None
 
+@mcp.tool("generate_beaver3d_from_text_or_image")
+def generate_beaver3d_from_text_or_image(
+    ctx: Context,
+    text_prompt: str = None,
+    image_url: str = None,
+    position: List[float] = [0, 0, 50],
+    scale: List[float] = [10, 10, 10]
+) -> str:
+    """
+    Generate a Beaver 3D model from text or image, load it into the scene and transform it.
+    
+    Args:
+        text_prompt (str, optional): Text prompt for 3D generation
+        image_url (str, optional): URL of image for 3D generation
+        position (list, optional): Position to place the model [x, y, z]
+        scale (list, optional): Scale of the model [x, y, z]
+        
+    Returns:
+        String with the task_id and prim_path information
+    """
+    if not (text_prompt or image_url):
+        return "Error: Either text_prompt or image_url must be provided"
+    
+    try:
+        # Get the global connection
+        blender = get_blender_connection()
+        
+        result = blender.send_command("generate_beaver3d_from_text_or_image", {
+            "text_prompt": text_prompt,
+            "image_url": image_url,
+            "position": position,
+            "scale": scale
+        })
+        
+        if result.get("status") == "success":
+            task_id = result.get("task_id")
+            return f"Successfully generated Beaver3D model with task ID: {task_id}"
+        else:
+            return f"Error generating Beaver3D model: {result.get('message', 'Unknown error')}"
+    except Exception as e:
+        logger.error(f"Error generating 3D model: {str(e)}")
+        return f"Error generating 3D model: {str(e)}"
+    
 @mcp.tool()
 def generate_hyper3d_model_via_text(
     ctx: Context,
