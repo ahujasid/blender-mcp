@@ -1200,11 +1200,6 @@ class BlenderMCPServer:
             # Initialize Beaver3d
             beaver = Beaver3d()
             
-            # Determine generation method based on inputs
-            # if image_url and text_prompt:
-            #     # Generate 3D from image with text prompt as options
-            #     task_id = beaver.generate_3d_from_image(image_url, text_prompt)
-            #     print(f"3D model generation from image with text options started with task ID: {task_id}")
             # Check if we have cached task IDs for this input
             if not hasattr(self, '_image_url_cache'):
                 self._image_url_cache = {}  # Cache for image URL to task_id mapping
@@ -1220,7 +1215,7 @@ class BlenderMCPServer:
             elif text_prompt and text_prompt in self._text_prompt_cache:
                 task_id = self._text_prompt_cache[text_prompt]
                 print(f"Using cached task ID: {task_id} for text prompt: {text_prompt}")
-
+            # Determine generation method based on inputs
             if task_id: #cache hit
                 print(f"Using cached model ID: {task_id}")
                 
@@ -1238,7 +1233,7 @@ class BlenderMCPServer:
                     "message": "Either text_prompt or image_url must be provided"
                 }
             
-            # Monitor the task and download the result
+            # TODO: Monitor the task and download the result in a separate thread in the future
             # result_path = beaver.monitor_task_status(task_id)
             # task = asyncio.create_task(
                 # beaver.monitor_task_status_async(
@@ -1257,13 +1252,13 @@ class BlenderMCPServer:
                 if glb_files:
                     model_path = glb_files[0]
                     print(f"Importing GLB model from {model_path}")
-                    self._clean_imported_glb(str(model_path), mesh_name=task_id[-10:])
+                    new_obj = self._clean_imported_glb(str(model_path), mesh_name=task_id[-10:])           
                 elif usd_files:
                     model_path = usd_files[0]
                     print(f"Importing USD model from {model_path}")
                     # Import USD file - assuming _clean_imported_glb can handle USD files
                     # If not, you may need to create a separate method for USD imports
-                    self._clean_imported_usd(str(model_path), mesh_name=task_id[-10:])
+                    new_obj = self._clean_imported_usd(str(model_path), mesh_name=task_id[-10:])    
                 else:
                     # Fallback to default output file
                     default_glb = Path(result_path) / "output.glb"
@@ -1271,28 +1266,25 @@ class BlenderMCPServer:
                     
                     if default_glb.exists():
                         print(f"Importing default GLB model from {default_glb}")
-                        self._clean_imported_glb(str(default_glb), mesh_name=task_id[-10:])
+                        new_obj = self._clean_imported_glb(str(default_glb), mesh_name=task_id[-10:])
                     elif default_usd.exists():
                         print(f"Importing default USD model from {default_usd}")
-                        self._clean_imported_glb(str(default_usd), mesh_name=task_id[-10:])
+                        new_obj = self._clean_imported_usd(str(default_usd), mesh_name=task_id[-10:])
                     else:
                         print(f"No GLB or USD files found in {result_path}")
-                
-                print(f"Model imported successfully")
+
+                # If new_obj is not None, apply the position and scale
+                if new_obj:
+                    new_obj.location = position
+                    new_obj.scale = scale
+
+                print("Model imported successfully")
                 return {
                     "status": "success",
                     "task_id": task_id
                 }
             
-            # def wrapper_callback(task_id, on_complete_callback=load_model_into_scene):
-            #     beaver.monitor_task_status_async(task_id, on_complete_callback=load_model_into_scene)
             
-            # from omni.kit.async_engine import run_coroutine
-            # task = run_coroutine(beaver.monitor_task_status_async(
-            #     task_id, on_complete_callback=load
-            # _model_into_scene))
-            # Schedule execution in main thread
-            #import functools
             # Create a function that doesn't use coroutines to avoid "never awaited" warning
             def start_monitoring():
                 # Can't use async function directly in timer, monitor task status in main thread and download the result
@@ -1482,15 +1474,14 @@ class BlenderMCPServer:
             for mat in bpy.data.materials:
                 if mat.use_nodes:
                     for node in mat.node_tree.nodes:
-                        if node.type == 'TEX_IMAGE' and node.image:
-                            # Check if the image path needs to be updated
-                            if not os.path.exists(node.image.filepath):
-                                # Try to find the texture in the textures directory
-                                texture_name = os.path.basename(node.image.filepath)
-                                potential_path = os.path.join(texture_dir, texture_name)
-                                if os.path.exists(potential_path):
-                                    node.image.filepath = potential_path
-                                    print(f"Updated texture path for {node.image.name} to {potential_path}")
+                        if (node.type == 'TEX_IMAGE' and node.image and 
+                            not os.path.exists(node.image.filepath)):
+                            # Try to find the texture in the textures directory
+                            texture_name = os.path.basename(node.image.filepath)
+                            potential_path = os.path.join(texture_dir, texture_name)
+                            if os.path.exists(potential_path):
+                                node.image.filepath = potential_path
+                                print(f"Updated texture path for {node.image.name} to {potential_path}")
         
         return mesh_obj
 
@@ -1629,10 +1620,8 @@ class BlenderMCPServer:
     #endregion
 
 #region Beaver3D
-import asyncio
+# import asyncio
 import os
-import time
-import json
 import requests
 import zipfile
 import shutil
@@ -1672,6 +1661,7 @@ class Beaver3d:
             str: Path to the extracted task directory
         """
         # Create directories if they don't exist
+        # single user mode, denpends on user to clean up /tmp/usd to avoid disk space running out
         tmp_dir = self._working_dir
         tmp_dir.mkdir(parents=True, exist_ok=True)
         
@@ -1696,32 +1686,37 @@ class Beaver3d:
         elapsed_time_in_seconds = 0
         estimated_time_in_seconds = 75 # 75 seconds is the estimated time for a high subdivision level USD model
         while True:
-            response = requests.get(task_url, headers=self._get_headers())
-            if response.status_code != 200:
-                raise Exception(f"Error fetching task status: {response.text}")
+            try:
+                response = requests.get(task_url, headers=self._get_headers())
+                if response.status_code != 200:
+                    raise Exception(f"Error fetching task status: {response.text}")
+                    
+                task_data = response.json()
+                status = task_data.get("status")
                 
-            task_data = response.json()
-            status = task_data.get("status")
-            
-            if status == "succeeded":
-                file_url = task_data.get("content", {}).get("file_url")
-                if not file_url:
-                    raise Exception("No file URL found in the response")
+                if status == "succeeded":
+                    file_url = task_data.get("content", {}).get("file_url")
+                    if not file_url:
+                        raise Exception("No file URL found in the response")
+                    
+                    return self._download_files_for_completed_task(task_id, file_url)
                 
-                return self._download_files_for_completed_task(task_id, file_url)
-            
-            if status == "failed":
-                raise Exception(f"Task failed: {task_data}")
-            elif status == "running":
-                # Assuming generation takes about 70s total, calculate an estimated completion percentage
-                # Each iteration is 5s, so after 70s we should be at 100%
+                if status == "failed":
+                    raise Exception(f"Task failed: {task_data}")
+                elif status == "running":
+                    # Assuming generation takes about 70s total, calculate an estimated completion percentage
+                    # Each iteration is 5s, so after 70s we should be at 100%
+                    
+                    completion_ratio = min(100, int((elapsed_time_in_seconds / estimated_time_in_seconds) * 100))
+                    print(f"Task {task_id} is generating. Progress: {completion_ratio}% complete. Waiting for completion...")
                 
-                completion_ratio = min(100, int((elapsed_time_in_seconds / estimated_time_in_seconds) * 100))
-                print(f"Task {task_id} is generating. Progress: {completion_ratio}% complete. Waiting for completion...")
-            
-            # Sleep for 5 seconds before checking again
-            time.sleep(5)
-            elapsed_time_in_seconds += 5
+                # Sleep for 5 seconds before checking again
+                time.sleep(5)
+                elapsed_time_in_seconds += 5
+            except Exception as e:
+                print(f"Error monitoring task {task_id}: {str(e)}")
+                time.sleep(5)  # Still wait before retrying
+                elapsed_time_in_seconds += 5
     
     async def monitor_task_status_async(self, task_id, on_complete_callback=None):
         """
@@ -1742,36 +1737,42 @@ class Beaver3d:
         estimated_time_in_seconds = 75  # 75 seconds is the estimated time for a high subdivision level USD model
         
         while True:
-            response = requests.get(task_url, headers=self._get_headers())
-            if response.status_code != 200:
-                raise Exception(f"Error fetching task status: {response.text}")
+            try:
+                response = requests.get(task_url, headers=self._get_headers())
+                if response.status_code != 200:
+                    raise Exception(f"Error fetching task status: {response.text}")
+                    
+                task_data = response.json()
+                status = task_data.get("status")
                 
-            task_data = response.json()
-            status = task_data.get("status")
-            
-            if status == "succeeded":
-                file_url = task_data.get("content", {}).get("file_url")
-                if not file_url:
-                    raise Exception("No file URL found in the response")
+                if status == "succeeded":
+                    file_url = task_data.get("content", {}).get("file_url")
+                    if not file_url:
+                        raise Exception("No file URL found in the response")
+                    
+                    result_path = self._download_files_for_completed_task(task_id, file_url)
+                    
+                    # Call the callback if provided
+                    if on_complete_callback and callable(on_complete_callback):
+                        on_complete_callback(task_id, status, result_path)
+                    
+                    return result_path
                 
-                result_path = self._download_files_for_completed_task(task_id, file_url)
+                if status == "failed":
+                    raise Exception(f"Task failed: {task_data}")
+                elif status == "running":
+                    # Calculate an estimated completion percentage
+                    completion_ratio = min(100, int((elapsed_time_in_seconds / estimated_time_in_seconds) * 100))
+                    print(f"Task {task_id} is generating. Progress: {completion_ratio}% complete. Waiting for completion...")
                 
-                # Call the callback if provided
-                if on_complete_callback and callable(on_complete_callback):
-                    on_complete_callback(task_id, status, result_path)
-                
-                return result_path
-            
-            if status == "failed":
-                raise Exception(f"Task failed: {task_data}")
-            elif status == "running":
-                # Calculate an estimated completion percentage
-                completion_ratio = min(100, int((elapsed_time_in_seconds / estimated_time_in_seconds) * 100))
-                print(f"Task {task_id} is generating. Progress: {completion_ratio}% complete. Waiting for completion...")
-            
-            # Asynchronously sleep for 5 seconds before checking again
-            await asyncio.sleep(5)
-            elapsed_time_in_seconds += 5
+                # Asynchronously sleep for 5 seconds before checking again
+                await asyncio.sleep(5)
+                elapsed_time_in_seconds += 5
+            except Exception as e:
+                print(f"Error monitoring task {task_id}: {str(e)}")
+                traceback.print_exc()
+                await asyncio.sleep(5)  # Wait before retrying
+                elapsed_time_in_seconds += 5
     
     def generate_3d_from_text(self, text_prompt):
         """Generate a 3D model from text input and return the task ID"""
