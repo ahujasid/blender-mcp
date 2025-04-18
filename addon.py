@@ -34,6 +34,9 @@ class BlenderMCPServer:
         self.running = False
         self.socket = None
         self.server_thread = None
+        # Cache the task_id for image_url and text_prompt
+        self._image_url_cache = {} 
+        self._text_prompt_cache = {} 
     
     def start(self):
         if self.running:
@@ -220,6 +223,13 @@ class BlenderMCPServer:
                 "import_generated_asset": self.import_generated_asset,
             }
             handlers.update(polyhaven_handlers)
+
+        # Add Beaver3D handlers only if enabled
+        if bpy.context.scene.blendermcp_use_beaver3d:
+            beaver3d_handlers = {
+                "generate_beaver3d_from_text_or_image": self.generate_beaver3d_from_text_or_image,
+            }
+            handlers.update(beaver3d_handlers)  
 
         handler = handlers.get(cmd_type)
         if handler:
@@ -1171,6 +1181,144 @@ class BlenderMCPServer:
         )
         data = response.json()
         return data
+    
+   
+    def generate_beaver3d_from_text_or_image(self, text_prompt=None, image_url=None, position=(0, 0, 50), scale=(10, 10, 10)):
+        """
+        Generate a Beaver3D model from text or image, load it into the scene and transform it.
+        
+        Args:
+            text_prompt (str, optional): Text prompt for 3D generation
+            image_url (str, optional): URL of image for 3D generation
+            position (tuple, optional): Position to place the model
+            scale (tuple, optional): Scale of the model
+            
+        Returns:
+            dict: Dictionary with the task_id and prim_path
+        """
+        try:
+            # Initialize Beaver3d
+            beaver = Beaver3d()
+            
+            # Check if we have cached task IDs for this input
+            if not hasattr(self, '_image_url_cache'):
+                self._image_url_cache = {}  # Cache for image URL to task_id mapping
+            
+            if not hasattr(self, '_text_prompt_cache'):
+                self._text_prompt_cache = {}  # Cache for text prompt to task_id mapping
+            
+            # Check if we can retrieve task_id from cache
+            task_id = None
+            if image_url and image_url in self._image_url_cache:
+                task_id = self._image_url_cache[image_url]
+                print(f"Using cached task ID: {task_id} for image URL: {image_url}")
+            elif text_prompt and text_prompt in self._text_prompt_cache:
+                task_id = self._text_prompt_cache[text_prompt]
+                print(f"Using cached task ID: {task_id} for text prompt: {text_prompt}")
+            # Determine generation method based on inputs
+            if task_id: #cache hit
+                print(f"Using cached model ID: {task_id}")
+                
+            elif image_url:
+                # Generate 3D from image only
+                task_id = beaver.generate_3d_from_image(image_url)
+                print(f"3D model generation from image started with task ID: {task_id}")
+            elif text_prompt:
+                # Generate 3D from text
+                task_id = beaver.generate_3d_from_text(text_prompt)
+                print(f"3D model generation from text started with task ID: {task_id}")
+            else:
+                return {
+                    "status": "error",
+                    "message": "Either text_prompt or image_url must be provided"
+                }
+            
+            # TODO: Monitor the task and download the result in a separate thread in the future
+            # result_path = beaver.monitor_task_status(task_id)
+            # task = asyncio.create_task(
+                # beaver.monitor_task_status_async(
+                    # task_id, on_complete_callback=load_model_into_scene))
+            #await task
+            def load_model_into_scene(task_id, status, result_path):
+                print(f"{task_id} is {status}, 3D model  downloaded to: {result_path}")
+                
+                # Load the model into the scene
+                # Find the first .glb file in the result_path directory
+                # Check for GLB files first
+                glb_files = list(Path(result_path).glob("*.glb"))
+                # Check for USD files (both .usd and .usdc)
+                usd_files = list(Path(result_path).glob("*.usd")) + list(Path(result_path).glob("*.usdc"))
+                
+                if glb_files:
+                    model_path = glb_files[0]
+                    print(f"Importing GLB model from {model_path}")
+                    new_obj = self._clean_imported_glb(str(model_path), mesh_name=task_id[-10:])           
+                elif usd_files:
+                    model_path = usd_files[0]
+                    print(f"Importing USD model from {model_path}")
+                    # Import USD file - assuming _clean_imported_glb can handle USD files
+                    # If not, you may need to create a separate method for USD imports
+                    new_obj = self._clean_imported_usd(str(model_path), mesh_name=task_id[-10:])    
+                else:
+                    # Fallback to default output file
+                    default_glb = Path(result_path) / "output.glb"
+                    default_usd = Path(result_path) / "output.usd"
+                    
+                    if default_glb.exists():
+                        print(f"Importing default GLB model from {default_glb}")
+                        new_obj = self._clean_imported_glb(str(default_glb), mesh_name=task_id[-10:])
+                    elif default_usd.exists():
+                        print(f"Importing default USD model from {default_usd}")
+                        new_obj = self._clean_imported_usd(str(default_usd), mesh_name=task_id[-10:])
+                    else:
+                        print(f"No GLB or USD files found in {result_path}")
+
+                # If new_obj is not None, apply the position and scale
+                if new_obj:
+                    new_obj.location = position
+                    new_obj.scale = scale
+
+                print("Model imported successfully")
+                return {
+                    "status": "success",
+                    "task_id": task_id
+                }
+            
+            
+            # Create a function that doesn't use coroutines to avoid "never awaited" warning
+            def start_monitoring():
+                # Can't use async function directly in timer, monitor task status in main thread and download the result
+                task_dir = beaver.monitor_task_status(task_id)
+                # Only cache the task_id after successful download
+                if image_url and image_url not in self._image_url_cache:
+                    self._image_url_cache[image_url] = task_id
+                    print(f"Caching task ID: {task_id} for image URL: {image_url}")
+                elif text_prompt and text_prompt not in self._text_prompt_cache:
+                    self._text_prompt_cache[text_prompt] = task_id
+                    print(f"Caching task ID: {task_id} for text prompt: {text_prompt}")
+
+                load_model_into_scene(task_id, "succeeded", task_dir)
+                return None  # Return None to prevent timer from repeating
+                
+            bpy.app.timers.register(start_monitoring, first_interval=0.0)
+            # bpy.app.timers.register(beaver.monitor_task_status_async(
+            #     task_id, on_complete_callback=load_model_into_scene), first_interval=0.0)
+            
+            return {
+                    "status": "success",
+                    "task_id": task_id,
+                    "message": f"3D model generation started with task ID: {task_id}"
+            }
+            
+            
+            
+        except Exception as e:
+            print(f"Error generating 3D model: {str(e)}")
+            traceback.print_exc()
+            return {
+                "status": "error",
+                "message": str(e)
+            }
 
     @staticmethod
     def _clean_imported_glb(filepath, mesh_name=None):
@@ -1178,8 +1326,22 @@ class BlenderMCPServer:
         existing_objects = set(bpy.data.objects)
 
         # Import the GLB file
-        bpy.ops.import_scene.gltf(filepath=filepath)
-        
+        try:
+            # Try to import with default settings
+            bpy.ops.import_scene.gltf(filepath=filepath)
+        except RuntimeError as e:
+            # Handle EXT_texture_webp extension error
+            if "Extension EXT_texture_webp is not available" in str(e):
+                print(f"Warning: EXT_texture_webp extension not supported, importing without textures: {e}")
+                # Try importing with draco_mesh_compression disabled and skip unsupported extensions
+                bpy.ops.import_scene.gltf(
+                    filepath=filepath,
+                    import_pack_images=False,
+                    import_shading='NORMALS'
+                )
+            else:
+                # Re-raise other errors
+                raise
         # Ensure the context is updated
         bpy.context.view_layer.update()
         
@@ -1237,6 +1399,90 @@ class BlenderMCPServer:
         except Exception as e:
             print("Having issue with renaming, give up renaming.")
 
+        return mesh_obj
+        
+    @staticmethod
+    def _clean_imported_usd(filepath, mesh_name=None):
+        # Get the set of existing objects before import
+        existing_objects = set(bpy.data.objects)
+        
+        # Import the USD file
+        try:
+            # Check if textures directory exists
+            texture_dir = os.path.join(os.path.dirname(filepath), "textures")
+            has_textures = os.path.isdir(texture_dir)
+            
+            # Import USD file
+            bpy.ops.wm.usd_import(
+                filepath=filepath,
+                import_materials=True,
+                #import_textures=has_textures,
+                import_cameras=True,
+                import_lights=True
+            )
+        except Exception as e:
+            print(f"Error importing USD file: {e}")
+            raise
+            
+        # Ensure the context is updated
+        bpy.context.view_layer.update()
+        
+        # Get all imported objects
+        imported_objects = list(set(bpy.data.objects) - existing_objects)
+        
+        if not imported_objects:
+            print("Error: No objects were imported.")
+            return
+        
+        # Find the main mesh object
+        mesh_objects = [obj for obj in imported_objects if obj.type == 'MESH']
+        
+        if not mesh_objects:
+            print("Error: No mesh objects were imported.")
+            return
+        
+        # If there's a single mesh, use it directly
+        if len(mesh_objects) == 1:
+            mesh_obj = mesh_objects[0]
+            print("Single mesh imported, no cleanup needed.")
+        else:
+            # Find the root object (usually has no parent)
+            root_objects = [obj for obj in imported_objects if not obj.parent]
+            
+            if len(root_objects) == 1 and root_objects[0].type == 'EMPTY':
+                # Keep the hierarchy as is, but return the root object
+                mesh_obj = root_objects[0]
+                print(f"USD structure preserved with root object: {mesh_obj.name}")
+            else:
+                # Just use the first mesh as our main object
+                mesh_obj = mesh_objects[0]
+                print(f"Multiple objects imported, using {mesh_obj.name} as main object.")
+        
+        # Rename the mesh if needed
+        try:
+            if mesh_obj and mesh_obj.name is not None and mesh_name:
+                mesh_obj.name = mesh_name
+                if hasattr(mesh_obj, 'data') and mesh_obj.data and mesh_obj.data.name is not None:
+                    mesh_obj.data.name = mesh_name
+                print(f"Object renamed to: {mesh_name}")
+        except Exception as e:
+            print(f"Having issue with renaming: {e}")
+        
+        # Load textures if they exist
+        if has_textures:
+            # Check if any materials need texture paths fixed
+            for mat in bpy.data.materials:
+                if mat.use_nodes:
+                    for node in mat.node_tree.nodes:
+                        if (node.type == 'TEX_IMAGE' and node.image and 
+                            not os.path.exists(node.image.filepath)):
+                            # Try to find the texture in the textures directory
+                            texture_name = os.path.basename(node.image.filepath)
+                            potential_path = os.path.join(texture_dir, texture_name)
+                            if os.path.exists(potential_path):
+                                node.image.filepath = potential_path
+                                print(f"Updated texture path for {node.image.name} to {potential_path}")
+        
         return mesh_obj
 
     def import_generated_asset(self, *args, **kwargs):
@@ -1373,6 +1619,239 @@ class BlenderMCPServer:
             return {"succeed": False, "error": str(e)}
     #endregion
 
+#region Beaver3D
+# import asyncio
+import os
+import requests
+import zipfile
+import shutil
+from pathlib import Path
+
+class Beaver3d:
+    def __init__(self):
+        """Initialize Beaver3d with model name and API key from environment variables"""
+        # First try to get API key from Blender scene settings
+        self.api_key = bpy.context.scene.blendermcp_beaver3d_api_key if bpy.context.scene.blendermcp_beaver3d_api_key else os.environ.get("ARK_API_KEY")
+        self.model_name = os.environ.get("BEAVER3D_MODEL", "doubao-3d-asset-beaver-250228")
+        self._working_dir = Path(os.environ.get("USD_WORKING_DIR", "/tmp/usd"))
+        self.base_url = os.environ.get("ARK_BASE_URL", "https://ark.cn-beijing.volces.com/api/v3/contents/generations/tasks")
+        
+        if not self.api_key:
+            raise Exception("ARK_API_KEY environment variable not set, Beaver3D service is not available untill ARK_API_KEY is set")
+        if not self.model_name:
+            raise Exception("BEAVER3D_MODEL environment variable not set, Beaver3D service is not available untill BEAVER3D_MODEL is set")
+        
+    
+    def _get_headers(self):
+        """Get request headers with authorization"""
+        return {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {self.api_key}"
+        }
+    
+    def _download_files_for_completed_task(self, task_id, file_url):
+        """
+        Process a completed task by downloading and extracting the result file
+        
+        Args:
+            task_id (str): The task ID
+            file_url (str): URL to download the result file
+            
+        Returns:
+            str: Path to the extracted task directory
+        """
+        # Create directories if they don't exist
+        # single user mode, denpends on user to clean up /tmp/usd to avoid disk space running out
+        tmp_dir = self._working_dir
+        tmp_dir.mkdir(parents=True, exist_ok=True)
+        
+        task_dir = tmp_dir / task_id
+        task_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Download the file
+        zip_path = tmp_dir / f"{task_id}.zip"
+        response = requests.get(file_url)
+        with open(zip_path, "wb") as f:
+            f.write(response.content)
+        
+        # Extract the zip file
+        with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+            zip_ref.extractall(task_dir)
+        
+        return str(task_dir)
+    
+    def monitor_task_status(self, task_id):
+        """Monitor task status until succeeded, then download and extract the result file"""
+        task_url = f"{self.base_url}/{task_id}"
+        elapsed_time_in_seconds = 0
+        estimated_time_in_seconds = 75 # 75 seconds is the estimated time for a high subdivision level USD model
+        while True:
+            try:
+                response = requests.get(task_url, headers=self._get_headers())
+                if response.status_code != 200:
+                    raise Exception(f"Error fetching task status: {response.text}")
+                    
+                task_data = response.json()
+                status = task_data.get("status")
+                
+                if status == "succeeded":
+                    file_url = task_data.get("content", {}).get("file_url")
+                    if not file_url:
+                        raise Exception("No file URL found in the response")
+                    
+                    return self._download_files_for_completed_task(task_id, file_url)
+                
+                if status == "failed":
+                    raise Exception(f"Task failed: {task_data}")
+                elif status == "running":
+                    # Assuming generation takes about 70s total, calculate an estimated completion percentage
+                    # Each iteration is 5s, so after 70s we should be at 100%
+                    
+                    completion_ratio = min(100, int((elapsed_time_in_seconds / estimated_time_in_seconds) * 100))
+                    print(f"Task {task_id} is generating. Progress: {completion_ratio}% complete. Waiting for completion...")
+                
+                # Sleep for 5 seconds before checking again
+                time.sleep(5)
+                elapsed_time_in_seconds += 5
+            except Exception as e:
+                print(f"Error monitoring task {task_id}: {str(e)}")
+                time.sleep(5)  # Still wait before retrying
+                elapsed_time_in_seconds += 5
+    
+    async def monitor_task_status_async(self, task_id, on_complete_callback=None):
+        """
+        Asynchronously monitor task status until succeeded, then download and extract the result file
+        
+        Args:
+            task_id (str): The task ID to monitor
+            on_complete (callable, optional): Callback function to call when task completes
+                                             with the task directory as argument
+        
+        Returns:
+            str: Path to the extracted task directory
+        """
+        import asyncio
+        
+        task_url = f"{self.base_url}/{task_id}"
+        elapsed_time_in_seconds = 0
+        estimated_time_in_seconds = 75  # 75 seconds is the estimated time for a high subdivision level USD model
+        
+        while True:
+            try:
+                response = requests.get(task_url, headers=self._get_headers())
+                if response.status_code != 200:
+                    raise Exception(f"Error fetching task status: {response.text}")
+                    
+                task_data = response.json()
+                status = task_data.get("status")
+                
+                if status == "succeeded":
+                    file_url = task_data.get("content", {}).get("file_url")
+                    if not file_url:
+                        raise Exception("No file URL found in the response")
+                    
+                    result_path = self._download_files_for_completed_task(task_id, file_url)
+                    
+                    # Call the callback if provided
+                    if on_complete_callback and callable(on_complete_callback):
+                        on_complete_callback(task_id, status, result_path)
+                    
+                    return result_path
+                
+                if status == "failed":
+                    raise Exception(f"Task failed: {task_data}")
+                elif status == "running":
+                    # Calculate an estimated completion percentage
+                    completion_ratio = min(100, int((elapsed_time_in_seconds / estimated_time_in_seconds) * 100))
+                    print(f"Task {task_id} is generating. Progress: {completion_ratio}% complete. Waiting for completion...")
+                
+                # Asynchronously sleep for 5 seconds before checking again
+                await asyncio.sleep(5)
+                elapsed_time_in_seconds += 5
+            except Exception as e:
+                print(f"Error monitoring task {task_id}: {str(e)}")
+                traceback.print_exc()
+                await asyncio.sleep(5)  # Wait before retrying
+                elapsed_time_in_seconds += 5
+    
+    def generate_3d_from_text(self, text_prompt):
+        """Generate a 3D model from text input and return the task ID"""
+        # Add default options for USD generation if not already present
+        if "--subdivision_level" not in text_prompt:
+            text_prompt += " --subdivision_level high"
+        if "--fileformat" not in text_prompt:
+            text_prompt += " --fileformat usd"
+            
+        payload = {
+            "model": self.model_name,
+            "content": [
+                {
+                    "type": "text",
+                    "text": text_prompt
+                }
+            ]
+        }
+        
+        response = requests.post(
+            self.base_url,
+            headers=self._get_headers(),
+            json=payload
+        )
+        
+        if response.status_code != 200:
+            raise Exception(f"Error generating 3D model: {response.text}")
+        
+        return response.json().get("id")
+    
+    def generate_3d_from_image(self, image_url, text_options="--subdivision_level high --fileformat glb --watermark true"):
+        """Generate a 3D model from an image URL and return the task ID"""
+        """
+        Generate a 3D model from an image URL and return the task ID
+        
+        Args:
+            image_url (str): URL of the image to generate 3D model from
+            text_options (str): Additional options for the generation
+            
+        Returns:
+            str: Task ID for the generation job
+        """
+        # Add default options for USD generation if not already present
+        if "--subdivision_level" not in text_options:
+            text_options += " --subdivision_level high"
+        if "--fileformat" not in text_options:
+            text_options += " --fileformat usd"
+        if "--watermark" not in text_options:
+            text_options += " --watermark true"
+        payload = {
+            "model": self.model_name,
+            "content": [
+                {
+                    "type": "image_url",
+                    "image_url": {
+                        "url": image_url
+                    }
+                },
+                {
+                    "type": "text",
+                    "text": text_options
+                }
+            ]
+        }
+        
+        response = requests.post(
+            self.base_url,
+            headers=self._get_headers(),
+            json=payload
+        )
+        
+        if response.status_code != 200:
+            raise Exception(f"Error generating 3D model from image: {response.text}")
+        
+        return response.json().get("id")
+
+
+
+
 # Blender UI Panel
 class BLENDERMCP_PT_Panel(bpy.types.Panel):
     bl_label = "Blender MCP"
@@ -1389,11 +1868,15 @@ class BLENDERMCP_PT_Panel(bpy.types.Panel):
         layout.prop(scene, "blendermcp_use_polyhaven", text="Use assets from Poly Haven")
 
         layout.prop(scene, "blendermcp_use_hyper3d", text="Use Hyper3D Rodin 3D model generation")
+        layout.prop(scene, "blendermcp_use_beaver3d", text="Use Beaver3D 3D model generation")
         if scene.blendermcp_use_hyper3d:
             layout.prop(scene, "blendermcp_hyper3d_mode", text="Rodin Mode")
             layout.prop(scene, "blendermcp_hyper3d_api_key", text="API Key")
             layout.operator("blendermcp.set_hyper3d_free_trial_api_key", text="Set Free Trial API Key")
         
+        if scene.blendermcp_use_beaver3d:
+            layout.prop(scene, "blendermcp_beaver3d_api_key", text="API Key")
+
         if not scene.blendermcp_server_running:
             layout.operator("blendermcp.start_server", text="Connect to MCP server")
         else:
@@ -1491,6 +1974,19 @@ def register():
         description="API Key provided by Hyper3D",
         default=""
     )
+    # Support Beaver3D
+    bpy.types.Scene.blendermcp_use_beaver3d = bpy.props.BoolProperty(
+        name="Use Beaver3D",
+        description="Enable Beaver3D generation integration",
+        default=False
+    )
+
+    bpy.types.Scene.blendermcp_beaver3d_api_key = bpy.props.StringProperty(
+        name="Beaver3D API Key",
+        subtype="PASSWORD",
+        description="API Key provided by Beaver3D",
+        default=""
+    )
     
     bpy.utils.register_class(BLENDERMCP_PT_Panel)
     bpy.utils.register_class(BLENDERMCP_OT_SetFreeTrialHyper3DAPIKey)
@@ -1516,6 +2012,8 @@ def unregister():
     del bpy.types.Scene.blendermcp_use_hyper3d
     del bpy.types.Scene.blendermcp_hyper3d_mode
     del bpy.types.Scene.blendermcp_hyper3d_api_key
+    del bpy.types.Scene.blendermcp_use_beaver3d
+    del bpy.types.Scene.blendermcp_beaver3d_api_key
 
     print("BlenderMCP addon unregistered")
 
