@@ -1,0 +1,18 @@
+{
+  "openai": {
+    "model": "gpt-4",
+    "temperature": 0.7,
+    "max_tokens": 2000,
+    "system_prompt": "You are a Blender assistant, helping users with 3D modeling and animation tasks.",
+    "additional_params": {
+      "response_format": { "type": "text" }
+    }
+  },
+  "log_level": "INFO",
+  "log_file": "blender_mcp_openai.log",
+  "json_logging": false,
+  "mcp_connection": {
+    "host": "localhost",
+    "port": 9876
+  }
+} 

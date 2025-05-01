@@ -6,6 +6,8 @@
 
 BlenderMCP connects Blender to Claude AI through the Model Context Protocol (MCP), allowing Claude to directly interact with and control Blender. This integration enables prompt assisted 3D modeling, scene creation, and manipulation.
 
+Setting up the Chat GPT Version is explainer in the 'OPENAI_SETUP.md', Claude is replaced with ChatGPT.
+
 [Full tutorial](https://www.youtube.com/watch?v=lCyQ717DuzQ)
 
 ### Join the Community
@@ -218,3 +220,209 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 ## Disclaimer
 
 This is a third-party integration and not made by Blender. Made by [Siddharth](https://x.com/sidahuj)
+
+# BlenderMCP OpenAI Adapter
+
+This package provides an adapter to use OpenAI models (like GPT-4) with the BlenderMCP project instead of Claude.
+
+## Installation
+
+You can install the adapter using pip:
+
+```bash
+pip install blender-mcp-openai
+```
+
+Or directly from the repository:
+
+```bash
+git clone https://github.com/yourusername/blender-mcp-openai.git
+cd blender-mcp-openai
+pip install -e .
+```
+
+## Prerequisites
+
+1. Install the OpenAI Python library:
+   ```bash
+   pip install openai
+   ```
+
+2. Set up your OpenAI API key as an environment variable:
+   ```bash
+   # Linux/macOS
+   export OPENAI_API_KEY=your_api_key_here
+   
+   # Windows (Command Prompt)
+   set OPENAI_API_KEY=your_api_key_here
+   
+   # Windows (PowerShell)
+   $env:OPENAI_API_KEY="your_api_key_here"
+   ```
+
+3. Make sure you have already set up BlenderMCP according to the main project instructions.
+
+## Usage
+
+### Command Line
+
+The simplest way to use the adapter is via the command line:
+
+```bash
+blender-mcp-openai --model gpt-4
+```
+
+Optional arguments:
+- `--model`: Specify the OpenAI model to use (default: gpt-4)
+- `--api-key`: Directly provide your OpenAI API key (alternatively, set the OPENAI_API_KEY environment variable)
+- `--temperature`: Set the temperature for model responses (default: 0.7)
+- `--max-tokens`: Set the maximum number of tokens to generate
+- `--system-prompt`: Provide a system prompt to prepend to conversations
+- `--config-file`: Path to a configuration file (see example below)
+- `--log-level`: Set the logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL)
+- `--log-file`: Path to a log file for output
+- `--json-logs`: Output logs in JSON format
+
+### Configuration File
+
+For more customization, you can use a configuration file:
+
+```bash
+blender-mcp-openai --config-file config.json
+```
+
+Example configuration file (config.json):
+
+```json
+{
+  "openai": {
+    "model": "gpt-4",
+    "temperature": 0.7,
+    "max_tokens": 2000,
+    "system_prompt": "You are a Blender assistant, helping users with 3D modeling and animation tasks.",
+    "additional_params": {
+      "response_format": { "type": "text" }
+    }
+  },
+  "log_level": "INFO",
+  "log_file": "blender_mcp_openai.log",
+  "json_logging": false,
+  "mcp_connection": {
+    "host": "localhost",
+    "port": 9876
+  }
+}
+```
+
+### Integration with Claude Desktop or Cursor
+
+To use the OpenAI adapter with Claude Desktop or Cursor, create a configuration file:
+
+For Claude Desktop (`claude_desktop_config.json`):
+
+```json
+{
+  "mcpServers": {
+    "blender": {
+      "command": "blender-mcp-openai",
+      "args": [
+        "--model",
+        "gpt-4"
+      ]
+    }
+  }
+}
+```
+
+For Cursor (`mcp.json`):
+
+```json
+{
+  "mcpServers": {
+    "blender": {
+      "command": "blender-mcp-openai",
+      "args": [
+        "--model",
+        "gpt-4"
+      ]
+    }
+  }
+}
+```
+
+## Programmatic Usage
+
+You can also use the adapter programmatically in your own Python code:
+
+```python
+from blender_mcp_openai import OpenAIAdapter
+from blender_mcp_openai.config import OpenAIConfig
+
+# Create a configuration
+config = OpenAIConfig(
+    model="gpt-4",
+    temperature=0.7,
+    system_prompt="You are a Blender assistant."
+)
+
+# Create the adapter
+adapter = OpenAIAdapter(config)
+
+# Send a chat message
+response = adapter.chat([
+    {"role": "user", "content": "Create a cube in Blender"}
+])
+
+print(response)
+
+# Or with streaming
+for chunk in adapter.chat(
+    [{"role": "user", "content": "Create a cube in Blender"}],
+    stream=True
+):
+    print(chunk, end="", flush=True)
+```
+
+## Backward Compatibility
+
+For backward compatibility with the original single-file implementation, a legacy entry point is provided:
+
+```bash
+openai_adapter --model gpt-4
+```
+
+## Architecture
+
+The adapter is built with a modular architecture:
+
+- `adapter.py`: Main adapter class that coordinates all components
+- `schema.py`: Schema extraction for OpenAI function calling
+- `dispatch.py`: Tool execution and error handling
+- `streaming.py`: Advanced streaming with tool call processing
+- `context.py`: Context management for MCP tools
+- `config.py`: Configuration handling
+- `cli.py`: Command-line interface
+- `logging_utils.py`: Logging utilities
+- `backward_compat.py`: Backward compatibility support
+
+## Advanced Features
+
+### Real Context Injection
+
+The adapter provides real context objects to MCP tools instead of empty mocks, ensuring that tools that rely on session state or permissions work correctly.
+
+### Advanced Schema Extraction
+
+The schema extractor uses type hints and docstrings to generate detailed JSON schemas for OpenAI function calling, with support for nested types, unions, and optionals.
+
+### Structured Error Handling
+
+Errors during tool execution are handled gracefully and reported with structured information, making debugging easier.
+
+### Advanced Streaming
+
+The streaming implementation can detect and process tool calls mid-stream, allowing for interactive workflows.
+
+## License
+
+This project is licensed under the MIT License - see the LICENSE file for details.

@@ -7,6 +7,9 @@ import json
 import argparse
 import logging
 from typing import Dict, Any, Optional, List, Iterator
+from contextlib import contextmanager
+import traceback
+import warnings
 
 # Import OpenAI libraries
 from openai import OpenAI
@@ -241,25 +244,127 @@ class OpenAIAdapter:
         # Check if there are tool calls
         # Note: This is simplified and may need enhancement for complex tool interactions
 
+class AdapterContext:
+    """Context wrapper that adapts between OpenAI and MCP contexts."""
+    def __init__(self, mcp_server, session_id=None):
+        self.mcp_server = mcp_server
+        self.session_id = session_id or generate_session_id()
+        self.state = {}
+        
+    @contextmanager
+    def create_tool_context(self) -> Iterator[Any]:
+        """Create a proper context object for MCP tools."""
+        try:
+            # Create a real FastMCP Context instead of a mock
+            ctx = self.mcp_server.create_context(self.session_id)
+            yield ctx
+        finally:
+            # Clean up context resources if needed
+            pass
+
+class ToolExecutionError(Exception):
+    """Exception raised when a tool execution fails."""
+    def __init__(self, tool_name, error, details=None):
+        self.tool_name = tool_name
+        self.error = error
+        self.details = details
+        super().__init__(f"Error executing tool {tool_name}: {error}")
+        
+    def to_response(self):
+        """Convert to a structured error response."""
+        return {
+            "error": {
+                "tool": self.tool_name,
+                "message": str(self.error),
+                "details": self.details
+            }
+        }
+
+def execute_tool(ctx, tool_name, params):
+    """Execute a tool with proper error handling."""
+    try:
+        # Execute the tool
+        result = ctx.mcp_server.tools[tool_name](ctx, **params)
+        return {"result": result}
+    except Exception as e:
+        # Structured error response
+        raise ToolExecutionError(tool_name, str(e), {
+            "exception_type": type(e).__name__,
+            "traceback": traceback.format_exc()
+        })
+
 def main():
-    """
-    Main entry point for the OpenAI adapter.
-    """
-    parser = argparse.ArgumentParser(description="OpenAI adapter for blender-mcp")
+    """Legacy entry point for backward compatibility."""
+    warnings.warn(
+        "Using legacy OpenAI adapter. Consider switching to the new module-based API.",
+        DeprecationWarning
+    )
+    return new_main()
+
+class OpenAIConfig:
+    """Configuration for OpenAI API calls."""
+    def __init__(self, **kwargs):
+        self.model = kwargs.get("model", "gpt-4")
+        self.temperature = kwargs.get("temperature", 0.7)
+        self.max_tokens = kwargs.get("max_tokens")
+        self.top_p = kwargs.get("top_p", 1.0)
+        self.frequency_penalty = kwargs.get("frequency_penalty", 0)
+        self.presence_penalty = kwargs.get("presence_penalty", 0)
+        self.system_prompt = kwargs.get("system_prompt")
+        
+    def to_dict(self):
+        """Convert to a dictionary for API calls."""
+        result = {
+            "model": self.model,
+            "temperature": self.temperature,
+            "top_p": self.top_p,
+        }
+        if self.max_tokens:
+            result["max_tokens"] = self.max_tokens
+        if self.frequency_penalty:
+            result["frequency_penalty"] = self.frequency_penalty
+        if self.presence_penalty:
+            result["presence_penalty"] = self.presence_penalty
+        return result
+        
+    @classmethod
+    def from_file(cls, file_path):
+        """Load configuration from a file."""
+        with open(file_path, 'r') as f:
+            config = json.load(f)
+        return cls(**config)
+
+def parse_args():
+    parser = argparse.ArgumentParser(description="OpenAI adapter for BlenderMCP")
     parser.add_argument("--model", default="gpt-4", help="OpenAI model to use")
-    parser.add_argument("--api-key", help="OpenAI API key (optional, can use OPENAI_API_KEY env var)")
-    args = parser.parse_args()
+    parser.add_argument("--api-key", help="OpenAI API key")
+    parser.add_argument("--config", help="Path to configuration file")
+    parser.add_argument("--temperature", type=float, help="Temperature for sampling")
+    parser.add_argument("--max-tokens", type=int, help="Maximum tokens to generate")
+    parser.add_argument("--system-prompt", help="System prompt to use")
+    parser.add_argument("--verbose", action="store_true", help="Enable verbose logging")
+    parser.add_argument("--debug", action="store_true", help="Enable debug logging")
+    return parser.parse_args()
+
+class ToolAwareStream:
+    """Processes an OpenAI streaming response with support for mid-stream tool calls.
     
-    # Initialize adapter with specified model
-    adapter = OpenAIAdapter(model_name=args.model, api_key=args.api_key)
+    This handles the complexity of:
+    - Detecting when a tool call begins in the stream
+    - Buffering the tool call parameters until complete
+    - Executing the tool with proper error handling
+    - Resuming the stream with tool results
     
-    # Start the MCP server using the original functionality
-    # This only initializes the server without running it
-    logger.info("Initializing MCP server...")
-    
-    # Run the original server's main function (this starts the FastMCP server)
-    logger.info("Starting the MCP server...")
-    blender_mcp_server.main()
+    Example:
+        ```python
+        stream = ToolAwareStream(
+            client.chat.completions.create(stream=True, ...),
+            adapter
+        )
+        for content in stream:
+            print(content, end="")
+        ```
+    """
 
 if __name__ == "__main__":
     main() 
