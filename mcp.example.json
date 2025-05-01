@@ -1,0 +1,13 @@
+{
+    "mcpServers": {
+        "blender": {
+            "command": "blender-mcp-openai",
+            "args": [
+                "--model",
+                "gpt-4",
+                "--system-prompt",
+                "You are a helpful Blender assistant, skilled in 3D modeling, animation, and rendering."
+            ]
+        }
+    }
+} 
