@@ -1,0 +1,12 @@
+{
+    "mcpServers": {
+        "blender": {
+            "command": "python",
+            "args": [
+                "openai_adapter.py",
+                "--model",
+                "gpt-4"
+            ]
+        }
+    }
+} 
