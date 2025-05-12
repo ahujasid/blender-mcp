@@ -1,3 +1,17 @@
+<div align="center" markdown="1">
+   <sup>Special thanks to:</sup>
+   <br>
+   <br>
+   <a href="https://www.warp.dev/blender-mcp">
+      <img alt="Warp sponsorship" width="400" src="https://github.com/user-attachments/assets/c21102f7-bab9-4344-a731-0cf6b341cab2">
+   </a>
+
+### [Warp, the intelligent terminal for developers](https://www.warp.dev/blender-mcp)
+[Available for MacOS, Linux, & Windows](https://www.warp.dev/blender-mcp)<br>
+
+</div>
+<hr>
+
 # BlenderMCP - Blender Model Context Protocol Integration
 
 BlenderMCP connects Blender to Claude AI through the Model Context Protocol (MCP), allowing Claude to directly interact with and control Blender. This integration enables prompt assisted 3D modeling, scene creation, and manipulation.
