@@ -1386,6 +1386,7 @@ class BLENDERMCP_PT_Panel(bpy.types.Panel):
         scene = context.scene
         
         layout.prop(scene, "blendermcp_port")
+        layout.prop(scene, "blendermcp_host_all_interfaces")
         layout.prop(scene, "blendermcp_use_polyhaven", text="Use assets from Poly Haven")
 
         layout.prop(scene, "blendermcp_use_hyper3d", text="Use Hyper3D Rodin 3D model generation")
@@ -1419,10 +1420,14 @@ class BLENDERMCP_OT_StartServer(bpy.types.Operator):
     
     def execute(self, context):
         scene = context.scene
+
+        host = 'localhost'
+        if scene.blendermcp_host_all_interfaces:
+            host = '0.0.0.0'
         
         # Create a new server instance
         if not hasattr(bpy.types, "blendermcp_server") or not bpy.types.blendermcp_server:
-            bpy.types.blendermcp_server = BlenderMCPServer(port=scene.blendermcp_port)
+            bpy.types.blendermcp_server = BlenderMCPServer(host=host, port=scene.blendermcp_port)
         
         # Start the server
         bpy.types.blendermcp_server.start()
@@ -1456,6 +1461,12 @@ def register():
         default=9876,
         min=1024,
         max=65535
+    )
+    
+    bpy.types.Scene.blendermcp_host_all_interfaces = bpy.props.BoolProperty(
+        name="All interfaces",
+        description="Serve on all interfaces to allow remote connection",
+        default=False
     )
     
     bpy.types.Scene.blendermcp_server_running = bpy.props.BoolProperty(
@@ -1511,6 +1522,7 @@ def unregister():
     bpy.utils.unregister_class(BLENDERMCP_OT_StopServer)
     
     del bpy.types.Scene.blendermcp_port
+    del bpy.types.Scene.blendermcp_host_all_interfaces
     del bpy.types.Scene.blendermcp_server_running
     del bpy.types.Scene.blendermcp_use_polyhaven
     del bpy.types.Scene.blendermcp_use_hyper3d
