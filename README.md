@@ -125,6 +125,12 @@ For Windows users, go to Settings > MCP > Add Server, add a new server with the 
 }
 ```
 
+### Remote Blender Access
+
+If connecting to blender on a remote machine pass the host name to the blender mcp server using the environmental variable BLENDER_SERVER_HOST.
+
+Ensure in the blender addon configuration you have selected "All interfaces" before starting the connection.
+
 [Cursor setup video](https://www.youtube.com/watch?v=wgWsJshecac)
 
 **⚠️ Only run one instance of the MCP server (either on Cursor or Claude Desktop), not both**
