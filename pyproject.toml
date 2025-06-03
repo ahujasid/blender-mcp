@@ -1,6 +1,6 @@
 [project]
-name = "blender-mcp-multimodal-upgrade"
-version = "0.1.0"
+name = "blender-mcp"
+version = "1.1.3"
 description = "Blender integration through the Model Context Protocol"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -18,7 +18,7 @@ dependencies = [
 ]
 
 [project.scripts]
-blender-mcp = "src.server:main"
+blender-mcp = "blender_mcp.server:main"
 
 [build-system]
 requires = ["setuptools>=61.0", "wheel"]
@@ -28,5 +28,5 @@ build-backend = "setuptools.build_meta"
 package-dir = {"" = "src"}
 
 [project.urls]
-"Homepage" = "https://github.com/JuanBerta/blender-mcp"
-"Bug Tracker" = "https://github.com/JuanBerta/blender-mcp/issues"
+"Homepage" = "https://github.com/yourusername/blender-mcp"
+"Bug Tracker" = "https://github.com/yourusername/blender-mcp/issues"
