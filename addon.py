@@ -1,4 +1,8 @@
+# Blender MCP Addon
 # Code created by Siddharth Ahuja: www.github.com/ahujasid © 2025
+# This addon connects Blender to various Large Language Models (LLMs) via the MCP server,
+# allowing for scene analysis, asset integration (Poly Haven, Hyper3D), and includes
+# a screenshot history feature for visual context during LLM interactions.
 
 import bpy
 import mathutils
@@ -14,6 +18,8 @@ import shutil
 from bpy.props import StringProperty, IntProperty, BoolProperty, EnumProperty
 import io
 from contextlib import redirect_stdout
+from pathlib import Path
+from datetime import datetime
 
 bl_info = {
     "name": "Blender MCP",
@@ -28,6 +34,22 @@ bl_info = {
 RODIN_FREE_TRIAL_KEY = (
     "k9TcfFoEhNd9cCPP2guHAHHHkctZHIRhZDywZ1euGUXwihbYLpOjQhofby80NJez"
 )
+
+# --- Screenshot Configuration ---
+# Screenshots for history are stored in the user's Blender datafiles directory,
+# typically found under: .../Blender/[version]/datafiles/blender_mcp_screenshots/
+SCREENSHOT_DIR_PATH = Path(bpy.utils.user_resource('DATAFILES', path="blender_mcp_screenshots"))
+
+def _ensure_screenshot_dir_exists():
+    """Ensures the screenshot directory exists."""
+    os.makedirs(SCREENSHOT_DIR_PATH, exist_ok=True)
+
+def get_screenshot_filepath():
+    """Generates a unique filepath for a new screenshot."""
+    _ensure_screenshot_dir_exists()
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    return SCREENSHOT_DIR_PATH / f"capture_{timestamp}.png"
+# --- End Screenshot Configuration ---
 
 
 class BlenderMCPServer:
@@ -1587,6 +1609,8 @@ class BLENDERMCP_PT_Panel(bpy.types.Panel):
         elif scene.mcp_llm_backend == "ollama":
             layout.prop(scene, "mcp_ollama_model_name", text="Ollama Model")
 
+        layout.prop(scene, "mcp_screenshot_history_limit")
+
         if not scene.blendermcp_server_running:
             layout.operator("blendermcp.start_server", text="Connect to MCP server")
         else:
@@ -1594,10 +1618,57 @@ class BLENDERMCP_PT_Panel(bpy.types.Panel):
             layout.label(text=f"Running on port {scene.blendermcp_port}")
 
 
-def render_and_save_image(filepath="/tmp/blender_mcp_view.png"):
-    bpy.context.scene.render.filepath = filepath
+def render_and_save_image():
+    """
+    Renders the current 3D viewport view and saves it as a PNG image.
+
+    This function handles:
+    - Generating a unique, timestamped filename for the screenshot.
+    - Saving the screenshot to the directory specified by SCREENSHOT_DIR_PATH.
+    - Managing a history of screenshots: older screenshots are deleted if the
+      total number exceeds the limit defined by the 'Screenshot History Limit'
+      setting in the BlenderMCP addon panel.
+    - Returns the full string path to the newly saved screenshot, which is then
+      typically sent to the LLM for analysis.
+    """
+
+    # Get history limit from scene properties
+    history_limit = bpy.context.scene.mcp_screenshot_history_limit
+    # If limit is 0 or less, default to keeping at least 1 screenshot
+    if history_limit < 1:
+        history_limit = 1
+
+    new_image_path_obj = get_screenshot_filepath()
+    new_image_path_str = str(new_image_path_obj)
+
+    bpy.context.scene.render.filepath = new_image_path_str
     bpy.ops.render.opengl(write_still=True)
-    return filepath
+
+    # Manage history
+    try:
+        # Ensure the directory exists before listing
+        _ensure_screenshot_dir_exists()
+
+        # Get all .png files in the directory
+        screenshots = list(SCREENSHOT_DIR_PATH.glob("*.png"))
+
+        # Sort by name (which corresponds to timestamp)
+        screenshots.sort(key=lambda p: p.name)
+
+        # If history limit exceeded, remove oldest ones
+        if len(screenshots) > history_limit:
+            num_to_delete = len(screenshots) - history_limit
+            for i in range(num_to_delete):
+                try:
+                    os.remove(screenshots[i])
+                    print(f"Removed old screenshot: {screenshots[i]}")
+                except OSError as e:
+                    print(f"Error removing screenshot {screenshots[i]}: {e}")
+
+    except Exception as e:
+        print(f"Error managing screenshot history: {e}")
+
+    return new_image_path_str
 
 
 def extract_scene_summary():
@@ -1620,7 +1691,11 @@ class MCP_OT_AskLLMAboutScene(bpy.types.Operator):
         metadata = extract_scene_summary()
         backend = context.scene.mcp_llm_backend
 
-        response = query_llm(backend=backend, image_path=image_path, metadata=metadata)
+        if backend == "ollama":
+            ollama_model_name = context.scene.mcp_ollama_model_name
+            response = query_llm(backend=backend, image_path=image_path, metadata=metadata, ollama_model_name=ollama_model_name)
+        else:
+            response = query_llm(backend=backend, image_path=image_path, metadata=metadata)
 
         self.report({"INFO"}, response[:400])
         print("LLM Response:", response)
@@ -1717,6 +1792,13 @@ def register():
         default="gemma3:4b",
     )
 
+    bpy.types.Scene.mcp_screenshot_history_limit = bpy.props.IntProperty(
+        name="Screenshot History Limit",
+        description="Maximum number of screenshots to keep. Set to 0 to keep only 1.",
+        default=10,
+        min=0
+    )
+
     bpy.types.Scene.blendermcp_server_running = bpy.props.BoolProperty(
         name="Server Running", default=False
     )
@@ -1779,6 +1861,7 @@ def unregister():
     del bpy.types.Scene.mcp_llm_backend
     del bpy.types.Scene.mcp_claude_model_name
     del bpy.types.Scene.mcp_ollama_model_name
+    del bpy.types.Scene.mcp_screenshot_history_limit
 
     print("BlenderMCP addon unregistered")
 
