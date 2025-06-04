@@ -51,6 +51,208 @@ def get_screenshot_filepath():
     return SCREENSHOT_DIR_PATH / f"capture_{timestamp}.png"
 # --- End Screenshot Configuration ---
 
+# --- Utility Functions for Complex Object Creation ---
+# These functions are intended to be callable via the 'execute_code' MCP command,
+# allowing an LLM to request the creation of these procedurally generated objects.
+
+def create_modified_cube(name="ModifiedCube", size=2, subdiv_levels=2, bevel_width=0.05, bevel_segments=2, solidify_thickness=0.1, displace_strength=0.2, displace_midlevel=0.5, base_location=(0,0,0)):
+    """
+    Creates a cube with several modifiers applied for a more complex shape.
+    Intended for use by an LLM via the 'execute_code' command.
+
+    Parameters:
+    - name (str): Name for the new cube object.
+    - size (float): Size of the initial cube.
+    - subdiv_levels (int): Viewport and render subdivision levels for the Subdivision Surface modifier.
+    - bevel_width (float): Width for the Bevel modifier.
+    - bevel_segments (int): Number of segments for the Bevel modifier.
+    - solidify_thickness (float): Thickness for the Solidify modifier.
+    - displace_strength (float): Strength for the Displace modifier.
+    - displace_midlevel (float): Midlevel for the Displace modifier.
+    - base_location (tuple): (x, y, z) location for the cube.
+
+    Returns:
+    bpy.types.Object: The created and modified cube object.
+    """
+    bpy.ops.mesh.primitive_cube_add(size=size, location=base_location)
+    obj = bpy.context.object
+    obj.name = name
+
+    # Subdivision Surface
+    subdiv_mod = obj.modifiers.new(name="Subdivision", type='SUBSURF')
+    subdiv_mod.levels = subdiv_levels
+    subdiv_mod.render_levels = subdiv_levels # Match viewport and render levels
+
+    # Bevel
+    bevel_mod = obj.modifiers.new(name="Bevel", type='BEVEL')
+    bevel_mod.width = bevel_width
+    bevel_mod.segments = bevel_segments
+
+    # Solidify
+    solidify_mod = obj.modifiers.new(name="Solidify", type='SOLIDIFY')
+    solidify_mod.thickness = solidify_thickness
+
+    # Displace
+    displace_mod = obj.modifiers.new(name="Displace", type='DISPLACE')
+    tex_name = f"{name}_DisplaceTex"
+    # Check if texture already exists, reuse if so, otherwise create
+    if tex_name in bpy.data.textures:
+        displace_tex = bpy.data.textures[tex_name]
+    else:
+        displace_tex = bpy.data.textures.new(name=tex_name, type='CLOUDS')
+
+    displace_mod.texture = displace_tex
+    displace_mod.strength = displace_strength
+    displace_mod.mid_level = displace_midlevel
+
+    return obj
+
+def create_voronoi_rock(name="Rock", size=1.0, voronoi_scale=1.0, voronoi_randomness=1.0, subdiv_levels=2, smooth_iterations=5, base_location=(0,0,0)):
+    """
+    Creates a rock-like object using an IcoSphere and Voronoi displacement.
+    Intended for use by an LLM via the 'execute_code' command.
+
+    Parameters:
+    - name (str): Name for the new rock object.
+    - size (float): Approximate overall size of the rock (scales the base IcoSphere radius).
+    - voronoi_scale (float): Scale for the Voronoi texture used in displacement.
+    - voronoi_randomness (float): 'Intensity' for the Voronoi texture, affecting feature randomness/strength.
+    - subdiv_levels (int): Viewport and render subdivision levels for the Subdivision Surface modifier.
+    - smooth_iterations (int): Number of iterations for the Smooth modifier.
+    - base_location (tuple): (x, y, z) location for the rock.
+
+    Returns:
+    bpy.types.Object: The created rock object.
+    """
+    bpy.ops.mesh.primitive_ico_sphere_add(subdivisions=3, radius=size/2, location=base_location) # Using radius for ico_sphere, so size/2
+    obj = bpy.context.object
+    obj.name = name
+    # obj.scale = (size, size, size) # Scaling applied to radius already
+
+    # Displace
+    displace_mod = obj.modifiers.new(name="Displace", type='DISPLACE')
+    tex_name = f"{name}_VoronoiTex"
+    if tex_name in bpy.data.textures:
+        voronoi_tex = bpy.data.textures[tex_name]
+    else:
+        voronoi_tex = bpy.data.textures.new(name=tex_name, type='VORONOI')
+
+    voronoi_tex.noise_scale = voronoi_scale
+    # For Voronoi, 'nabla' is not directly 'randomness'.
+    # Blender's Voronoi texture has parameters like 'intensity', 'distance_metric', etc.
+    # We'll use intensity as a proxy for randomness/strength of displacement features.
+    # A common way to control "randomness" is through the noise_scale or by affecting the texture coordinates.
+    # For simplicity, we'll map voronoi_randomness to intensity, assuming higher means more varied displacement.
+    voronoi_tex.intensity = voronoi_randomness # Using intensity, ensure it's a valid range or map it. Default is 1.0.
+
+    displace_mod.texture = voronoi_tex
+    displace_mod.strength = 1.0 # Usually, Voronoi displacement strength is controlled by texture output
+
+    # Subdivision Surface
+    subdiv_mod = obj.modifiers.new(name="Subdivision", type='SUBSURF')
+    subdiv_mod.levels = subdiv_levels
+    subdiv_mod.render_levels = subdiv_levels
+
+    # Smooth
+    smooth_mod = obj.modifiers.new(name="Smooth", type='SMOOTH')
+    smooth_mod.iterations = smooth_iterations
+
+    return obj
+
+def create_parametric_gear(name="Gear", teeth=12, radius=1.0, addendum=0.1, dedendum=0.125, bevel_width=0.02, bevel_segments=2, solidify_thickness=0.2, base_location=(0,0,0)):
+    """
+    Creates a gear-like object. Attempts to use the 'Add Mesh: Extra Objects' addon's
+    gear primitive. If unavailable or it fails, creates a cylinder placeholder.
+    Intended for use by an LLM via the 'execute_code' command.
+
+    Parameters:
+    - name (str): Name for the new gear object.
+    - teeth (int): Number of teeth for the gear.
+    - radius (float): Radius of the gear.
+    - addendum (float): Addendum of the gear teeth.
+    - dedendum (float): Dedendum of the gear teeth.
+    - bevel_width (float): Width for the Bevel modifier.
+    - bevel_segments (int): Number of segments for the Bevel modifier.
+    - solidify_thickness (float): Thickness for the Solidify modifier (used if gear is 2D or for placeholder).
+    - base_location (tuple): (x, y, z) location for the gear.
+
+    Returns:
+    bpy.types.Object: The created gear object (or cylinder placeholder).
+    """
+    obj = None
+    text_obj = None
+    if hasattr(bpy.ops.mesh, 'primitive_gear_add'):
+        try:
+            bpy.ops.mesh.primitive_gear_add(
+                num_teeth=teeth,
+                radius=radius,
+                addendum=addendum,
+                dedendum=dedendum,
+                base_radius=radius - addendum - dedendum, # Example derived parameter
+                location=base_location,
+                align='WORLD', # Ensure consistent alignment
+                # Other params like 'width' (for thickness) might exist, or use solidify
+            )
+            obj = bpy.context.object
+            obj.name = name
+            # If gear has its own thickness/width, solidify might be redundant or need adjustment
+            # For now, we assume it creates a 2D profile that needs solidification
+        except TypeError as e:
+            print(f"Error calling primitive_gear_add (likely due to version differences in params): {e}")
+            obj = None # Ensure obj is None if creation failed
+
+    if obj is None: # Fallback if primitive_gear_add doesn't exist or failed
+        print("Add Mesh: Extra Objects (primitive_gear_add) not available or failed. Creating a cylinder placeholder.")
+        bpy.ops.mesh.primitive_cylinder_add(
+            vertices=teeth * 2, # Make it somewhat gear-like
+            radius=radius,
+            depth=solidify_thickness, # Use solidify_thickness for depth here
+            location=base_location,
+            end_fill_type='NGON'
+        )
+        obj = bpy.context.object
+        obj.name = name
+
+        # Add a text object indicating it's a placeholder
+        text_loc = (base_location[0], base_location[1], base_location[2] + radius + 0.2)
+        bpy.ops.object.text_add(location=text_loc)
+        text_obj = bpy.context.object
+        text_obj.data.body = f"Gear Placeholder (Extra Objects addon disabled or failed)"
+        text_obj.scale = (0.3, 0.3, 0.3) # Make text smaller
+        text_obj.parent = obj # Parent it for clarity
+
+    if obj: # Apply modifiers if we have a mesh object
+        # Bevel
+        bevel_mod = obj.modifiers.new(name="Bevel", type='BEVEL')
+        bevel_mod.width = bevel_width
+        bevel_mod.segments = bevel_segments
+        bevel_mod.limit_method = 'ANGLE' # Good for gears
+
+        # Solidify (might be redundant if gear addon creates thickness)
+        # Check if object already has volume before adding solidify
+        is_2d_profile = True # Assume it's 2D initially
+        if obj.type == 'MESH' and len(obj.data.polygons) > 0:
+            # A simple check: if all Z coords of vertices are very close, it might be flat
+            # This is a heuristic and might not be perfect.
+            verts = [v.co.z for v in obj.data.vertices]
+            if verts:
+                min_z, max_z = min(verts), max(verts)
+                if (max_z - min_z) > 0.001: # If there's some depth
+                    is_2d_profile = False
+
+        if is_2d_profile: # Only add solidify if it seems like a 2D profile
+             solidify_mod = obj.modifiers.new(name="Solidify", type='SOLIDIFY')
+             solidify_mod.thickness = solidify_thickness
+        elif not hasattr(bpy.ops.mesh, 'primitive_gear_add') or text_obj: # If it's the cylinder placeholder
+            # The cylinder placeholder already has depth from primitive_cylinder_add
+            pass # Don't add another solidify if it's the placeholder cylinder
+        else: # Gear from addon likely has its own thickness parameter
+            print(f"Gear '{name}' might have its own thickness. Solidify modifier skipped or may need adjustment.")
+
+
+    return obj # Return the main gear object, not the text placeholder if it exists
+# --- End Utility Functions ---
+
 
 class BlenderMCPServer:
     def __init__(self, host="localhost", port=9876):
@@ -229,6 +431,7 @@ class BlenderMCPServer:
             "get_polyhaven_status": self.get_polyhaven_status,
             "get_hyper3d_status": self.get_hyper3d_status,
             "import_model_from_path": self.import_model_from_path,
+            "get_mesh_details": self.get_mesh_details, # Added this line
         }
 
         # Add Polyhaven handlers only if enabled
@@ -366,7 +569,12 @@ class BlenderMCPServer:
         # This is powerful but potentially dangerous - use with caution
         try:
             # Create a local namespace for execution
-            namespace = {"bpy": bpy}
+            namespace = {
+                "bpy": bpy,
+                "create_modified_cube": create_modified_cube,
+                "create_voronoi_rock": create_voronoi_rock,
+                "create_parametric_gear": create_parametric_gear
+            }
 
             # Capture stdout during execution, and return it as result
             capture_buffer = io.StringIO()
@@ -1229,12 +1437,27 @@ class BlenderMCPServer:
                             3. Restart the connection to Claude""",
             }
 
-    def create_rodin_job(self, *args, **kwargs):
+    def create_rodin_job(self, tier: str = None, mesh_mode: str = None, *args, **kwargs):
+        # Note: *args is kept for backward compatibility if direct calls were made with positional args before text_prompt.
+        # However, new params like text_prompt, images, bbox_condition should be passed as kwargs.
+        # tier and mesh_mode are new optional params.
+
+        # Prepare a dictionary of parameters to pass, excluding None values for tier/mesh_mode if not provided
+        # This ensures that if they are None, they are not explicitly passed, allowing underlying functions
+        # to use their default Scene property fallbacks.
+        params_to_pass = kwargs.copy()
+        if tier is not None:
+            params_to_pass['tier'] = tier
+        if mesh_mode is not None:
+            params_to_pass['mesh_mode'] = mesh_mode
+
         match bpy.context.scene.blendermcp_hyper3d_mode:
             case "MAIN_SITE":
-                return self.create_rodin_job_main_site(*args, **kwargs)
+                return self.create_rodin_job_main_site(*args, **params_to_pass)
             case "FAL_AI":
-                return self.create_rodin_job_fal_ai(*args, **kwargs)
+                # fal_ai create_rodin_job_fal_ai doesn't use mesh_mode in its signature,
+                # but it's fine to pass it here; it will be ignored if not in **kwargs of the target.
+                return self.create_rodin_job_fal_ai(*args, **params_to_pass)
             case _:
                 return f"Error: Unknown Hyper3D Rodin mode!"
 
@@ -1243,18 +1466,31 @@ class BlenderMCPServer:
         text_prompt: str = None,
         images: list[tuple[str, str]] = None,
         bbox_condition=None,
+        tier: str = None,
+        mesh_mode: str = None,
     ):
         try:
             if images is None:
                 images = []
-            """Call Rodin API, get the job uuid and subscription key"""
+            """
+            Call Rodin API (Main Site) to create a generation job.
+            The 'tier' and 'mesh_mode' can be overridden by direct parameters from an MCP tool call,
+            otherwise they default to the values set in Blender's scene properties.
+            Valid values for tier/mesh_mode are API-specific and may require user experimentation
+            (e.g., tier: "Sketch", "Detailed"; mesh_mode: "Raw", "HighPoly").
+            """
+
+            # Resolve tier and mesh_mode: use parameters if provided, else fallback to scene properties
+            resolved_tier = tier if tier is not None else bpy.context.scene.mcp_hyper3d_tier
+            resolved_mesh_mode = mesh_mode if mesh_mode is not None else bpy.context.scene.mcp_hyper3d_mesh_mode
+
             files = [
                 *[
                     ("images", (f"{i:04d}{img_suffix}", img))
                     for i, (img_suffix, img) in enumerate(images)
                 ],
-                ("tier", (None, "Sketch")),
-                ("mesh_mode", (None, "Raw")),
+                ("tier", (None, resolved_tier)),
+                ("mesh_mode", (None, resolved_mesh_mode)),
             ]
             if text_prompt:
                 files.append(("prompt", (None, text_prompt)))
@@ -1277,10 +1513,16 @@ class BlenderMCPServer:
         text_prompt: str = None,
         images: list[tuple[str, str]] = None,
         bbox_condition=None,
+        tier: str = None,
+        # mesh_mode is not used by fal_ai variant currently
     ):
         try:
+            # Resolve tier: use parameter if provided, else fallback to scene property
+            # The 'tier' can be overridden by a direct parameter from an MCP tool call.
+            # Valid values are API-specific (e.g., "Sketch", "Detailed").
+            resolved_tier = tier if tier is not None else bpy.context.scene.mcp_hyper3d_tier
             req_data = {
-                "tier": "Sketch",
+                "tier": resolved_tier,
             }
             if images:
                 req_data["input_image_urls"] = images
@@ -1569,6 +1811,37 @@ class BlenderMCPServer:
 
         return {"imported_file": path, "type": ext}
 
+    def get_mesh_details(self, name: str):
+        """
+        Retrieves details for a specified mesh object.
+
+        Args:
+            name (str): The name of the mesh object to inspect.
+
+        Returns:
+            dict: A dictionary containing the mesh's name, vertex count,
+                  face count, and a list of modifier names.
+                  Returns an error dictionary if the object is not found or not a mesh.
+        """
+        obj = bpy.data.objects.get(name)
+        if not obj:
+            return {"error": f"Object not found: {name}"}
+
+        if obj.type != 'MESH':
+            return {"error": f"Object '{name}' is not a mesh (type: {obj.type})"}
+
+        mesh = obj.data
+        num_vertices = len(mesh.vertices)
+        num_faces = len(mesh.polygons)
+        modifiers_list = [mod.name for mod in obj.modifiers]
+
+        return {
+            "name": obj.name,
+            "vertices": num_vertices,
+            "faces": num_faces,
+            "modifiers": modifiers_list
+        }
+
     # endregion
 
 
@@ -1597,6 +1870,8 @@ class BLENDERMCP_PT_Panel(bpy.types.Panel):
         if scene.blendermcp_use_hyper3d:
             layout.prop(scene, "blendermcp_hyper3d_mode", text="Rodin Mode")
             layout.prop(scene, "blendermcp_hyper3d_api_key", text="API Key")
+            layout.prop(scene, "mcp_hyper3d_tier")
+            layout.prop(scene, "mcp_hyper3d_mesh_mode")
             layout.operator(
                 "blendermcp.set_hyper3d_free_trial_api_key",
                 text="Set Free Trial API Key",
@@ -1832,6 +2107,17 @@ def register():
         default="",
     )
 
+    bpy.types.Scene.mcp_hyper3d_tier = bpy.props.StringProperty(
+        name="Hyper3D Tier",
+        description="Generation tier for Hyper3D (e.g., Sketch, Detailed). API specific.",
+        default="Sketch"
+    )
+    bpy.types.Scene.mcp_hyper3d_mesh_mode = bpy.props.StringProperty(
+        name="Hyper3D Mesh Mode",
+        description="Mesh mode for Hyper3D (e.g., Raw, HighPoly). API specific.",
+        default="Raw"
+    )
+
     bpy.utils.register_class(BLENDERMCP_PT_Panel)
     bpy.utils.register_class(BLENDERMCP_OT_SetFreeTrialHyper3DAPIKey)
     bpy.utils.register_class(BLENDERMCP_OT_StartServer)
@@ -1857,6 +2143,8 @@ def unregister():
     del bpy.types.Scene.blendermcp_use_hyper3d
     del bpy.types.Scene.blendermcp_hyper3d_mode
     del bpy.types.Scene.blendermcp_hyper3d_api_key
+    del bpy.types.Scene.mcp_hyper3d_tier
+    del bpy.types.Scene.mcp_hyper3d_mesh_mode
 
     del bpy.types.Scene.mcp_llm_backend
     del bpy.types.Scene.mcp_claude_model_name
