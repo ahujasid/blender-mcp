@@ -6,6 +6,8 @@
 
 import bpy
 import mathutils
+import math # Added import math
+import random # Added import random
 import json
 import threading
 import socket
@@ -251,6 +253,316 @@ def create_parametric_gear(name="Gear", teeth=12, radius=1.0, addendum=0.1, dede
 
 
     return obj # Return the main gear object, not the text placeholder if it exists
+
+def create_pipe_joint(name="PipeJoint", main_pipe_radius=0.5, main_pipe_length=2.0, branch_pipe_radius=0.3, branch_pipe_length=1.5, branch_angle_degrees=90.0, segments=32, bevel_width=0.05, bevel_segments=3, base_location=(0,0,0)):
+    """
+    Creates a pipe joint using two cylinders and a boolean union.
+    Intended for use by an LLM via the 'execute_code' command.
+
+    The main pipe is aligned along the Y-axis by default.
+    The branch pipe's position and rotation are calculated for a T-junction
+    if branch_angle_degrees is 0, or an L-junction if 90 degrees (coming off the +Y end, bending towards +Z).
+    More complex angles/positions might require careful parameter adjustment by the LLM.
+
+    Parameters:
+    - name (str): Name for the new pipe joint object.
+    - main_pipe_radius (float): Radius of the main pipe.
+    - main_pipe_length (float): Length of the main pipe.
+    - branch_pipe_radius (float): Radius of the branch pipe.
+    - branch_pipe_length (float): Length of the branch pipe.
+    - branch_angle_degrees (float): Angle of the branch pipe relative to the main pipe's direction.
+                                     0 for T-junction, 90 for L-junction.
+    - segments (int): Number of vertices for the cylinders.
+    - bevel_width (float): Width for the Bevel modifier on the final joint.
+    - bevel_segments (int): Number of segments for the Bevel modifier.
+    - base_location (tuple): (x, y, z) base location for the joint.
+
+    Returns:
+    bpy.types.Object: The created pipe joint object.
+    """
+    # Main Cylinder (aligned along Y-axis)
+    bpy.ops.mesh.primitive_cylinder_add(
+        vertices=segments,
+        radius=main_pipe_radius,
+        depth=main_pipe_length,
+        location=(base_location[0], base_location[1] + main_pipe_length / 2, base_location[2]), # Centered for this example
+        rotation=(math.pi/2, 0, 0) # Rotate to align with Y-axis
+    )
+    main_cyl = bpy.context.object
+    main_cyl.name = f"{name}_Main"
+
+    # Branch Cylinder (initially aligned along Z-axis)
+    bpy.ops.mesh.primitive_cylinder_add(
+        vertices=segments,
+        radius=branch_pipe_radius,
+        depth=branch_pipe_length,
+        location=(base_location[0], base_location[1] + main_pipe_length / 2, base_location[2] + branch_pipe_length / 2) # Default position before rotation
+    )
+    branch_cyl = bpy.context.object
+    branch_cyl.name = f"{name}_Branch"
+
+    # Position and rotate branch cylinder
+    # For a 90-degree L-bend from the +Y end of main_cyl, pointing towards +Z:
+    # The main cylinder's effective "end" is at base_location[1] + main_pipe_length.
+    # For simplicity, this example creates a T-junction if angle is 0, or an L-bend.
+    # More complex scenarios would require more sophisticated positioning logic.
+
+    if math.isclose(branch_angle_degrees, 90.0):
+        # L-junction: Branch comes off the +Y end of the main pipe, pointing towards +Z
+        # Move branch origin to its base
+        branch_cyl.location = (
+            base_location[0],
+            base_location[1] + main_pipe_length, # At the end of the main pipe
+            base_location[2] + branch_pipe_length / 2 # Centered on its own length
+        )
+        # Rotation for L-bend (already Z-aligned, no further rotation needed if main is Y aligned)
+        # If it needed to bend in XY plane from Y-main, it would be rotation around Z.
+        # If it needs to bend in ZY plane (up/down) from Y-main, it's rotation around X.
+        # This example assumes branch points "up" (+Z) from a Y-aligned main pipe.
+        # Default cylinder is Z-aligned.
+
+    elif math.isclose(branch_angle_degrees, 0.0):
+        # T-junction: Branch comes from the center of the main pipe, pointing towards +Z
+        branch_cyl.location = (
+            base_location[0],
+            base_location[1] + main_pipe_length / 2, # Center of the main pipe
+            base_location[2] + main_pipe_radius + branch_pipe_length / 2 # Offset by main_pipe_radius
+        )
+    else:
+        # General case: position at center of main pipe, then rotate
+        # This is a simplified approach; true angled joints require more complex geometry/positioning
+        branch_cyl.location = (
+            base_location[0],
+            base_location[1] + main_pipe_length / 2,
+            base_location[2] + main_pipe_radius + branch_pipe_length / 2
+        )
+        branch_cyl.rotation_euler.rotate_axis('X', math.radians(branch_angle_degrees))
+
+
+    # Boolean Union
+    bpy.context.view_layer.objects.active = main_cyl
+    main_cyl.select_set(True)
+    branch_cyl.select_set(True) # Select both for some boolean solvers, though modifier uses object field
+
+    bool_mod = main_cyl.modifiers.new(name="BranchUnion", type='BOOLEAN')
+    bool_mod.object = branch_cyl
+    bool_mod.operation = 'UNION'
+    bool_mod.solver = 'FAST' # 'EXACT' can be slower but more robust for complex cases
+
+    try:
+        bpy.ops.object.modifier_apply({'object': main_cyl}, modifier=bool_mod.name)
+    except RuntimeError as e:
+        print(f"Error applying boolean modifier for {name}: {e}. The objects will be left separate.")
+        # Optionally, could parent here or leave as is
+        return main_cyl # Return main cylinder even if boolean fails, so something is returned
+
+    # Delete the separate branch object as it's now part of main_cyl
+    # Ensure branch_cyl is still valid and in current context if boolean failed and we didn't return
+    if branch_cyl.name in bpy.data.objects: # Check if it still exists
+        bpy.data.objects.remove(branch_cyl, do_unlink=True)
+
+    main_cyl.name = name # Rename the resulting object
+
+    # Bevel Modifier on the final joined mesh
+    bevel_mod = main_cyl.modifiers.new(name="Bevel", type='BEVEL')
+    bevel_mod.width = bevel_width
+    bevel_mod.segments = bevel_segments
+    bevel_mod.limit_method = 'ANGLE' # Often good for preventing bevels on flat surfaces
+
+    return main_cyl
+
+def create_simple_tree(name="SimpleTree", trunk_height=3.0, trunk_radius_bottom=0.3, trunk_radius_top=0.2, canopy_type='sphere', canopy_radius=1.5, canopy_elements=5, canopy_subdivisions=2, base_location=(0,0,0)):
+    """
+    Creates a simple tree with a tapered trunk and a choice of canopy styles.
+    Intended for use by an LLM via the 'execute_code' command.
+
+    Parameters:
+    - name (str): Name for the new tree (overall parent object if applicable).
+    - trunk_height (float): Height of the tree trunk.
+    - trunk_radius_bottom (float): Radius of the trunk at its base.
+    - trunk_radius_top (float): Radius of the trunk at its top.
+    - canopy_type (str): Type of canopy. Options: 'sphere', 'cone_cluster'.
+    - canopy_radius (float): Radius of the main canopy element(s).
+    - canopy_elements (int): Number of elements for 'sphere' canopy (clustered icospheres).
+                           For 'cone_cluster', this might represent number of cones (currently simplified to 1).
+    - canopy_subdivisions (int): Subdivisions for icospheres in 'sphere' canopy.
+    - base_location (tuple): (x, y, z) base location for the trunk.
+
+    Returns:
+    bpy.types.Object: The main parent object of the tree (usually the trunk or a canopy parent).
+    """
+
+    # Trunk (using a cone for simplicity of tapering)
+    trunk_location = (base_location[0], base_location[1], base_location[2] + trunk_height / 2)
+    bpy.ops.mesh.primitive_cone_add(
+        vertices=16,
+        radius1=trunk_radius_bottom,
+        radius2=trunk_radius_top,
+        depth=trunk_height,
+        location=trunk_location,
+        end_fill_type='NGON'
+    )
+    trunk = bpy.context.object
+    trunk.name = f"{name}_Trunk"
+
+    canopy_parent_object = trunk # Default parent is trunk
+    canopy_base_z = base_location[2] + trunk_height
+
+    if canopy_type == 'sphere':
+        # Create an Empty to parent sphere elements for easier manipulation if needed
+        bpy.ops.object.empty_add(type='PLAIN_AXES', location=(base_location[0], base_location[1], canopy_base_z))
+        canopy_parent = bpy.context.object
+        canopy_parent.name = f"{name}_CanopyParent"
+
+        for i in range(canopy_elements):
+            # Calculate somewhat random offset, ensuring spheres are mostly above canopy_base_z
+            offset_radius = canopy_radius * 0.6 # How far spheres can spread
+            rand_x = base_location[0] + random.uniform(-offset_radius, offset_radius)
+            rand_y = base_location[1] + random.uniform(-offset_radius, offset_radius)
+            # Ensure Z is mostly positive relative to canopy_base_z, but allow some overlap
+            rand_z = canopy_base_z + random.uniform(0, canopy_radius * 0.5)
+
+            current_radius = canopy_radius * random.uniform(0.7, 1.2)
+
+            bpy.ops.mesh.primitive_ico_sphere_add(
+                subdivisions=canopy_subdivisions,
+                radius=current_radius,
+                location=(rand_x, rand_y, rand_z)
+            )
+            sphere = bpy.context.object
+            sphere.name = f"{name}_CanopySphere_{i+1}"
+
+            # Optional: Add simple displace for variation
+            displace_mod = sphere.modifiers.new(name="DisplaceCanopy", type='DISPLACE')
+            tex_name = f"{name}_CanopyDisplaceTex_{i+1}"
+            if tex_name in bpy.data.textures:
+                canopy_displace_tex = bpy.data.textures[tex_name]
+            else:
+                canopy_displace_tex = bpy.data.textures.new(name=tex_name, type='CLOUDS')
+                canopy_displace_tex.noise_scale = current_radius * 0.8 # Scale texture to sphere size
+            displace_mod.texture = canopy_displace_tex
+            displace_mod.strength = current_radius * 0.2 # Displacement relative to sphere size
+
+            # Parent sphere to the canopy_parent Empty
+            sphere.parent = canopy_parent
+
+        canopy_parent.parent = trunk # Parent the empty (with spheres) to the trunk
+        canopy_parent_object = canopy_parent # The empty is now the main canopy object
+
+    elif canopy_type == 'cone_cluster': # Simplified to one large cone for now
+        cone_canopy_loc_z = canopy_base_z + canopy_radius * 0.75 # Base of cone canopy slightly above trunk top
+        bpy.ops.mesh.primitive_cone_add(
+            vertices=16,
+            radius1=canopy_radius,
+            radius2=0, # Pointy top
+            depth=canopy_radius * 1.5,
+            location=(base_location[0], base_location[1], cone_canopy_loc_z),
+            end_fill_type='NGON'
+        )
+        cone_canopy = bpy.context.object
+        cone_canopy.name = f"{name}_Canopy_Cone"
+        cone_canopy.parent = trunk
+        canopy_parent_object = cone_canopy
+
+    # Final naming and selection
+    # If we used an empty for canopy elements, that empty is parented to trunk.
+    # The trunk is the ultimate root of this specific tree structure.
+    trunk.name = name # Rename the trunk to the main desired name
+
+    # Ensure the main trunk (which is the root) is the active object to be returned implicitly by ops
+    bpy.context.view_layer.objects.active = trunk
+    trunk.select_set(True)
+
+    return trunk
+
+def create_chain_link(name="ChainLink", link_overall_radius=0.5, link_torus_radius=0.1, main_segments=48, minor_segments=24, base_location=(0,0,0), elongated_scale=(1.5, 1.0, 1.0)):
+    """
+    Creates a single chain link, potentially elongated.
+    Intended for use by an LLM via the 'execute_code' command.
+
+    Parameters:
+    - name (str): Name for the new chain link object.
+    - link_overall_radius (float): Major radius of the torus.
+    - link_torus_radius (float): Minor radius (thickness) of the torus.
+    - main_segments (int): Number of segments for the major radius.
+    - minor_segments (int): Number of segments for the minor radius.
+    - base_location (tuple): (x, y, z) location for the chain link.
+    - elongated_scale (tuple): (x, y, z) scale factors to make the link elongated.
+                               (1.0, 1.0, 1.0) for a perfect torus ring.
+                               (e.g., 1.5, 1.0, 1.0) stretches it along its local X-axis.
+    Returns:
+    bpy.types.Object: The created chain link object.
+    """
+    bpy.ops.mesh.primitive_torus_add(
+        major_radius=link_overall_radius,
+        minor_radius=link_torus_radius,
+        major_segments=main_segments,
+        minor_segments=minor_segments,
+        location=base_location
+    )
+    link = bpy.context.object
+    link.name = name
+
+    # Apply elongation scale
+    link.scale[0] *= elongated_scale[0]
+    link.scale[1] *= elongated_scale[1]
+    link.scale[2] *= elongated_scale[2]
+
+    # Apply the scale to the mesh data
+    # Store active object to restore it later if needed, though primitive_torus_add should set it.
+    active_obj = bpy.context.view_layer.objects.active
+    bpy.context.view_layer.objects.active = link # Ensure link is active
+    bpy.ops.object.transform_apply(location=False, rotation=False, scale=True)
+    bpy.context.view_layer.objects.active = active_obj # Restore active object
+
+    return link
+
+def create_chain_link(name="ChainLink", link_overall_radius=0.5, link_torus_radius=0.1, main_segments=48, minor_segments=24, base_location=(0,0,0), elongated_scale=(1.5, 1.0, 1.0)):
+    """
+    Creates a single chain link, potentially elongated, from a torus primitive.
+    This function is intended to be called by an LLM via the 'execute_code' command.
+
+    Parameters:
+    - name (str): Name for the new chain link object.
+    - link_overall_radius (float): Major radius of the torus (overall size of the link).
+    - link_torus_radius (float): Minor radius of the torus (thickness of the link's wire).
+    - main_segments (int): Number of segments for the major radius (around the torus).
+    - minor_segments (int): Number of segments for the minor radius (around the wire).
+    - base_location (tuple): (x, y, z) world-space location for the chain link's origin.
+    - elongated_scale (tuple): (x, y, z) scale factors applied to make the link elongated.
+                               A value of (1.0, 1.0, 1.0) results in a standard circular torus.
+                               For example, (1.5, 1.0, 1.0) stretches the link along its local X-axis.
+                               The scale is applied to the object and then baked into the mesh data.
+    Returns:
+    bpy.types.Object: The created and potentially elongated chain link object.
+    """
+    bpy.ops.mesh.primitive_torus_add(
+        major_radius=link_overall_radius,
+        minor_radius=link_torus_radius,
+        major_segments=main_segments,
+        minor_segments=minor_segments,
+        location=base_location,
+        align='WORLD' # Align to world, rotation can be applied later if needed
+    )
+    link = bpy.context.object
+    link.name = name
+
+    # Apply elongation scale relative to current object scale
+    link.scale[0] *= elongated_scale[0]
+    link.scale[1] *= elongated_scale[1]
+    link.scale[2] *= elongated_scale[2]
+
+    # Apply the scale to the mesh data to make it the new base shape
+    # This is important for consistent behavior if this link is arrayed or further transformed.
+    # Need to ensure the object is active and selected for transform_apply.
+    if bpy.context.view_layer.objects.active != link:
+        bpy.ops.object.select_all(action='DESELECT')
+        link.select_set(True)
+        bpy.context.view_layer.objects.active = link
+
+    bpy.ops.object.transform_apply(location=False, rotation=False, scale=True)
+
+    return link
 # --- End Utility Functions ---
 
 
@@ -573,7 +885,10 @@ class BlenderMCPServer:
                 "bpy": bpy,
                 "create_modified_cube": create_modified_cube,
                 "create_voronoi_rock": create_voronoi_rock,
-                "create_parametric_gear": create_parametric_gear
+                "create_parametric_gear": create_parametric_gear,
+                "create_pipe_joint": create_pipe_joint,
+                "create_simple_tree": create_simple_tree,
+                "create_chain_link": create_chain_link
             }
 
             # Capture stdout during execution, and return it as result
