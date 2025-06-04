@@ -1620,7 +1620,11 @@ class MCP_OT_AskLLMAboutScene(bpy.types.Operator):
         metadata = extract_scene_summary()
         backend = context.scene.mcp_llm_backend
 
-        response = query_llm(backend=backend, image_path=image_path, metadata=metadata)
+        if backend == "ollama":
+            ollama_model_name = context.scene.mcp_ollama_model_name
+            response = query_llm(backend=backend, image_path=image_path, metadata=metadata, ollama_model_name=ollama_model_name)
+        else:
+            response = query_llm(backend=backend, image_path=image_path, metadata=metadata)
 
         self.report({"INFO"}, response[:400])
         print("LLM Response:", response)
