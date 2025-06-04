@@ -47,7 +47,7 @@ import mathutils
 from bpy.props import StringProperty, IntProperty, BoolProperty, EnumProperty
 
 # Local imports
-from . import addon_utils # For our utility functions
+import addon_utils # For our utility functions
 # Ensure llm_handler is imported if MCP_OT_AskLLMAboutScene uses it directly
 # For now, assuming it's imported within the execute method as per previous structure.
 
