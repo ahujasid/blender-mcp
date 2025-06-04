@@ -287,6 +287,26 @@ def execute_blender_code(ctx: Context, code: str) -> str:
         return f"Error executing code: {str(e)}"
 
 @mcp.tool()
+def get_blender_mesh_details(ctx: Context, object_name: str) -> str:
+    """
+    Get detailed information about a specific mesh object in Blender,
+    including vertex count, face count, and active modifiers.
+
+    Parameters:
+    - object_name: The name of the mesh object to inspect.
+
+    Returns:
+    A JSON string with the mesh details or an error message.
+    """
+    try:
+        blender = get_blender_connection()
+        result = blender.send_command("get_mesh_details", {"name": object_name})
+        return json.dumps(result, indent=2)
+    except Exception as e:
+        logger.error(f"Error getting mesh details from Blender: {str(e)}")
+        return json.dumps({"error": f"Error getting mesh details: {str(e)}"}, indent=2)
+
+@mcp.tool()
 def get_polyhaven_categories(ctx: Context, asset_type: str = "hdris") -> str:
     """
     Get a list of categories for a specific asset type on Polyhaven.
@@ -528,7 +548,9 @@ def _process_bbox(original_bbox: list[float] | list[int] | None) -> list[int] | 
 def generate_hyper3d_model_via_text(
     ctx: Context,
     text_prompt: str,
-    bbox_condition: list[float]=None
+    bbox_condition: list[float]=None,
+    hyper3d_tier: str = None,
+    hyper3d_mesh_mode: str = None
 ) -> str:
     """
     Generate 3D asset using Hyper3D by giving description of the desired asset, and import the asset into Blender.
@@ -538,16 +560,24 @@ def generate_hyper3d_model_via_text(
     Parameters:
     - text_prompt: A short description of the desired model in **English**.
     - bbox_condition: Optional. If given, it has to be a list of floats of length 3. Controls the ratio between [Length, Width, Height] of the model.
+    - hyper3d_tier: Optional. API specific tier for Hyper3D generation (e.g., "Sketch", "Detailed", "HighQuality"). Defaults to value set in Blender addon panel.
+    - hyper3d_mesh_mode: Optional. API specific mesh mode for Hyper3D (e.g., "Raw", "HighPoly"). Defaults to value set in Blender addon panel.
 
     Returns a message indicating success or failure.
     """
     try:
         blender = get_blender_connection()
-        result = blender.send_command("create_rodin_job", {
+        params = {
             "text_prompt": text_prompt,
             "images": None,
             "bbox_condition": _process_bbox(bbox_condition),
-        })
+        }
+        if hyper3d_tier is not None:
+            params["tier"] = hyper3d_tier
+        if hyper3d_mesh_mode is not None:
+            params["mesh_mode"] = hyper3d_mesh_mode
+
+        result = blender.send_command("create_rodin_job", params)
         succeed = result.get("submit_time", False)
         if succeed:
             return json.dumps({
@@ -565,7 +595,9 @@ def generate_hyper3d_model_via_images(
     ctx: Context,
     input_image_paths: list[str]=None,
     input_image_urls: list[str]=None,
-    bbox_condition: list[float]=None
+    bbox_condition: list[float]=None,
+    hyper3d_tier: str = None,
+    hyper3d_mesh_mode: str = None
 ) -> str:
     """
     Generate 3D asset using Hyper3D by giving images of the wanted asset, and import the generated asset into Blender.
@@ -576,6 +608,8 @@ def generate_hyper3d_model_via_images(
     - input_image_paths: The **absolute** paths of input images. Even if only one image is provided, wrap it into a list. Required if Hyper3D Rodin in MAIN_SITE mode.
     - input_image_urls: The URLs of input images. Even if only one image is provided, wrap it into a list. Required if Hyper3D Rodin in FAL_AI mode.
     - bbox_condition: Optional. If given, it has to be a list of ints of length 3. Controls the ratio between [Length, Width, Height] of the model.
+    - hyper3d_tier: Optional. API specific tier for Hyper3D generation (e.g., "Sketch", "Detailed", "HighQuality"). Defaults to value set in Blender addon panel.
+    - hyper3d_mesh_mode: Optional. API specific mesh mode for Hyper3D (e.g., "Raw", "HighPoly"). Defaults to value set in Blender addon panel.
 
     Only one of {input_image_paths, input_image_urls} should be given at a time, depending on the Hyper3D Rodin's current mode.
     Returns a message indicating success or failure.
@@ -599,11 +633,17 @@ def generate_hyper3d_model_via_images(
         images = input_image_urls.copy()
     try:
         blender = get_blender_connection()
-        result = blender.send_command("create_rodin_job", {
+        params = {
             "text_prompt": None,
             "images": images,
             "bbox_condition": _process_bbox(bbox_condition),
-        })
+        }
+        if hyper3d_tier is not None:
+            params["tier"] = hyper3d_tier
+        if hyper3d_mesh_mode is not None:
+            params["mesh_mode"] = hyper3d_mesh_mode
+
+        result = blender.send_command("create_rodin_job", params)
         succeed = result.get("submit_time", False)
         if succeed:
             return json.dumps({
