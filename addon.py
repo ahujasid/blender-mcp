@@ -411,7 +411,7 @@ class MCP_OT_AskLLMAboutScene(bpy.types.Operator):
     def execute(self, context):
         # Ensure llm_handler is imported correctly, typically done at module level
         # but can be function-local if it causes issues during registration
-        from .llm_handler import query_llm
+        from llm_handler import query_llm
 
         image_path = render_and_save_image()
         metadata = extract_scene_summary()
