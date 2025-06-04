@@ -563,6 +563,122 @@ def create_chain_link(name="ChainLink", link_overall_radius=0.5, link_torus_radi
     bpy.ops.object.transform_apply(location=False, rotation=False, scale=True)
 
     return link
+
+def add_detail_shape(
+    target_object_name: str,
+    shape_type: str = 'SPHERE',
+    operation: str = 'DIFFERENCE',
+    shape_size: tuple = (0.2,),  # (radius,) for SPHERE; (size,) for CUBE; (radius, depth) for CYLINDER
+    location: tuple = (0,0,0),
+    orientation_euler_degrees: tuple = (0,0,0),
+    segments: int = 32  # Increased default for smoother primitives
+):
+    """
+    Adds a detail to a target object by creating a primitive shape and
+    performing a boolean operation. Intended for use by an LLM via 'execute_code'.
+
+    Parameters:
+    - target_object_name (str): Name of the existing object to modify.
+    - shape_type (str): Type of primitive to create ('SPHERE', 'CUBE', 'CYLINDER').
+    - operation (str): Boolean operation ('DIFFERENCE', 'UNION', 'INTERSECT').
+    - shape_size (tuple): Dimensions of the primitive.
+        - For 'SPHERE': (radius,) e.g., (0.5,).
+        - For 'CUBE': (size,) e.g., (1.0,). (Uses this for X,Y,Z dimensions of the cube).
+        - For 'CYLINDER': (radius, depth), e.g., (0.3, 1.0).
+    - location (tuple): World-space (x,y,z) for the center of the primitive.
+    - orientation_euler_degrees (tuple): (rx,ry,rz) Euler rotation in degrees for the primitive.
+    - segments (int): Number of segments for spheres or cylinders.
+
+    Returns:
+    - dict: A status dictionary, e.g.,
+             {"status": "success", "message": "Operation completed."} or
+             {"status": "error", "message": "Error details."}
+    """
+
+    target_obj = bpy.data.objects.get(target_object_name)
+    if not target_obj:
+        return {"status": "error", "message": f"Target object '{target_object_name}' not found."}
+    if target_obj.type != 'MESH':
+        return {"status": "error", "message": f"Target object '{target_object_name}' is not a mesh."}
+
+    # Convert orientation to radians for Blender ops
+    orientation_radians = tuple(math.radians(angle) for angle in orientation_euler_degrees)
+
+    detail_obj = None
+    # Ensure context is correct for object creation by deselecting all and making sure we are in OBJECT mode
+    if bpy.context.object_mode != 'OBJECT':
+        bpy.ops.object.mode_set(mode='OBJECT')
+    bpy.ops.object.select_all(action='DESELECT')
+
+    try:
+        if shape_type == 'SPHERE':
+            if not shape_size or len(shape_size) < 1:
+                return {"status": "error", "message": "shape_size must provide (radius,) for SPHERE."}
+            bpy.ops.mesh.primitive_uv_sphere_add(
+                radius=shape_size[0],
+                segments=segments,
+                ring_count=segments // 2,
+                location=location,
+                rotation=orientation_radians
+            )
+        elif shape_type == 'CUBE':
+            if not shape_size or len(shape_size) < 1:
+                return {"status": "error", "message": "shape_size must provide (size,) for CUBE."}
+            bpy.ops.mesh.primitive_cube_add(
+                size=shape_size[0],
+                location=location,
+                rotation=orientation_radians
+            )
+        elif shape_type == 'CYLINDER':
+            if not shape_size or len(shape_size) < 2:
+                return {"status": "error", "message": "shape_size must provide (radius, depth) for CYLINDER."}
+            bpy.ops.mesh.primitive_cylinder_add(
+                radius=shape_size[0],
+                depth=shape_size[1],
+                vertices=segments,
+                location=location,
+                rotation=orientation_radians
+            )
+        else:
+            return {"status": "error", "message": f"Unsupported shape_type: '{shape_type}'. Supported: SPHERE, CUBE, CYLINDER."}
+
+        detail_obj = bpy.context.object
+        if detail_obj is None:
+             return {"status": "error", "message": "Failed to create detail shape primitive."}
+        detail_obj.name = f"{target_object_name}_detail_shape_temp"
+
+    except Exception as e:
+        if detail_obj and detail_obj.name in bpy.data.objects:
+            bpy.data.objects.remove(detail_obj, do_unlink=True)
+        return {"status": "error", "message": f"Error creating primitive '{shape_type}': {str(e)}"}
+
+    # Perform Boolean operation
+    try:
+        # Ensure target_obj is active and selected for modifier application
+        bpy.ops.object.select_all(action='DESELECT')
+        target_obj.select_set(True)
+        bpy.context.view_layer.objects.active = target_obj
+
+        bool_mod = target_obj.modifiers.new(name="DetailBoolean", type='BOOLEAN')
+        bool_mod.object = detail_obj
+        bool_mod.operation = operation
+        bool_mod.solver = 'FAST'
+
+        bpy.ops.object.modifier_apply(modifier=bool_mod.name) # Apply modifier by name
+
+        # Clean up the temporary detail object
+        # bpy.data.objects.remove might fail if the object was already consumed or not properly created
+        # So, check if it's still there before trying to remove
+        if detail_obj.name in bpy.data.objects:
+             bpy.data.objects.remove(detail_obj, do_unlink=True)
+        detail_obj = None
+
+        return {"status": "success", "message": f"Boolean '{operation}' with shape '{shape_type}' completed on '{target_object_name}'."}
+
+    except Exception as e:
+        if detail_obj and detail_obj.name in bpy.data.objects:
+            bpy.data.objects.remove(detail_obj, do_unlink=True)
+        return {"status": "error", "message": f"Boolean operation failed: {str(e)}"}
 # --- End Utility Functions ---
 
 
@@ -888,7 +1004,8 @@ class BlenderMCPServer:
                 "create_parametric_gear": create_parametric_gear,
                 "create_pipe_joint": create_pipe_joint,
                 "create_simple_tree": create_simple_tree,
-                "create_chain_link": create_chain_link
+                "create_chain_link": create_chain_link,
+                "add_detail_shape": add_detail_shape
             }
 
             # Capture stdout during execution, and return it as result
