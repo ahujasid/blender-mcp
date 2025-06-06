@@ -698,15 +698,12 @@ def get_hunyuan3d_status(ctx: Context) -> str:
     Check if Hunyuan3D integration is enabled in Blender.
     Returns a message indicating whether Hunyuan3D features are available.
 
-    Don't emphasize the key type in the returned message, but sliently remember it. 
+    Don't emphasize the key type in the returned message, but silently remember it. 
     """
     try:
         blender = get_blender_connection()
         result = blender.send_command("get_hunyuan3d_status")
-        enabled = result.get("enabled", False)
         message = result.get("message", "")
-        if enabled:
-            message += ""
         return message
     except Exception as e:
         logger.error(f"Error checking Hunyuan3D status: {str(e)}")
@@ -738,8 +735,7 @@ def generate_hunyuan3d_model_via_text(
             return json.dumps({
                 "job_id": formatted_job_id,
             })
-        else:
-            return json.dumps(result)
+        return json.dumps(result)
     except Exception as e:
         logger.error(f"Error generating Hunyuan3D task: {str(e)}")
         return f"Error generating Hunyuan3D task: {str(e)}"
@@ -747,14 +743,14 @@ def generate_hunyuan3d_model_via_text(
 @mcp.tool()
 def generate_hunyuan3d_model_via_images(
     ctx: Context,
-    input_image_url: str=None
+    input_image_url: str = None
 ) -> str:
     """
     Generate 3D asset using Hunyuan3D by giving image of the wanted asset, and import the generated asset into Blender.
     The 3D asset has built-in materials.
     
     Parameters:
-    - input_image_url: The **absolute** paths of input image or the URL of input image.
+    - input_image_url: The URL of the input image.
 
     Returns a message indicating success or failure.
     """
@@ -770,8 +766,7 @@ def generate_hunyuan3d_model_via_images(
             return json.dumps({
                 "job_id": formatted_job_id,
             })
-        else:
-            return json.dumps(result)
+        return json.dumps(result)
     except Exception as e:
         logger.error(f"Error generating Hunyuan3D task: {str(e)}")
         return f"Error generating Hunyuan3D task: {str(e)}"

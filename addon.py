@@ -228,12 +228,12 @@ class BlenderMCPServer:
         
         # Add Hunyuan3d handlers only if enabled
         if bpy.context.scene.blendermcp_use_hunyuan3d:
-            polyhaven_handlers = {
+            hunyuan_handlers = {
                 "create_hunyuan_job": self.create_hunyuan_job,
                 "poll_hunyuan_job_status": self.poll_hunyuan_job_status,
                 "import_generated_asset_hunyuan": self.import_generated_asset_hunyuan
             }
-            handlers.update(polyhaven_handlers)
+            handlers.update(hunyuan_handlers)
 
         handler = handlers.get(cmd_type)
         if handler:
@@ -1397,23 +1397,22 @@ class BlenderMCPServer:
                     "enabled": False, 
                     "message": """Hunyuan3D integration is currently enabled, but SecretId or SecretKey is not given. To enable it:
                                 1. In the 3D Viewport, find the BlenderMCP panel in the sidebar (press N if hidden)
-                                2. Keep the 'Use Tecent Hunyuan 3D model generation' checkbox checked
-                                3. Choose the right plaform and fill in the SecretId and SecretKey
+                                2. Keep the 'Use Tencent Hunyuan 3D model generation' checkbox checked
+                                3. Choose the right platform and fill in the SecretId and SecretKey
                                 4. Restart the connection to Claude"""
                 }
-            message = f"Hunyuan3D integration is enabled and ready to use."
+            message = "Hunyuan3D integration is enabled and ready to use."
             return {
                 "enabled": True,
                 "message": message
             }
-        else:
-            return {
-                "enabled": False, 
-                "message": """Hunyuan3D integration is currently disabled. To enable it:
-                            1. In the 3D Viewport, find the BlenderMCP panel in the sidebar (press N if hidden)
-                            2. Check the 'Use Tecent Hunyuan 3D model generation' checkbox
-                            3. Restart the connection to Claude"""
-            }
+        return {
+            "enabled": False, 
+            "message": """Hunyuan3D integration is currently disabled. To enable it:
+                        1. In the 3D Viewport, find the BlenderMCP panel in the sidebar (press N if hidden)
+                        2. Check the 'Use Tencent Hunyuan 3D model generation' checkbox
+                        3. Restart the connection to Claude"""
+        }
 
     @staticmethod
     def get_tencent_cloud_sign_headers(
@@ -1553,7 +1552,7 @@ class BlenderMCPServer:
                         return {"error": f"Image encoding failed: {str(e)}"}
             
             # Get signed headers
-            headers, endpoint = self.get_tencent_cloud_sign_headers("POST", "/", headParams,data, service, region, secret_id, secret_key)
+            headers, endpoint = self.get_tencent_cloud_sign_headers("POST", "/", headParams, data, service, region, secret_id, secret_key)
 
             response = requests.post(
                 endpoint,
@@ -1563,10 +1562,9 @@ class BlenderMCPServer:
 
             if response.status_code == 200:
                 return response.json()
-            else:
-                return {
-                    "error": f"API request failed with status {response.status_code}: {response}"
-                }
+            return {
+                "error": f"API request failed with status {response.status_code}: {response}"
+            }
         except Exception as e:
             return {"error": str(e)}
 
@@ -1575,7 +1573,7 @@ class BlenderMCPServer:
     
     def poll_hunyuan_job_status_ai(self, job_id: str):
         """Call the job status API to get the job status"""
-        print(job_id); 
+        print(job_id)
         try:
             secret_id = bpy.context.scene.blendermcp_hunyuan3d_secret_id
             secret_key = bpy.context.scene.blendermcp_hunyuan3d_secret_key
@@ -1601,7 +1599,7 @@ class BlenderMCPServer:
                 "JobId": clean_job_id
             }
 
-            headers, endpoint = self.get_tencent_cloud_sign_headers("POST", "/", headParams,data, service, region, secret_id, secret_key)
+            headers, endpoint = self.get_tencent_cloud_sign_headers("POST", "/", headParams, data, service, region, secret_id, secret_key)
 
             response = requests.post(
                 endpoint,
@@ -1611,10 +1609,9 @@ class BlenderMCPServer:
 
             if response.status_code == 200:
                 return response.json()
-            else:
-                return {
-                    "error": f"API request failed with status {response.status_code}: {response}"
-                }
+            return {
+                "error": f"API request failed with status {response.status_code}: {response}"
+            }
         except Exception as e:
             return {"error": str(e)}
 
@@ -1624,6 +1621,10 @@ class BlenderMCPServer:
     def import_generated_asset_hunyuan_ai(self, name: str , zip_file_url: str):
         if not zip_file_url:
             return {"error": "Zip file not found"}
+        
+        # Validate URL
+        if not re.match(r'^https?://', zip_file_url, re.IGNORECASE):
+            return {"error": "Invalid URL format. Must start with http:// or https://"}
         
         # Create a temporary directory
         temp_dir = tempfile.mkdtemp(prefix="tencent_obj_")
@@ -1647,17 +1648,15 @@ class BlenderMCPServer:
             for file in os.listdir(temp_dir):
                 if file.endswith(".obj"):
                     obj_file_path = osp.join(temp_dir, file)
-                elif file.endswith(".mtl"):
-                    mtl_file_path = osp.join(temp_dir, file)
 
             if not osp.exists(obj_file_path):
                 return {"succeed": False, "error": "OBJ file not found after extraction"}
 
             # Import obj file
             if bpy.app.version>=(4, 0, 0):
-                bpy.ops.wm.obj_import(filepath=obj_file_path);
+                bpy.ops.wm.obj_import(filepath=obj_file_path)
             else:
-                bpy.ops.import_scene.obj(filepath=obj_file_path);
+                bpy.ops.import_scene.obj(filepath=obj_file_path)
 
             imported_objs = [obj for obj in bpy.context.selected_objects if obj.type == 'MESH']
             if not imported_objs:
@@ -1688,9 +1687,9 @@ class BlenderMCPServer:
                 if os.path.exists(zip_file_path):
                     os.remove(zip_file_path) 
                 if os.path.exists(obj_file_path):
-                    os.remove(obj_file_path) 
-            except:
-                print(f"Failed to clean up temporary directory: {temp_dir}")
+                    os.remove(obj_file_path)
+            except Exception as e:
+                print(f"Failed to clean up temporary directory {temp_dir}: {e}") 
 
 # Blender UI Panel
 class BLENDERMCP_PT_Panel(bpy.types.Panel):
@@ -1713,10 +1712,10 @@ class BLENDERMCP_PT_Panel(bpy.types.Panel):
             layout.prop(scene, "blendermcp_hyper3d_api_key", text="API Key")
             layout.operator("blendermcp.set_hyper3d_free_trial_api_key", text="Set Free Trial API Key")
         
-        layout.prop(scene, "blendermcp_use_hunyuan3d", text="Use Tecent Hunyuan 3D model generation")
+        layout.prop(scene, "blendermcp_use_hunyuan3d", text="Use Tencent Hunyuan 3D model generation")
         if scene.blendermcp_use_hunyuan3d:
-            layout.prop(scene, "blendermcp_hunyuan3d_secret_id", text="SecretId");
-            layout.prop(scene, "blendermcp_hunyuan3d_secret_key", text="SecretKey");
+            layout.prop(scene, "blendermcp_hunyuan3d_secret_id", text="SecretId")
+            layout.prop(scene, "blendermcp_hunyuan3d_secret_key", text="SecretKey")
         
         if not scene.blendermcp_server_running:
             layout.operator("blendermcp.start_server", text="Connect to MCP server")
