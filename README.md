@@ -18,10 +18,14 @@ Give feedback, get inspired, and build on top of the MCP: [Discord](https://disc
 
 [Support this project](https://github.com/sponsors/ahujasid)
 
-## Release notes (1.1.0)
+## Release notes (1.2.0)
+- View screenshots for Blender viewport to better understand the scene
+- Search and download Sketchfab models
 
-- Added support for Poly Haven assets through their API
-- Added support to prompt 3D models using Hyper3D Rodin
+
+### Previously added features:
+- Support for Poly Haven assets through their API
+- Support to generate 3D models using Hyper3D Rodin
 - For newcomers, you can go straight to Installation. For existing users, see the points below
 - Download the latest addon.py file and replace the older one, then add it to Blender
 - Delete the MCP server from Claude and add it back again, and you should be good to go!

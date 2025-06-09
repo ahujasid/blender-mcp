@@ -4,6 +4,7 @@ import socket
 import json
 import asyncio
 import logging
+import tempfile
 from dataclasses import dataclass
 from contextlib import asynccontextmanager
 from typing import AsyncIterator, Dict, Any, List
@@ -266,6 +267,47 @@ def get_object_info(ctx: Context, object_name: str) -> str:
         logger.error(f"Error getting object info from Blender: {str(e)}")
         return f"Error getting object info: {str(e)}"
 
+@mcp.tool()
+def get_viewport_screenshot(ctx: Context, max_size: int = 800) -> Image:
+    """
+    Capture a screenshot of the current Blender 3D viewport.
+    
+    Parameters:
+    - max_size: Maximum size in pixels for the largest dimension (default: 800)
+    
+    Returns the screenshot as an Image.
+    """
+    try:
+        blender = get_blender_connection()
+        
+        # Create temp file path
+        temp_dir = tempfile.gettempdir()
+        temp_path = os.path.join(temp_dir, f"blender_screenshot_{os.getpid()}.png")
+        
+        result = blender.send_command("get_viewport_screenshot", {
+            "max_size": max_size,
+            "filepath": temp_path,
+            "format": "png"
+        })
+        
+        if "error" in result:
+            raise Exception(result["error"])
+        
+        if not os.path.exists(temp_path):
+            raise Exception("Screenshot file was not created")
+        
+        # Read the file
+        with open(temp_path, 'rb') as f:
+            image_bytes = f.read()
+        
+        # Delete the temp file
+        os.remove(temp_path)
+        
+        return Image(data=image_bytes, format="png")
+        
+    except Exception as e:
+        logger.error(f"Error capturing screenshot: {str(e)}")
+        raise Exception(f"Screenshot failed: {str(e)}")
 
 
 @mcp.tool()
@@ -279,7 +321,6 @@ def execute_blender_code(ctx: Context, code: str) -> str:
     try:
         # Get the global connection
         blender = get_blender_connection()
-        
         result = blender.send_command("execute_code", {"code": code})
         return f"Code executed successfully: {result.get('result', '')}"
     except Exception as e:
@@ -436,7 +477,6 @@ def set_texture(
     try:
         # Get the global connection
         blender = get_blender_connection()
-        
         result = blender.send_command("set_texture", {
             "object_name": object_name,
             "texture_id": texture_id
@@ -489,7 +529,8 @@ def get_polyhaven_status(ctx: Context) -> str:
         result = blender.send_command("get_polyhaven_status")
         enabled = result.get("enabled", False)
         message = result.get("message", "")
-        
+        if enabled:
+            message += "PolyHaven is good at Textures, and has a wider variety of textures than Sketchfab."
         return message
     except Exception as e:
         logger.error(f"Error checking PolyHaven status: {str(e)}")
@@ -514,6 +555,144 @@ def get_hyper3d_status(ctx: Context) -> str:
     except Exception as e:
         logger.error(f"Error checking Hyper3D status: {str(e)}")
         return f"Error checking Hyper3D status: {str(e)}"
+
+@mcp.tool()
+def get_sketchfab_status(ctx: Context) -> str:
+    """
+    Check if Sketchfab integration is enabled in Blender.
+    Returns a message indicating whether Sketchfab features are available.
+    """
+    try:
+        blender = get_blender_connection()
+        result = blender.send_command("get_sketchfab_status")
+        enabled = result.get("enabled", False)
+        message = result.get("message", "")
+        if enabled:
+            message += "Sketchfab is good at Realistic models, and has a wider variety of models than PolyHaven."        
+        return message
+    except Exception as e:
+        logger.error(f"Error checking Sketchfab status: {str(e)}")
+        return f"Error checking Sketchfab status: {str(e)}"
+
+@mcp.tool()
+def search_sketchfab_models(
+    ctx: Context,
+    query: str,
+    categories: str = None,
+    count: int = 20,
+    downloadable: bool = True
+) -> str:
+    """
+    Search for models on Sketchfab with optional filtering.
+    
+    Parameters:
+    - query: Text to search for
+    - categories: Optional comma-separated list of categories
+    - count: Maximum number of results to return (default 20)
+    - downloadable: Whether to include only downloadable models (default True)
+    
+    Returns a formatted list of matching models.
+    """
+    try:
+        
+        blender = get_blender_connection()
+        logger.info(f"Searching Sketchfab models with query: {query}, categories: {categories}, count: {count}, downloadable: {downloadable}")
+        result = blender.send_command("search_sketchfab_models", {
+            "query": query,
+            "categories": categories,
+            "count": count,
+            "downloadable": downloadable
+        })
+        
+        if "error" in result:
+            logger.error(f"Error from Sketchfab search: {result['error']}")
+            return f"Error: {result['error']}"
+        
+        # Safely get results with fallbacks for None
+        if result is None:
+            logger.error("Received None result from Sketchfab search")
+            return "Error: Received no response from Sketchfab search"
+            
+        # Format the results
+        models = result.get("results", []) or []
+        if not models:
+            return f"No models found matching '{query}'"
+            
+        formatted_output = f"Found {len(models)} models matching '{query}':\n\n"
+        
+        for model in models:
+            if model is None:
+                continue
+                
+            model_name = model.get("name", "Unnamed model")
+            model_uid = model.get("uid", "Unknown ID")
+            formatted_output += f"- {model_name} (UID: {model_uid})\n"
+            
+            # Get user info with safety checks
+            user = model.get("user") or {}
+            username = user.get("username", "Unknown author") if isinstance(user, dict) else "Unknown author"
+            formatted_output += f"  Author: {username}\n"
+            
+            # Get license info with safety checks
+            license_data = model.get("license") or {}
+            license_label = license_data.get("label", "Unknown") if isinstance(license_data, dict) else "Unknown"
+            formatted_output += f"  License: {license_label}\n"
+            
+            # Add face count and downloadable status
+            face_count = model.get("faceCount", "Unknown")
+            is_downloadable = "Yes" if model.get("isDownloadable") else "No"
+            formatted_output += f"  Face count: {face_count}\n"
+            formatted_output += f"  Downloadable: {is_downloadable}\n\n"
+        
+        return formatted_output
+    except Exception as e:
+        logger.error(f"Error searching Sketchfab models: {str(e)}")
+        import traceback
+        logger.error(traceback.format_exc())
+        return f"Error searching Sketchfab models: {str(e)}"
+
+@mcp.tool()
+def download_sketchfab_model(
+    ctx: Context,
+    uid: str
+) -> str:
+    """
+    Download and import a Sketchfab model by its UID.
+    
+    Parameters:
+    - uid: The unique identifier of the Sketchfab model
+    
+    Returns a message indicating success or failure.
+    The model must be downloadable and you must have proper access rights.
+    """
+    try:
+        
+        blender = get_blender_connection()
+        logger.info(f"Attempting to download Sketchfab model with UID: {uid}")
+        
+        result = blender.send_command("download_sketchfab_model", {
+            "uid": uid
+        })
+        
+        if result is None:
+            logger.error("Received None result from Sketchfab download")
+            return "Error: Received no response from Sketchfab download request"
+            
+        if "error" in result:
+            logger.error(f"Error from Sketchfab download: {result['error']}")
+            return f"Error: {result['error']}"
+        
+        if result.get("success"):
+            imported_objects = result.get("imported_objects", [])
+            object_names = ", ".join(imported_objects) if imported_objects else "none"
+            return f"Successfully imported model. Created objects: {object_names}"
+        else:
+            return f"Failed to download model: {result.get('message', 'Unknown error')}"
+    except Exception as e:
+        logger.error(f"Error downloading Sketchfab model: {str(e)}")
+        import traceback
+        logger.error(traceback.format_exc())
+        return f"Error downloading Sketchfab model: {str(e)}"
 
 def _process_bbox(original_bbox: list[float] | list[int] | None) -> list[int] | None:
     if original_bbox is None:
@@ -842,7 +1021,15 @@ def asset_creation_strategy() -> str:
             - For objects/models: Use download_polyhaven_asset() with asset_type="models"
             - For materials/textures: Use download_polyhaven_asset() with asset_type="textures"
             - For environment lighting: Use download_polyhaven_asset() with asset_type="hdris"
-        2. Hyper3D(Rodin)
+        2. Sketchfab
+            Sketchfab is good at Realistic models, and has a wider variety of models than PolyHaven.
+            Use get_sketchfab_status() to verify its status
+            If Sketchfab is enabled:
+            - For objects/models: First search using search_sketchfab_models() with your query
+            - Then download specific models using download_sketchfab_model() with the UID
+            - Note that only downloadable models can be accessed, and API key must be properly configured
+            - Sketchfab has a wider variety of models than PolyHaven, especially for specific subjects
+        3. Hyper3D(Rodin)
             Hyper3D Rodin is good at generating 3D models for single item.
             So don't try to:
             1. Generate the whole scene with one shot
@@ -867,7 +1054,7 @@ def asset_creation_strategy() -> str:
                     Adjust the imported mesh's location, scale, rotation, so that the mesh is on the right spot.
 
                 You can reuse assets previous generated by running python code to duplicate the object, without creating another generation task.
-        3. Hunyuan3D
+        4. Hunyuan3D
             Hunyuan3D is good at generating 3D models for single item.
             So don't try to:
             1. Generate the whole scene with one shot
@@ -892,12 +1079,18 @@ def asset_creation_strategy() -> str:
         - Ensure that all objects that should not be clipping are not clipping.
         - Items have right spatial relationship.
     
+    4. Recommended asset source priority:
+        - For specific existing objects: First try Sketchfab, then PolyHaven
+        - For generic objects/furniture: First try PolyHaven, then Sketchfab
+        - For custom or unique items not available in libraries: Use Hyper3D Rodin or Hunyuan3D
+        - For environment lighting: Use PolyHaven HDRIs
+        - For materials/textures: Use PolyHaven textures
 
     Only fall back to scripting when:
-    - PolyHaven and Hyper3D and Hunyuan3D are disabled
+    - PolyHaven, Sketchfab, Hyper3D, and Hunyuan3D are all disabled
     - A simple primitive is explicitly requested
-    - No suitable PolyHaven asset exists
-    - Hyper3D Rodin and Hunyuan3D failed to generate the desired asset
+    - No suitable asset exists in any of the libraries
+    - Hyper3D Rodin or Hunyuan3D failed to generate the desired asset
     - The task specifically requires a basic material/color
     """
 
