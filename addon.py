@@ -17,7 +17,7 @@ from bpy.props import StringProperty, IntProperty, BoolProperty, EnumProperty
 import io
 from contextlib import redirect_stdout
 from datetime import datetime
-import hashlib, hmac, base64, zipfile
+import hashlib, hmac, base64
 import os.path as osp
 from contextlib import redirect_stdout, suppress
 
