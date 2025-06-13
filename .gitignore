@@ -1,10 +1,50 @@
-# Python-generated files
+# Python
 __pycache__/
-*.py[oc]
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
 build/
+develop-eggs/
 dist/
-wheels/
-*.egg-info
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+*.egg-info/
+.installed.cfg
+*.egg
 
-# Virtual environments
+# Testing
+.tox/
+.coverage
+htmlcov/
+.pytest_cache/
+.coverage.*
+nosetests.xml
+coverage.xml
+*.cover
+
+# Environment
+.env
 .venv
+venv/
+ENV/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Log files
+*.log
+logs/
+
+# Config files with sensitive information
+config.json
