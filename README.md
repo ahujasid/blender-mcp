@@ -85,6 +85,18 @@ Otherwise installation instructions are on their website: [Install uv](https://d
 
 **⚠️ Do not proceed before installing UV**
 
+### Environment Variables
+
+The following environment variables can be used to configure the Blender connection:
+
+- `BLENDER_HOST`: Host address for Blender socket server (default: "localhost")
+- `BLENDER_PORT`: Port number for Blender socket server (default: 9876)
+
+Example:
+```bash
+export BLENDER_HOST='host.docker.internal'
+export BLENDER_PORT=9876
+```
 
 ### Claude for Desktop Integration
 
