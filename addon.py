@@ -13,7 +13,7 @@ import traceback
 import os
 import shutil
 import zipfile
-from bpy.props import StringProperty, IntProperty, BoolProperty, EnumProperty
+from bpy.props import IntProperty
 import io
 from contextlib import redirect_stdout
 from datetime import datetime
@@ -1704,20 +1704,40 @@ class BlenderMCPServer:
     def get_hunyuan3d_status(self):
         """Get the current status of Hunyuan3D integration"""
         enabled = bpy.context.scene.blendermcp_use_hunyuan3d
+        hunyuan3d_mode = bpy.context.scene.blendermcp_hunyuan3d_mode
         if enabled:
-            if not bpy.context.scene.blendermcp_hunyuan3d_secret_id or not bpy.context.scene.blendermcp_hunyuan3d_secret_key:
-                return {
-                    "enabled": False, 
-                    "message": """Hunyuan3D integration is currently enabled, but SecretId or SecretKey is not given. To enable it:
+            match hunyuan3d_mode:
+                case "OFFICIAL_API":
+                    if not bpy.context.scene.blendermcp_hunyuan3d_secret_id or not bpy.context.scene.blendermcp_hunyuan3d_secret_key:
+                        return {
+                            "enabled": False, 
+                            "mode": hunyuan3d_mode, 
+                            "message": """Hunyuan3D integration is currently enabled, but SecretId or SecretKey is not given. To enable it:
                                 1. In the 3D Viewport, find the BlenderMCP panel in the sidebar (press N if hidden)
                                 2. Keep the 'Use Tencent Hunyuan 3D model generation' checkbox checked
                                 3. Choose the right platform and fill in the SecretId and SecretKey
                                 4. Restart the connection to Claude"""
-                }
-            message = "Hunyuan3D integration is enabled and ready to use."
+                        }
+                case "LOCAL_API":
+                    if not bpy.context.scene.blendermcp_hunyuan3d_api_url:
+                        return {
+                            "enabled": False, 
+                            "mode": hunyuan3d_mode, 
+                            "message": """Hunyuan3D integration is currently enabled, but API URL  is not given. To enable it:
+                                1. In the 3D Viewport, find the BlenderMCP panel in the sidebar (press N if hidden)
+                                2. Keep the 'Use Tencent Hunyuan 3D model generation' checkbox checked
+                                3. Choose the right platform and fill in the API URL
+                                4. Restart the connection to Claude"""
+                        }
+                case _:
+                    return {
+                        "enabled": False, 
+                        "message": "Hunyuan3D integration is enabled and mode is not supported."
+                    }
             return {
-                "enabled": True,
-                "message": message
+                "enabled": True, 
+                "mode": hunyuan3d_mode,
+                "message": "Hunyuan3D integration is enabled and ready to use."
             }
         return {
             "enabled": False, 
@@ -1809,7 +1829,13 @@ class BlenderMCPServer:
         return headers, endpoint
 
     def create_hunyuan_job(self, *args, **kwargs):
-        return self.create_hunyuan_job_main_site(*args, **kwargs)
+        match bpy.context.scene.blendermcp_hunyuan3d_mode:
+            case "OFFICIAL_API":
+                return self.create_hunyuan_job_main_site(*args, **kwargs)
+            case "LOCAL_API":
+                return self.create_hunyuan_job_local_site(*args, **kwargs)
+            case _:
+                return f"Error: Unknown Hunyuan3D mode!"
 
     def create_hunyuan_job_main_site(
         self,
@@ -1881,6 +1907,86 @@ class BlenderMCPServer:
         except Exception as e:
             return {"error": str(e)}
 
+    def create_hunyuan_job_local_site(
+        self,
+        text_prompt: str = None,
+        image: str = None):
+        try:
+            base_url = bpy.context.scene.blendermcp_hunyuan3d_api_url.rstrip('/')
+            octree_resolution = bpy.context.scene.blendermcp_hunyuan3d_octree_resolution
+            num_inference_steps = bpy.context.scene.blendermcp_hunyuan3d_num_inference_steps
+            guidance_scale = bpy.context.scene.blendermcp_hunyuan3d_guidance_scale
+            texture = bpy.context.scene.blendermcp_hunyuan3d_texture
+
+            if not base_url:
+                return {"error": "API URL is not given"}
+            # Parameter verification
+            if not text_prompt and not image:
+                return {"error": "Prompt or Image is required"}
+
+            # Constructing request parameters
+            data = {
+                "octree_resolution": octree_resolution,
+                "num_inference_steps": num_inference_steps,
+                "guidance_scale": guidance_scale,
+                "texture": texture,
+            }
+
+            # Handling text prompts
+            if text_prompt:
+                data["text"] = text_prompt
+
+            # Handling image
+            if image:
+                if re.match(r'^https?://', image, re.IGNORECASE) is not None:
+                    try:
+                        resImg = requests.get(image)
+                        resImg.raise_for_status()
+                        image_base64 = base64.b64encode(resImg.content).decode("ascii")
+                        data["image"] = image_base64
+                    except Exception as e:
+                        return {"error": f"Failed to download or encode image: {str(e)}"} 
+                else:
+                    try:
+                        # Convert to Base64 format
+                        with open(image, "rb") as f:
+                            image_base64 = base64.b64encode(f.read()).decode("ascii")
+                        data["image"] = image_base64
+                    except Exception as e:
+                        return {"error": f"Image encoding failed: {str(e)}"}
+
+            response = requests.post(
+                f"{base_url}/generate",
+                json = data,
+            )
+
+            if response.status_code != 200:
+                return {
+                    "error": f"Generation failed: {response.text}"
+                }
+        
+            # Decode base64 and save to temporary file
+            temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".glb")
+            temp_file.write(response.content)
+            temp_file.close()
+
+            # Import the GLB file in the main thread
+            def import_handler():
+                bpy.ops.import_scene.gltf(filepath=temp_file.name)
+                os.unlink(temp_file.name)
+                return None
+            
+            bpy.app.timers.register(import_handler)
+
+            return {
+                "status": "DONE",
+                "message": "Generation and Import glb succeeded"
+            }
+        except Exception as e:
+            print(f"An error occurred: {e}")
+            return {"error": str(e)}
+        
+    
     def poll_hunyuan_job_status(self, *args, **kwargs):
         return self.poll_hunyuan_job_status_ai(*args, **kwargs)
     
@@ -2032,8 +2138,16 @@ class BLENDERMCP_PT_Panel(bpy.types.Panel):
 
         layout.prop(scene, "blendermcp_use_hunyuan3d", text="Use Tencent Hunyuan 3D model generation")
         if scene.blendermcp_use_hunyuan3d:
-            layout.prop(scene, "blendermcp_hunyuan3d_secret_id", text="SecretId")
-            layout.prop(scene, "blendermcp_hunyuan3d_secret_key", text="SecretKey")
+            layout.prop(scene, "blendermcp_hunyuan3d_mode", text="Hunyuan3D Mode")
+            if scene.blendermcp_hunyuan3d_mode == 'OFFICIAL_API':
+                layout.prop(scene, "blendermcp_hunyuan3d_secret_id", text="SecretId")
+                layout.prop(scene, "blendermcp_hunyuan3d_secret_key", text="SecretKey")
+            if scene.blendermcp_hunyuan3d_mode == 'LOCAL_API':
+                layout.prop(scene, "blendermcp_hunyuan3d_api_url", text="API URL")
+                layout.prop(scene, "blendermcp_hunyuan3d_octree_resolution", text="Octree Resolution")
+                layout.prop(scene, "blendermcp_hunyuan3d_num_inference_steps", text="Number of Inference Steps")
+                layout.prop(scene, "blendermcp_hunyuan3d_guidance_scale", text="Guidance Scale")
+                layout.prop(scene, "blendermcp_hunyuan3d_texture", text="Generate Texture")
         
         if not scene.blendermcp_server_running:
             layout.operator("blendermcp.start_server", text="Connect to MCP server")
@@ -2139,6 +2253,16 @@ def register():
         default=False
     )
 
+    bpy.types.Scene.blendermcp_hunyuan3d_mode = bpy.props.EnumProperty(
+        name="Hunyuan3D Mode",
+        description="Choose a local or official APIs",
+        items=[
+            ("LOCAL_API", "local api", "local api"),
+            ("OFFICIAL_API", "official api", "official api"),
+        ],
+        default="LOCAL_API"
+    )
+
     bpy.types.Scene.blendermcp_hunyuan3d_secret_id = bpy.props.StringProperty(
         name="Hunyuan 3D SecretId",
         description="SecretId provided by Hunyuan 3D",
@@ -2150,6 +2274,42 @@ def register():
         subtype="PASSWORD",
         description="SecretKey provided by Hunyuan 3D",
         default=""
+    )
+
+    bpy.types.Scene.blendermcp_hunyuan3d_api_url = bpy.props.StringProperty(
+        name="API URL",
+        description="URL of the Hunyuan 3D API service",
+        default="http://localhost:8081"
+    )
+
+    bpy.types.Scene.blendermcp_hunyuan3d_octree_resolution = bpy.props.IntProperty(
+        name="Octree Resolution",
+        description="Octree resolution for the 3D generation",
+        default=256,
+        min=128,
+        max=512,
+    )
+
+    bpy.types.Scene.blendermcp_hunyuan3d_num_inference_steps = bpy.props.IntProperty(
+        name="Number of Inference Steps",
+        description="Number of inference steps for the 3D generation",
+        default=20,
+        min=20,
+        max=50,
+    )
+
+    bpy.types.Scene.blendermcp_hunyuan3d_guidance_scale = bpy.props.FloatProperty(
+        name="Guidance Scale",
+        description="Guidance scale for the 3D generation",
+        default=5.5,
+        min=1.0,
+        max=10.0,
+    )
+
+    bpy.types.Scene.blendermcp_hunyuan3d_texture = bpy.props.BoolProperty(
+        name="Generate Texture",
+        description="Whether to generate texture for the 3D model",
+        default=False,
     )
     
     bpy.types.Scene.blendermcp_use_sketchfab = bpy.props.BoolProperty(
@@ -2192,8 +2352,14 @@ def unregister():
     del bpy.types.Scene.blendermcp_use_sketchfab
     del bpy.types.Scene.blendermcp_sketchfab_api_key
     del bpy.types.Scene.blendermcp_use_hunyuan3d
+    del bpy.types.Scene.blendermcp_hunyuan3d_mode
     del bpy.types.Scene.blendermcp_hunyuan3d_secret_id
     del bpy.types.Scene.blendermcp_hunyuan3d_secret_key
+    del bpy.types.Scene.blendermcp_hunyuan3d_api_url
+    del bpy.types.Scene.blendermcp_hunyuan3d_octree_resolution
+    del bpy.types.Scene.blendermcp_hunyuan3d_num_inference_steps
+    del bpy.types.Scene.blendermcp_hunyuan3d_guidance_scale
+    del bpy.types.Scene.blendermcp_hunyuan3d_texture
 
     print("BlenderMCP addon unregistered")
 
