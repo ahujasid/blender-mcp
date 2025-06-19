@@ -53,7 +53,7 @@ class BlenderConnection:
         """Receive the complete response, potentially in multiple chunks"""
         chunks = []
         # Use a consistent timeout value that matches the addon's timeout
-        sock.settimeout(15.0)  # Match the addon's timeout
+        sock.settimeout(180.0)  # Match the addon's timeout
         
         try:
             while True:
@@ -124,7 +124,7 @@ class BlenderConnection:
             logger.info(f"Command sent, waiting for response...")
             
             # Set a timeout for receiving - use the same timeout as in receive_full_response
-            self.sock.settimeout(15.0)  # Match the addon's timeout
+            self.sock.settimeout(180.0)  # Match the addon's timeout
             
             # Receive the response using the improved receive_full_response method
             response_data = self.receive_full_response(self.sock)
