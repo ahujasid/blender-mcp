@@ -15,7 +15,6 @@ import shutil
 import zipfile
 from bpy.props import IntProperty
 import io
-from contextlib import redirect_stdout
 from datetime import datetime
 import hashlib, hmac, base64
 import os.path as osp
@@ -1966,13 +1965,13 @@ class BlenderMCPServer:
                 }
         
             # Decode base64 and save to temporary file
-            temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".glb")
-            temp_file.write(response.content)
-            temp_file.close()
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".glb") as temp_file:
+                temp_file.write(response.content)
+                temp_file_name = temp_file.name
 
             # Import the GLB file in the main thread
             def import_handler():
-                bpy.ops.import_scene.gltf(filepath=temp_file.name)
+                bpy.ops.import_scene.gltf(filepath=temp_file_name)
                 os.unlink(temp_file.name)
                 return None
             
