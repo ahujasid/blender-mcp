@@ -12,6 +12,7 @@ import os
 from pathlib import Path
 import base64
 from urllib.parse import urlparse
+import argparse
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, 
@@ -202,10 +203,11 @@ mcp = FastMCP(
 # Global connection for resources (since resources can't access context)
 _blender_connection = None
 _polyhaven_enabled = False  # Add this global variable
+_blender_port = 9876  # Default port, will be overridden by command line args
 
 def get_blender_connection():
     """Get or create a persistent Blender connection"""
-    global _blender_connection, _polyhaven_enabled  # Add _polyhaven_enabled to globals
+    global _blender_connection, _polyhaven_enabled, _blender_port
     
     # If we have an existing connection, check if it's still valid
     if _blender_connection is not None:
@@ -226,12 +228,12 @@ def get_blender_connection():
     
     # Create a new connection if needed
     if _blender_connection is None:
-        _blender_connection = BlenderConnection(host="localhost", port=9876)
+        _blender_connection = BlenderConnection(host="localhost", port=_blender_port)
         if not _blender_connection.connect():
-            logger.error("Failed to connect to Blender")
+            logger.error(f"Failed to connect to Blender on port {_blender_port}")
             _blender_connection = None
-            raise Exception("Could not connect to Blender. Make sure the Blender addon is running.")
-        logger.info("Created new persistent connection to Blender")
+            raise Exception(f"Could not connect to Blender on port {_blender_port}. Make sure the Blender addon is running.")
+        logger.info(f"Created new persistent connection to Blender on port {_blender_port}")
     
     return _blender_connection
 
@@ -941,6 +943,19 @@ def asset_creation_strategy() -> str:
 
 def main():
     """Run the MCP server"""
+    global _blender_port
+    
+    # Parse command line arguments
+    parser = argparse.ArgumentParser(description='Blender MCP Server')
+    parser.add_argument('--port', type=int, default=9876,
+                        help='Port to connect to Blender (default: 9876)')
+    args = parser.parse_args()
+    
+    # Set the global port variable
+    _blender_port = args.port
+    logger.info(f"Starting Blender MCP server, will connect to Blender on port {_blender_port}")
+    
+    # Run the MCP server
     mcp.run()
 
 if __name__ == "__main__":

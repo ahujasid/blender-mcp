@@ -107,6 +107,28 @@ Go to Claude > Settings > Developer > Edit Config > claude_desktop_config.json t
 }
 ```
 
+#### Custom Port Configuration
+
+By default, the MCP server connects to Blender on port 9876. You can change this by adding the `--port` argument:
+
+```json
+{
+    "mcpServers": {
+        "blender": {
+            "command": "uvx",
+            "args": [
+                "blender-mcp",
+                "--port",
+                "8080"
+            ]
+        }
+    }
+}
+```
+
+Make sure the port number matches the one shown in Blender's BlenderMCP panel.
+
+
 ### Cursor integration
 
 [![Install MCP Server](https://cursor.com/deeplink/mcp-install-dark.svg)](https://cursor.com/install-mcp?name=blender&config=eyJjb21tYW5kIjoidXZ4IGJsZW5kZXItbWNwIn0%3D)
