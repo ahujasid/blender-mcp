@@ -1,238 +1,120 @@
+# Kneippverein Petershagen Premium WordPress Theme
 
+Version: 1.0.0
+Entwickelt für: Kneippverein Petershagen e.V.
+Konzept von: Jules KI
+Umsetzung durch: [Ihr Name/Agenturname hier einfügen]
 
-# BlenderMCP - Blender Model Context Protocol Integration
+## Beschreibung
 
-BlenderMCP connects Blender to Claude AI through the Model Context Protocol (MCP), allowing Claude to directly interact with and control Blender. This integration enables prompt assisted 3D modeling, scene creation, and manipulation.
+Ein maßgeschneidertes Premium-WordPress-Theme für den Kneippverein Petershagen e.V., entwickelt für höchste Ansprüche an Design, Funktionalität, Barrierefreiheit und Performance. Dieses Theme bietet eine solide Grundlage für eine moderne und zukunftssichere Online-Präsenz, die die Kneipp-Lehre optimal vermittelt.
 
-[Full tutorial](https://www.youtube.com/watch?v=lCyQ717DuzQ)
+Es ist mit Fokus auf den Gutenberg-Editor konzipiert, um eine maximale Flexibilität und eine intuitive Bedienung für Redakteure zu gewährleisten.
 
-### Join the Community
+## Hauptmerkmale (geplant)
 
-Give feedback, get inspired, and build on top of the MCP: [Discord](https://discord.gg/z5apgR8TFU)
+*   **Responsives Design (Mobile First):** Optimale Darstellung auf allen Endgeräten.
+*   **WCAG-konform (AA-Niveau als Ziel):** Hohe Zugänglichkeit für alle Nutzer.
+*   **Performance-Optimierung:** Schnelle Ladezeiten durch Critical CSS, Lazy Loading, optimierte Bilder und saubere Requests.
+*   **Gutenberg-zentriert:** Umfassende Unterstützung des Gutenberg-Editors, inklusive `theme.json` für globale Stile und individuelle Block-Styles.
+*   **Custom Post Types:** Für "Kurse", "Veranstaltungen", "Rezepte" und "Teammitglieder" (oder ähnlich).
+*   **Individuelle Gutenberg-Blöcke / ACF-Blöcke:** Für modulare und wiederverwendbare Inhaltskomponenten.
+*   **SEO-Basics integriert:** Saubere semantische Struktur, Breadcrumbs, Vorbereitung für strukturierte Daten.
+*   **Modulare Codebasis:** Gut strukturierte `functions.php` durch Aufteilung in `inc/` Verzeichnis.
+*   **Child-Theme-Ready:** Struktur ermöglicht einfache Anpassungen über ein Child-Theme.
+*   **Mehrsprachigkeit vorbereitet:** Inklusive Textdomain und `.pot`-Datei.
+*   **Umfassende Fehlerbehandlung:** Gestaltete `404.php`, `search.php` etc.
 
-### Supporters
+## Verzeichnisstruktur
 
-<div align="center" markdown="1">
-   <sup>Special thanks to:</sup>
-   <br>
-   <br>
-   <a href="https://www.warp.dev/blender-mcp">
-      <img alt="Warp sponsorship" width="400" src="https://github.com/user-attachments/assets/c21102f7-bab9-4344-a731-0cf6b341cab2">
-   </a>
-
-### [Warp, the intelligent terminal for developers](https://www.warp.dev/blender-mcp)
-[Available for MacOS, Linux, & Windows](https://www.warp.dev/blender-mcp)<br>
-
-</div>
-<hr>
-
-**Other supporters:**
-
-[CodeRabbit](https://www.coderabbit.ai/)
-
-**All supporters:**
-
-[Support this project](https://github.com/sponsors/ahujasid)
-
-## Release notes (1.2.0)
-- View screenshots for Blender viewport to better understand the scene
-- Search and download Sketchfab models
-
-
-### Previously added features:
-- Support for Poly Haven assets through their API
-- Support to generate 3D models using Hyper3D Rodin
-- For newcomers, you can go straight to Installation. For existing users, see the points below
-- Download the latest addon.py file and replace the older one, then add it to Blender
-- Delete the MCP server from Claude and add it back again, and you should be good to go!
-
-## Features
-
-- **Two-way communication**: Connect Claude AI to Blender through a socket-based server
-- **Object manipulation**: Create, modify, and delete 3D objects in Blender
-- **Material control**: Apply and modify materials and colors
-- **Scene inspection**: Get detailed information about the current Blender scene
-- **Code execution**: Run arbitrary Python code in Blender from Claude
-
-## Components
-
-The system consists of two main components:
-
-1. **Blender Addon (`addon.py`)**: A Blender addon that creates a socket server within Blender to receive and execute commands
-2. **MCP Server (`src/blender_mcp/server.py`)**: A Python server that implements the Model Context Protocol and connects to the Blender addon
+```
+/kneipp-petershagen-premium/
+|-- /assets/                 # CSS, JS, Bilder, Fonts, Icons
+|-- /inc/                    # PHP Include-Dateien (Modularisierung der functions.php)
+|-- /languages/              # Sprachdateien (.pot, .po, .mo)
+|-- /parts/                  # Wiederverwendbare Template-Teile
+|-- /templates/              # Seiten-Templates und spezifische Templates für CPTs etc.
+|-- /docs/                   # Dokumentation
+|-- style.css                # Haupt-Stylesheet (Theme-Header)
+|-- functions.php            # Haupt-Funktionsdatei
+|-- theme.json               # Globale Stile und Einstellungen für Gutenberg
+|-- index.php                # Standard-Fallback-Template
+|-- header.php               # Standard-Header
+|-- footer.php               # Standard-Footer
+|-- page.php                 # Standard-Template für Seiten
+|-- single.php               # Standard-Template für einzelne Beiträge
+|-- archive.php              # Standard-Template für Archivseiten
+|-- search.php               # Template für Suchergebnisse
+|-- 404.php                  # Template für "Seite nicht gefunden" Fehler
+|-- screenshot.png           # Theme-Vorschaubild
+|-- README.md                # Diese Datei
+|-- .editorconfig            # Editor-Konfiguration (optional)
+|-- .gitignore               # Ignorierte Dateien für Git (optional)
+|-- package.json             # Für npm-Abhängigkeiten (Build-Tools, optional)
+|-- vite.config.js           # Beispiel für Vite Konfiguration (oder webpack.config.js, optional)
+```
 
 ## Installation
 
+1.  Laden Sie das Theme-Verzeichnis `kneipp-petershagen-premium` in das `/wp-content/themes/` Verzeichnis Ihrer WordPress-Installation hoch.
+2.  Alternativ können Sie das Theme als ZIP-Datei packen und über das WordPress-Admin-Panel unter "Design" > "Themes" > "Theme hinzufügen" > "Theme hochladen" installieren.
+3.  Aktivieren Sie das Theme im WordPress-Admin-Panel unter "Design" > "Themes".
 
-### Prerequisites
+## Entwicklung (Optional, bei Verwendung eines Build-Prozesses)
 
-- Blender 3.0 or newer
-- Python 3.10 or newer
-- uv package manager: 
+Dieses Theme ist für die moderne Frontend-Entwicklung mit einem Build-Prozess (z.B. Vite oder Webpack) für SCSS und JavaScript vorgesehen.
 
-**If you're on Mac, please install uv as**
-```bash
-brew install uv
-```
-**On Windows**
-```bash
-powershell -c "irm https://astral.sh/uv/install.ps1 | iex" 
-```
-and then
-```bash
-set Path=C:\Users\nntra\.local\bin;%Path%
-```
+1.  Stellen Sie sicher, dass Node.js und npm (oder yarn) installiert sind.
+2.  Navigieren Sie im Terminal in das Theme-Verzeichnis: `cd wp-content/themes/kneipp-petershagen-premium`
+3.  Installieren Sie die Projektabhängigkeiten: `npm install` (oder `yarn install`)
+4.  Starten Sie den Entwicklungs-Server: `npm run dev` (oder `yarn dev`)
+5.  Für einen Produktions-Build: `npm run build` (oder `yarn build`)
 
-Otherwise installation instructions are on their website: [Install uv](https://docs.astral.sh/uv/getting-started/installation/)
+Die entsprechenden Skripte müssen in der `package.json` definiert sein. Die Dateien `assets/css/main.css` und `assets/js/main.js` werden durch diesen Prozess erstellt.
 
-**⚠️ Do not proceed before installing UV**
+## Anpassung
 
+*   **Child-Theme:** Für umfangreichere Anpassungen wird dringend empfohlen, ein Child-Theme zu erstellen, um die Update-Fähigkeit des Premium-Themes zu erhalten.
+*   **WordPress Customizer:** Viele grundlegende Einstellungen (Logo, Farben, Menüs, Widgets) können über den WordPress Customizer (Design > Customizer) vorgenommen werden.
+*   **Theme Options:** Erweiterte Optionen können über ein integriertes Theme-Options-Framework (z.B. ACF Pro, Kirki) oder den Customizer bereitgestellt werden.
+*   **`theme.json`:** Globale Stile, Block-Stile und Layout-Einstellungen werden zentral in der `theme.json` verwaltet.
+*   **Action Hooks und Filter:** Das Theme wird diverse Hooks und Filter bereitstellen, um eine einfache Erweiterung der Funktionalität zu ermöglichen (siehe Entwicklerdokumentation).
 
-### Claude for Desktop Integration
+## Menüstruktur (Vorschlag basierend auf 5 Säulen)
 
-[Watch the setup instruction video](https://www.youtube.com/watch?v=neoK_WMq92g) (Assuming you have already installed uv)
+Im WordPress-Backend unter "Design" > "Menüs" sollte ein Hauptmenü mit dem Namen "Primäres Menü (5 Säulen)" (oder ähnlich) erstellt werden. Dieses Menü kann dann wie folgt strukturiert werden:
 
-Go to Claude > Settings > Developer > Edit Config > claude_desktop_config.json to include the following:
+1.  **Startseite**
+2.  **Die 5 Säulen** (ggf. als Oberpunkt ohne Link oder mit einer Übersichtsseite)
+    *   Wasser (Link zur Seite/Kategorie "Wasser")
+    *   Pflanzen (Link zur Seite/Kategorie "Pflanzen")
+    *   Bewegung (Link zur Seite/Kategorie "Bewegung")
+    *   Ernährung (Link zur Seite/Kategorie "Ernährung")
+    *   Balance (Link zur Seite/Kategorie "Balance")
+3.  **Kurse & Angebote** (Link zur Kursübersichtsseite - Archive-CPT)
+4.  **Veranstaltungen** (Link zur Veranstaltungsübersichtsseite - Archive-CPT)
+5.  **Über uns**
+    *   Unser Verein
+    *   Team
+    *   Mitglied werden
+6.  **Kontakt**
 
-```json
-{
-    "mcpServers": {
-        "blender": {
-            "command": "uvx",
-            "args": [
-                "blender-mcp"
-            ]
-        }
-    }
-}
-```
+Dieses Menü wird dann der Theme-Position "Primäres Menü (5 Säulen)" zugewiesen, die in `inc/theme-setup.php` registriert wurde.
 
-### Cursor integration
+## Lizenz
 
-[![Install MCP Server](https://cursor.com/deeplink/mcp-install-dark.svg)](https://cursor.com/install-mcp?name=blender&config=eyJjb21tYW5kIjoidXZ4IGJsZW5kZXItbWNwIn0%3D)
+Dieses Theme ist unter der GNU General Public License v2 oder später lizenziert.
+Siehe den Header der `style.css`.
 
-For Mac users, go to Settings > MCP and paste the following 
+## Support und Dokumentation
 
-- To use as a global server, use "add new global MCP server" button and paste
-- To use as a project specific server, create `.cursor/mcp.json` in the root of the project and paste
+Eine detaillierte Dokumentation ist entscheidend für die Wartung und Nutzung des Themes.
 
+*   **Entwicklerdokumentation:** Findet sich in `docs/entwickler-doku.md`. Diese Datei enthält technische Details zur Theme-Architektur, Hooks, Filter, Anleitung zur Blockentwicklung und Child-Theme-Erstellung.
+*   **Redakteursanleitung:** Findet sich in `docs/redakteur-anleitung.md`. Diese Datei bietet eine Anleitung für Redakteure zur optimalen Nutzung der Theme-Features, Custom Post Types, individuellen Blöcke und Theme-Optionen.
+*   **Inline-Code-Kommentare:** Der PHP-, JS- und CSS-Code ist durchgehend kommentiert, um die Lesbarkeit und Verständlichkeit zu erhöhen. PHPDoc-Blöcke werden für Funktionen und Klassen verwendet.
+*   **Changelog:** Änderungen und Versionen werden idealerweise in einem `CHANGELOG.md` (nicht erstellt) oder über Git-Tags dokumentiert.
 
-```json
-{
-    "mcpServers": {
-        "blender": {
-            "command": "uvx",
-            "args": [
-                "blender-mcp"
-            ]
-        }
-    }
-}
-```
+---
 
-For Windows users, go to Settings > MCP > Add Server, add a new server with the following settings:
-
-```json
-{
-    "mcpServers": {
-        "blender": {
-            "command": "cmd",
-            "args": [
-                "/c",
-                "uvx",
-                "blender-mcp"
-            ]
-        }
-    }
-}
-```
-
-[Cursor setup video](https://www.youtube.com/watch?v=wgWsJshecac)
-
-**⚠️ Only run one instance of the MCP server (either on Cursor or Claude Desktop), not both**
-
-### Installing the Blender Addon
-
-1. Download the `addon.py` file from this repo
-1. Open Blender
-2. Go to Edit > Preferences > Add-ons
-3. Click "Install..." and select the `addon.py` file
-4. Enable the addon by checking the box next to "Interface: Blender MCP"
-
-
-## Usage
-
-### Starting the Connection
-![BlenderMCP in the sidebar](assets/addon-instructions.png)
-
-1. In Blender, go to the 3D View sidebar (press N if not visible)
-2. Find the "BlenderMCP" tab
-3. Turn on the Poly Haven checkbox if you want assets from their API (optional)
-4. Click "Connect to Claude"
-5. Make sure the MCP server is running in your terminal
-
-### Using with Claude
-
-Once the config file has been set on Claude, and the addon is running on Blender, you will see a hammer icon with tools for the Blender MCP.
-
-![BlenderMCP in the sidebar](assets/hammer-icon.png)
-
-#### Capabilities
-
-- Get scene and object information 
-- Create, delete and modify shapes
-- Apply or create materials for objects
-- Execute any Python code in Blender
-- Download the right models, assets and HDRIs through [Poly Haven](https://polyhaven.com/)
-- AI generated 3D models through [Hyper3D Rodin](https://hyper3d.ai/)
-
-
-### Example Commands
-
-Here are some examples of what you can ask Claude to do:
-
-- "Create a low poly scene in a dungeon, with a dragon guarding a pot of gold" [Demo](https://www.youtube.com/watch?v=DqgKuLYUv00)
-- "Create a beach vibe using HDRIs, textures, and models like rocks and vegetation from Poly Haven" [Demo](https://www.youtube.com/watch?v=I29rn92gkC4)
-- Give a reference image, and create a Blender scene out of it [Demo](https://www.youtube.com/watch?v=FDRb03XPiRo)
-- "Generate a 3D model of a garden gnome through Hyper3D"
-- "Get information about the current scene, and make a threejs sketch from it" [Demo](https://www.youtube.com/watch?v=jxbNI5L7AH8)
-- "Make this car red and metallic" 
-- "Create a sphere and place it above the cube"
-- "Make the lighting like a studio"
-- "Point the camera at the scene, and make it isometric"
-
-## Hyper3D integration
-
-Hyper3D's free trial key allows you to generate a limited number of models per day. If the daily limit is reached, you can wait for the next day's reset or obtain your own key from hyper3d.ai and fal.ai.
-
-## Troubleshooting
-
-- **Connection issues**: Make sure the Blender addon server is running, and the MCP server is configured on Claude, DO NOT run the uvx command in the terminal. Sometimes, the first command won't go through but after that it starts working.
-- **Timeout errors**: Try simplifying your requests or breaking them into smaller steps
-- **Poly Haven integration**: Claude is sometimes erratic with its behaviour
-- **Have you tried turning it off and on again?**: If you're still having connection errors, try restarting both Claude and the Blender server
-
-
-## Technical Details
-
-### Communication Protocol
-
-The system uses a simple JSON-based protocol over TCP sockets:
-
-- **Commands** are sent as JSON objects with a `type` and optional `params`
-- **Responses** are JSON objects with a `status` and `result` or `message`
-
-## Limitations & Security Considerations
-
-- The `execute_blender_code` tool allows running arbitrary Python code in Blender, which can be powerful but potentially dangerous. Use with caution in production environments. ALWAYS save your work before using it.
-- Poly Haven requires downloading models, textures, and HDRI images. If you do not want to use it, please turn it off in the checkbox in Blender. 
-- Complex operations might need to be broken down into smaller steps
-
-
-## Contributing
-
-Contributions are welcome! Please feel free to submit a Pull Request.
-
-## Disclaimer
-
-This is a third-party integration and not made by Blender. Made by [Siddharth](https://x.com/sidahuj)
+Dieses `README.md` dient als erste Orientierung und wird im Laufe der Entwicklung weiter detailliert. Die Dateien `assets/css/editor-styles.css`, `assets/css/main.css` und `assets/js/main.js` müssen noch erstellt werden (main.css und main.js typischerweise durch einen Build-Prozess).
