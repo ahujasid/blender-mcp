@@ -1,0 +1,29 @@
+/*
+Theme Name: Kneippverein Petershagen Premium
+Theme URI: https://www.kneippverein-petershagen.de/
+Author: Jules KI (Konzept) / [Ihr Name/Agenturname hier einfügen]
+Author URI: https://www.ihre-webseite.de/
+Description: Ein maßgeschneidertes Premium-WordPress-Theme für den Kneippverein Petershagen e.V., entwickelt für höchste Ansprüche an Design, Funktionalität, Barrierefreiheit und Performance. Dieses Theme bietet eine solide Grundlage für eine moderne und zukunftssichere Online-Präsenz, die die Kneipp-Lehre optimal vermittelt.
+Version: 1.0.0
+License: GNU General Public License v2 or later
+License URI: http://www.gnu.org/licenses/gpl-2.0.html
+Text Domain: kneipp-petershagen-premium
+Tags: custom-background, custom-logo, custom-menu, editor-style, featured-images, full-site-editing, block-styles, responsive-layout, accessibility-ready, translation-ready, one-column, two-columns, left-sidebar, right-sidebar, theme-options, threaded-comments, blog, portfolio, e-commerce
+Requires at least: 6.2
+Tested up to: 6.8
+Requires PHP: 7.4
+Domain Path: /languages
+
+Dieses Theme wurde mit Fokus auf Gutenberg und Full Site Editing (FSE) konzipiert,
+um eine maximale Flexibilität und eine intuitive Bedienung für Redakteure zu gewährleisten.
+Es beinhaltet Unterstützung für individuelle Blöcke, optimierte Performance-Metriken
+und eine barrierearme Struktur (WCAG AA-konform als Ziel).
+*/
+
+/* Basis-Reset und globale Stile können hier beginnen, werden aber primär über theme.json und separate CSS-Dateien gesteuert. */
+/* Diese Datei ist hauptsächlich für den Theme-Header und ggf. minimale, übergreifende Stile. */
+
+/* Beispiel für einen minimalen Stil, um die Aktivierung des Themes zu erkennen */
+body {
+    font-family: sans-serif; /* Wird durch theme.json überschrieben, dient als Fallback */
+}

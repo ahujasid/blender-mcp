@@ -88,9 +88,42 @@ if ( ! function_exists( 'kneipp_premium_customize_register' ) ) :
 			'type'     => 'email',
 		) );
 
+		// ** 4. Sektion für Header-Bilder **
+		$wp_customize->add_section( 'kneipp_premium_header_image_section', array(
+			'title'    => __( 'Header Bilder', 'kneipp-petershagen-premium' ),
+			'panel'    => 'kneipp_premium_options_panel',
+			'priority' => 5,
+		) );
+
+		// Setting: Standard Header-Bild
+		$wp_customize->add_setting( 'default_header_bild', array(
+			'default'           => KNEIPP_PREMIUM_THEME_URI . 'assets/images/default-header.webp', // Pfad zum Default-Bild im Theme
+			'sanitize_callback' => 'esc_url_raw',
+			'transport'         => 'refresh', // oder postMessage, wenn JS-Handler vorhanden
+		) );
+		$wp_customize->add_control( new WP_Customize_Image_Control( $wp_customize, 'default_header_bild_control', array(
+			'label'    => __( 'Standard Header-Bild', 'kneipp-petershagen-premium' ),
+			'description' => __( 'Dieses Bild wird verwendet, wenn kein spezifisches Header-Bild für eine Seite oder die Startseite gesetzt ist.', 'kneipp-petershagen-premium' ),
+			'section'  => 'kneipp_premium_header_image_section',
+			'settings' => 'default_header_bild',
+		) ) );
+
+		// Setting: Startseiten Header-Bild
+		$wp_customize->add_setting( 'startseiten_header_bild', array(
+			'default'           => '', // Standardmäßig leer, damit das Default-Header-Bild greift oder ein seiten-spezifisches
+			'sanitize_callback' => 'esc_url_raw',
+			'transport'         => 'refresh',
+		) );
+		$wp_customize->add_control( new WP_Customize_Image_Control( $wp_customize, 'startseiten_header_bild_control', array(
+			'label'    => __( 'Header-Bild für die Startseite', 'kneipp-petershagen-premium' ),
+			'description' => __( 'Laden Sie hier ein spezifisches Bild für den Header der Startseite hoch. Wenn leer, wird das Standard Header-Bild verwendet.', 'kneipp-petershagen-premium' ),
+			'section'  => 'kneipp_premium_header_image_section',
+			'settings' => 'startseiten_header_bild',
+		) ) );
+
+
         // Weitere Sektionen und Einstellungen können hier hinzugefügt werden, z.B. für:
         // - Social Media Links
-        // - Header-Optionen (z.B. Button-Text/Link im Header)
         // - Blog-Layout-Optionen
         // - Farbschemata (obwohl theme.json hierfür oft besser ist)
 

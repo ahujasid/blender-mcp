@@ -1,0 +1,411 @@
+{
+  "$schema": "https://schemas.wp.org/wp/6.7/theme.json",
+  "version": 2,
+  "title": "Kneippverein Petershagen Premium Globale Stile",
+  "description": "Globale Stileinstellungen und Gutenberg-Konfiguration für das Kneippverein Petershagen Premium Theme.",
+  "settings": {
+    "appearanceTools": true,
+    "color": {
+      "custom": true,
+      "customDuotone": true,
+      "customGradient": true,
+      "defaultDuotone": true,
+      "defaultGradients": true,
+      "defaultPalette": true,
+      "duotone": [],
+      "palette": [
+        {
+          "name": "Primär (Kneipp Blau)",
+          "slug": "primary",
+          "color": "#437ab5"
+        },
+        {
+          "name": "Sekundär (Kneipp Grün)",
+          "slug": "secondary",
+          "color": "#6A994E"
+        },
+        {
+          "name": "Akzent (Warmes Gelb)",
+          "slug": "accent",
+          "color": "#FFC107"
+        },
+        {
+          "name": "Textfarbe Hell",
+          "slug": "text-light",
+          "color": "#FFFFFF"
+        },
+        {
+          "name": "Textfarbe Dunkel",
+          "slug": "text-dark",
+          "color": "#333333"
+        },
+        {
+          "name": "Hintergrund Hell",
+          "slug": "background-light",
+          "color": "#F8F9FA"
+        },
+        {
+          "name": "Hintergrund Dunkel",
+          "slug": "background-dark",
+          "color": "#212529"
+        },
+        {
+          "name": "Grau Hell",
+          "slug": "gray-light",
+          "color": "#E9ECEF"
+        },
+        {
+          "name": "Grau Mittel",
+          "slug": "gray-medium",
+          "color": "#CED4DA"
+        },
+        {
+          "name": "Grau Dunkel",
+          "slug": "gray-dark",
+          "color": "#6C757D"
+        }
+      ],
+      "gradients": [
+        {
+          "name": "Primär zu Sekundär Verlauf",
+          "slug": "primary-to-secondary",
+          "gradient": "linear-gradient(135deg, var(--wp--preset--color--primary) 0%, var(--wp--preset--color--secondary) 100%)"
+        }
+      ]
+    },
+    "layout": {
+      "contentSize": "800px",
+      "wideSize": "1200px",
+      "default": {
+        "spacing": true,
+        "typography": true
+      }
+    },
+    "spacing": {
+      "padding": true,
+      "margin": true,
+      "units": [ "px", "em", "rem", "%", "vw", "vh" ],
+      "spacingSizes": [
+        {
+          "name": "Klein (1)",
+          "slug": "10",
+          "size": "0.5rem"
+        },
+        {
+          "name": "Mittel (2)",
+          "slug": "20",
+          "size": "1rem"
+        },
+        {
+          "name": "Groß (3)",
+          "slug": "30",
+          "size": "1.5rem"
+        },
+        {
+          "name": "X-Groß (4)",
+          "slug": "40",
+          "size": "2rem"
+        },
+        {
+          "name": "XX-Groß (5)",
+          "slug": "50",
+          "size": "3rem"
+        }
+      ],
+      "spacingScale": {
+        "operator": "*",
+        "increment": 1.5,
+        "steps": 7,
+        "mediumStep": 1.5,
+        "unit": "rem"
+      }
+    },
+    "typography": {
+      "customFontSize": true,
+      "fluid": true,
+      "fontFamilies": [
+        {
+          "fontFamily": "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen-Sans, Ubuntu, Cantarell, 'Helvetica Neue', sans-serif",
+          "name": "System Standard",
+          "slug": "system-default"
+        },
+        {
+          "fontFamily": "'Open Sans', sans-serif",
+          "name": "Open Sans (Fließtext)",
+          "slug": "opensans",
+          "fontFace": [
+            {
+              "fontFamily": "Open Sans",
+              "fontWeight": "300 800",
+              "fontStyle": "normal",
+              "fontDisplay": "swap",
+              "src": [ "file:./assets/fonts/opensans/OpenSans-VariableFont_wdth,wght.ttf" ]
+            }
+          ]
+        },
+        {
+          "fontFamily": "'Montserrat', sans-serif",
+          "name": "Montserrat (Überschriften)",
+          "slug": "montserrat",
+          "fontFace": [
+            {
+              "fontFamily": "Montserrat",
+              "fontWeight": "100 900",
+              "fontStyle": "normal",
+              "fontDisplay": "swap",
+              "src": [ "file:./assets/fonts/montserrat/Montserrat-VariableFont_wght.ttf" ]
+            }
+          ]
+        }
+      ],
+      "fontSizes": [
+        {
+          "name": "Extra Klein",
+          "size": "0.875rem",
+          "slug": "x-small",
+          "fluid": {
+            "min": "0.8rem",
+            "max": "0.9rem"
+          }
+        },
+        {
+          "name": "Klein",
+          "size": "1rem",
+          "slug": "small",
+          "fluid": {
+            "min": "0.9rem",
+            "max": "1.1rem"
+          }
+        },
+        {
+          "name": "Normal",
+          "size": "1.125rem",
+          "slug": "normal",
+          "fluid": {
+            "min": "1rem",
+            "max": "1.25rem"
+          }
+        },
+        {
+          "name": "Groß",
+          "size": "1.5rem",
+          "slug": "large",
+          "fluid": {
+            "min": "1.25rem",
+            "max": "1.75rem"
+          }
+        },
+        {
+          "name": "Extra Groß",
+          "size": "2.25rem",
+          "slug": "x-large",
+          "fluid": {
+            "min": "1.75rem",
+            "max": "2.75rem"
+          }
+        },
+        {
+          "name": "XX-Groß",
+          "size": "3rem",
+          "slug": "xx-large",
+          "fluid": {
+            "min": "2.25rem",
+            "max": "4rem"
+          }
+        }
+      ],
+      "lineHeight": true,
+      "dropCap": true,
+      "fontWeight": true,
+      "fontStyle": true,
+      "textDecoration": true,
+      "textTransform": true,
+      "letterSpacing": true
+    },
+    "blocks": {
+      "core/button": {
+        "color": {
+          "palette": [
+            { "name": "Primär", "slug": "primary", "color": "#437ab5" },
+            { "name": "Sekundär", "slug": "secondary", "color": "#6A994E" }
+          ]
+        },
+        "typography": {
+          "fontSizes": [
+            { "name": "Normal", "slug": "normal", "size": "1rem" },
+            { "name": "Groß", "slug": "large", "size": "1.25rem" }
+          ]
+        },
+        "spacing": {
+          "padding": {
+            "horizontal": "1.5em",
+            "vertical": "0.75em"
+          }
+        },
+        "border": {
+            "radius": "5px"
+        }
+      },
+      "core/heading": {
+        "typography": {
+          "fontFamily": "var(--wp--preset--font-family--montserrat)",
+          "fontWeight": "700"
+        }
+      },
+      "core/paragraph": {
+        "typography": {
+          "fontFamily": "var(--wp--preset--font-family--opensans)",
+          "lineHeight": "1.7"
+        }
+      },
+      "core/site-title": {
+        "typography": {
+            "fontFamily": "var(--wp--preset--font-family--montserrat)",
+            "fontWeight": "bold",
+            "fontSize": "var(--wp--preset--font-size--x-large)"
+        }
+      },
+      "core/post-title": {
+          "typography": {
+            "fontFamily": "var(--wp--preset--font-family--montserrat)",
+            "fontWeight": "bold",
+            "lineHeight": "1.3"
+          }
+      }
+    },
+    "useRootPaddingAwareAlignments": true,
+    "custom": {
+      "kneipp-premium/animations": {
+        "fadeIn": "fadeIn 1s ease-out",
+        "slideInUp": "slideInUp 0.7s ease-out"
+      },
+      "kneipp-premium/shadows": {
+        "soft": "0 2px 10px rgba(0,0,0,0.1)",
+        "medium": "0 5px 15px rgba(0,0,0,0.15)",
+        "hard": "0 10px 25px rgba(0,0,0,0.2)"
+      }
+    }
+  },
+  "styles": {
+    "color": {
+      "background": "var(--wp--preset--color--background-light)",
+      "text": "var(--wp--preset--color--text-dark)"
+    },
+    "typography": {
+      "fontFamily": "var(--wp--preset--font-family--opensans)",
+      "fontSize": "var(--wp--preset--font-size--normal)",
+      "lineHeight": "1.7"
+    },
+    "elements": {
+      "link": {
+        "color": {
+          "text": "var(--wp--preset--color--primary)"
+        },
+        ":hover": {
+          "color": {
+            "text": "var(--wp--preset--color--secondary)"
+          },
+          "typography": {
+            "textDecoration": "underline"
+          }
+        }
+      },
+      "h1": {
+        "typography": {
+          "fontFamily": "var(--wp--preset--font-family--montserrat)",
+          "fontSize": "var(--wp--preset--font-size--xx-large)",
+          "fontWeight": "700",
+          "lineHeight": "1.2"
+        },
+        "spacing": {
+            "margin": {
+                "top": "var(--wp--preset--spacing--50)",
+                "bottom": "var(--wp--preset--spacing--30)"
+            }
+        }
+      },
+      "h2": {
+        "typography": {
+          "fontFamily": "var(--wp--preset--font-family--montserrat)",
+          "fontSize": "var(--wp--preset--font-size--x-large)",
+          "fontWeight": "700",
+          "lineHeight": "1.3"
+        },
+        "spacing": {
+            "margin": {
+                "top": "var(--wp--preset--spacing--40)",
+                "bottom": "var(--wp--preset--spacing--20)"
+            }
+        }
+      },
+      "h3": {
+        "typography": {
+          "fontFamily": "var(--wp--preset--font-family--montserrat)",
+          "fontSize": "var(--wp--preset--font-size--large)",
+          "fontWeight": "600",
+          "lineHeight": "1.4"
+        },
+         "spacing": {
+            "margin": {
+                "top": "var(--wp--preset--spacing--30)",
+                "bottom": "var(--wp--preset--spacing--10)"
+            }
+        }
+      },
+      "button": {
+        "border": {
+          "radius": "5px"
+        },
+        "color": {
+          "background": "var(--wp--preset--color--primary)",
+          "text": "var(--wp--preset--color--text-light)"
+        },
+        "typography": {
+          "fontWeight": "600"
+        },
+        ":hover": {
+           "color": {
+              "background": "var(--wp--preset--color--secondary)"
+           }
+        }
+      }
+    },
+    "spacing": {
+        "blockGap": "1.5rem",
+        "padding": {
+            "top": "0px",
+            "right": "0px",
+            "bottom": "0px",
+            "left": "0px"
+        }
+    }
+  },
+  "templateParts": [
+    {
+      "name": "header",
+      "title": "Header",
+      "area": "header"
+    },
+    {
+      "name": "footer",
+      "title": "Footer",
+      "area": "footer"
+    }
+  ],
+  "customTemplates": [
+    {
+      "name": "page-full-width",
+      "title": "Seite (volle Breite, keine Sidebar)",
+      "postTypes": [
+        "page"
+      ]
+    },
+    {
+      "name": "page-landing",
+      "title": "Landing Page (ohne Header/Footer)",
+      "postTypes": [
+        "page"
+      ]
+    }
+  ]
+}
