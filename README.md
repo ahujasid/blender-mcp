@@ -3,8 +3,7 @@
 Version: 1.0.0
 Entwickelt für: Kneippverein Petershagen e.V.
 Konzept von: Jules KI
-Umsetzung durch: [Ihr Name/Agenturname hier einfügen]
-
+Umsetzung durch: [Samuel]
 ## Beschreibung
 
 Ein maßgeschneidertes Premium-WordPress-Theme für den Kneippverein Petershagen e.V., entwickelt für höchste Ansprüche an Design, Funktionalität, Barrierefreiheit und Performance. Dieses Theme bietet eine solide Grundlage für eine moderne und zukunftssichere Online-Präsenz, die die Kneipp-Lehre optimal vermittelt.
