@@ -90,6 +90,8 @@ Otherwise installation instructions are on their website: [Install uv](https://d
 
 ### Claude for Desktop Integration
 
+[![mcp-linker-add](https://img.shields.io/badge/mcp--linker-add-blue?logo=link&style=flat)](https://www.mcp-linker.store/install-app?name=blender&autoSubmit=true&config=eyJibGVuZGVyIjp7ImNvbW1hbmQiOiJ1dngiLCJhcmdzIjpbImJsZW5kZXItbWNwIl19fQ==)
+
 [Watch the setup instruction video](https://www.youtube.com/watch?v=neoK_WMq92g) (Assuming you have already installed uv)
 
 Go to Claude > Settings > Developer > Edit Config > claude_desktop_config.json to include the following:
