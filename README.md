@@ -3,7 +3,8 @@
 Version: 1.0.0
 Entwickelt für: Kneippverein Petershagen e.V.
 Konzept von: Jules KI
-Umsetzung durch: [Samuel]
+Umsetzung durch: [Ihr Name/Agenturname hier einfügen]
+
 ## Beschreibung
 
 Ein maßgeschneidertes Premium-WordPress-Theme für den Kneippverein Petershagen e.V., entwickelt für höchste Ansprüche an Design, Funktionalität, Barrierefreiheit und Performance. Dieses Theme bietet eine solide Grundlage für eine moderne und zukunftssichere Online-Präsenz, die die Kneipp-Lehre optimal vermittelt.
@@ -96,6 +97,7 @@ Im WordPress-Backend unter "Design" > "Menüs" sollte ein Hauptmenü mit dem Nam
     *   Unser Verein
     *   Team
     *   Mitglied werden
+    *   Geschichte Sebastian Kneipps (Link zur Seite "Geschichte Sebastian Kneipps")
 6.  **Kontakt**
 
 Dieses Menü wird dann der Theme-Position "Primäres Menü (5 Säulen)" zugewiesen, die in `inc/theme-setup.php` registriert wurde.
