@@ -107,45 +107,54 @@ Go to Claude > Settings > Developer > Edit Config > claude_desktop_config.json t
 }
 ```
 
-### Cursor integration
+### Cursor Integration (Enhanced)
 
 [![Install MCP Server](https://cursor.com/deeplink/mcp-install-dark.svg)](https://cursor.com/install-mcp?name=blender&config=eyJjb21tYW5kIjoidXZ4IGJsZW5kZXItbWNwIn0%3D)
 
-For Mac users, go to Settings > MCP and paste the following 
+**🚀 Enhanced Cursor Features Available!**
 
-- To use as a global server, use "add new global MCP server" button and paste
-- To use as a project specific server, create `.cursor/mcp.json` in the root of the project and paste
+This project now includes special Cursor-specific tools and features:
 
+- **Project Context Awareness**: Automatic detection of your project structure
+- **Script Templates**: Generate ready-to-use Blender Python scripts
+- **Development Workflows**: Create comprehensive development scripts with logging
+- **Enhanced Code Execution**: Better debugging and error handling
+- **Scene to Code Conversion**: Export your Blender scenes as executable Python code
+- **Configuration Templates**: Easy setup for MCP configuration
+
+**Quick Setup:**
+
+1. **Automatic Configuration**: This project includes a `.cursor/mcp.json` file that automatically configures the MCP server when opened in Cursor.
+
+2. **Global Setup** (for all projects):
+   - Open Cursor Settings > MCP
+   - Click "Add new global MCP server"
+   - Use this configuration:
 
 ```json
 {
     "mcpServers": {
         "blender": {
             "command": "uvx",
-            "args": [
-                "blender-mcp"
-            ]
+            "args": ["blender-mcp"]
         }
     }
 }
 ```
 
-For Windows users, go to Settings > MCP > Add Server, add a new server with the following settings:
-
+3. **Windows Users**: Use this configuration instead:
 ```json
 {
     "mcpServers": {
         "blender": {
             "command": "cmd",
-            "args": [
-                "/c",
-                "uvx",
-                "blender-mcp"
-            ]
+            "args": ["/c", "uvx", "blender-mcp"]
         }
     }
 }
 ```
+
+**📖 Detailed Cursor Guide**: See [CURSOR_SETUP.md](CURSOR_SETUP.md) for comprehensive setup instructions, troubleshooting, and best practices.
 
 [Cursor setup video](https://www.youtube.com/watch?v=wgWsJshecac)
 
@@ -185,6 +194,15 @@ Once the config file has been set on Claude, and the addon is running on Blender
 - Execute any Python code in Blender
 - Download the right models, assets and HDRIs through [Poly Haven](https://polyhaven.com/)
 - AI generated 3D models through [Hyper3D Rodin](https://hyper3d.ai/)
+
+#### Cursor-Specific Tools (New!)
+
+- **Project Context**: `get_cursor_project_info()` - Get information about your current project
+- **Script Templates**: `create_blender_script_template()` - Generate ready-to-use Blender scripts
+- **Development Workflows**: `create_development_workflow_script()` - Create comprehensive development scripts
+- **Enhanced Execution**: `execute_blender_code_with_logging()` - Execute code with better debugging
+- **Scene Export**: `get_blender_scene_as_code()` - Convert scenes to executable Python code
+- **Config Templates**: `create_cursor_config_template()` - Generate MCP configuration templates
 
 
 ### Example Commands

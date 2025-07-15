@@ -13,6 +13,14 @@ from pathlib import Path
 import base64
 from urllib.parse import urlparse
 
+# Import Cursor integration features
+try:
+    from .cursor_integration import cursor_integration
+    CURSOR_INTEGRATION_AVAILABLE = True
+except ImportError:
+    CURSOR_INTEGRATION_AVAILABLE = False
+    cursor_integration = None
+
 # Configure logging
 logging.basicConfig(level=logging.INFO, 
                     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -936,6 +944,141 @@ def asset_creation_strategy() -> str:
     - Hyper3D Rodin failed to generate the desired asset
     - The task specifically requires a basic material/color
     """
+
+# Cursor-specific tools
+if CURSOR_INTEGRATION_AVAILABLE:
+    @mcp.tool()
+    def get_cursor_project_info(ctx: Context) -> str:
+        """Get information about the current Cursor project context"""
+        try:
+            project_info = cursor_integration.get_project_context()
+            return json.dumps(project_info, indent=2)
+        except Exception as e:
+            logger.error(f"Error getting Cursor project info: {str(e)}")
+            return f"Error getting project info: {str(e)}"
+
+    @mcp.tool()
+    def create_blender_script_template(ctx: Context, script_name: str, description: str = "") -> str:
+        """Create a template for a Blender Python script that can be used in Cursor development"""
+        try:
+            template = cursor_integration.create_blender_script_template(script_name, description)
+            return template
+        except Exception as e:
+            logger.error(f"Error creating script template: {str(e)}")
+            return f"Error creating script template: {str(e)}"
+
+    @mcp.tool()
+    def create_cursor_config_template(ctx: Context) -> str:
+        """Create a template for Cursor MCP configuration"""
+        try:
+            config = cursor_integration.create_cursor_config_template()
+            return config
+        except Exception as e:
+            logger.error(f"Error creating config template: {str(e)}")
+            return f"Error creating config template: {str(e)}"
+
+    @mcp.tool()
+    def create_development_workflow_script(ctx: Context, workflow_name: str) -> str:
+        """Create a development workflow script for Cursor users"""
+        try:
+            script = cursor_integration.create_development_workflow_script(workflow_name)
+            return script
+        except Exception as e:
+            logger.error(f"Error creating workflow script: {str(e)}")
+            return f"Error creating workflow script: {str(e)}"
+
+    @mcp.tool()
+    def execute_blender_code_with_logging(ctx: Context, code: str, enable_logging: bool = True) -> str:
+        """Execute Blender code with enhanced logging for Cursor development"""
+        try:
+            blender = get_blender_connection()
+            
+            # Add logging wrapper if enabled
+            if enable_logging:
+                logging_code = f'''
+import logging
+import json
+from datetime import datetime
+
+# Set up logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("BlenderScript")
+
+def log_execution_start():
+    logger.info(f"Starting script execution at {{datetime.now()}}")
+    logger.info("Current scene objects: " + str([obj.name for obj in bpy.context.scene.objects]))
+
+def log_execution_end():
+    logger.info(f"Script execution completed at {{datetime.now()}}")
+    logger.info("Final scene objects: " + str([obj.name for obj in bpy.context.scene.objects]))
+
+log_execution_start()
+try:
+{chr(10).join("    " + line for line in code.split(chr(10)))}
+    log_execution_end()
+except Exception as e:
+    logger.error(f"Script execution failed: {{str(e)}}")
+    raise
+'''
+                enhanced_code = logging_code
+            else:
+                enhanced_code = code
+            
+            result = blender.send_command("execute_blender_code", {"code": enhanced_code})
+            return result
+        except Exception as e:
+            logger.error(f"Error executing Blender code with logging: {str(e)}")
+            return f"Error executing code: {str(e)}"
+
+    @mcp.tool()
+    def get_blender_scene_as_code(ctx: Context) -> str:
+        """Get the current Blender scene as executable Python code for Cursor development"""
+        try:
+            blender = get_blender_connection()
+            result = blender.send_command("get_scene_info")
+            
+            # Convert scene info to Python code
+            code_lines = [
+                "import bpy",
+                "import bmesh",
+                "from mathutils import Vector",
+                "",
+                "# Clear existing objects",
+                "bpy.ops.object.select_all(action='SELECT')",
+                "bpy.ops.object.delete(use_global=False)",
+                ""
+            ]
+            
+            for obj_info in result.get("objects", []):
+                obj_name = obj_info.get("name", "Object")
+                obj_type = obj_info.get("type", "MESH")
+                location = obj_info.get("location", [0, 0, 0])
+                scale = obj_info.get("scale", [1, 1, 1])
+                rotation = obj_info.get("rotation", [0, 0, 0])
+                
+                if obj_type == "MESH":
+                    code_lines.extend([
+                        f"# Create {obj_name}",
+                        f"bpy.ops.mesh.primitive_cube_add(location=({location[0]}, {location[1]}, {location[2]}))",
+                        f"{obj_name} = bpy.context.active_object",
+                        f"{obj_name}.name = '{obj_name}'",
+                        f"{obj_name}.scale = ({scale[0]}, {scale[1]}, {scale[2]})",
+                        f"{obj_name}.rotation_euler = ({rotation[0]}, {rotation[1]}, {rotation[2]})",
+                        ""
+                    ])
+                elif obj_type == "LIGHT":
+                    code_lines.extend([
+                        f"# Create {obj_name}",
+                        f"bpy.ops.object.light_add(type='SUN', location=({location[0]}, {location[1]}, {location[2]}))",
+                        f"{obj_name} = bpy.context.active_object",
+                        f"{obj_name}.name = '{obj_name}'",
+                        ""
+                    ])
+            
+            return chr(10).join(code_lines)
+        except Exception as e:
+            logger.error(f"Error getting scene as code: {str(e)}")
+            return f"Error getting scene as code: {str(e)}"
 
 # Main execution
 
