@@ -68,6 +68,8 @@ print("Demo scene created successfully!")
     print("\n6. Exporting scene as executable code...")
     exported_code = get_blender_scene_as_code()
     print("Scene exported as code successfully!")
+    print("Note: Complex geometry is represented as simplified primitives.")
+    print("For complex models, consider using asset libraries or importing original files.")
     
     # 7. Create MCP configuration template
     print("\n7. Creating MCP configuration template...")

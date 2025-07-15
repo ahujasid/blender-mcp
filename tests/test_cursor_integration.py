@@ -101,6 +101,20 @@ class TestCursorIntegration(unittest.TestCase):
         self.assertIn("log_scene_state", script)
         self.assertIn("setup_development_environment", script)
 
+    def test_script_template_with_description(self):
+        """Test that script templates include descriptions correctly"""
+        script_name = "test_script"
+        description = "A test script for demonstration purposes"
+        
+        template = self.cursor_integration.create_blender_script_template(
+            script_name, description
+        )
+        
+        # Check that template contains the description
+        self.assertIn(description, template)
+        self.assertIn(script_name, template)
+        self.assertIn("import bpy", template)
+
 
 if __name__ == "__main__":
     unittest.main() 

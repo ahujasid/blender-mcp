@@ -87,6 +87,8 @@ get_blender_scene_as_code()
 ```
 Converts your current Blender scene into executable Python code for development.
 
+**Note:** This function generates simplified representations of objects. Complex geometry is represented as basic primitives (cubes, spheres, cylinders, planes) with correct transform properties. For complex models, consider using asset libraries or importing original files directly.
+
 #### 6. Configuration Templates
 ```python
 create_cursor_config_template()

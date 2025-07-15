@@ -1032,7 +1032,13 @@ except Exception as e:
 
     @mcp.tool()
     def get_blender_scene_as_code(ctx: Context) -> str:
-        """Get the current Blender scene as executable Python code for Cursor development"""
+        """Get the current Blender scene as executable Python code for Cursor development
+        
+        Note: This function generates simplified representations of objects. Complex geometry
+        will be represented as basic primitives (cubes, spheres, etc.) with the correct
+        transform properties. For complex models, consider using asset libraries or
+        importing the original files directly.
+        """
         try:
             blender = get_blender_connection()
             result = blender.send_command("get_scene_info")
@@ -1046,6 +1052,10 @@ except Exception as e:
                 "# Clear existing objects",
                 "bpy.ops.object.select_all(action='SELECT')",
                 "bpy.ops.object.delete(use_global=False)",
+                "",
+                "# Note: This is a simplified representation of the scene.",
+                "# Complex geometry is represented as basic primitives with correct transforms.",
+                "# For complex models, consider using asset libraries or importing original files.",
                 ""
             ]
             
@@ -1057,23 +1067,95 @@ except Exception as e:
                 rotation = obj_info.get("rotation", [0, 0, 0])
                 
                 if obj_type == "MESH":
+                    # Try to determine the best primitive based on the object name or properties
+                    # This is a heuristic approach - for complex geometry, we'll use cubes as placeholders
+                    primitive_type = "cube"
+                    if "sphere" in obj_name.lower() or "ball" in obj_name.lower():
+                        primitive_type = "uv_sphere"
+                    elif "cylinder" in obj_name.lower() or "tube" in obj_name.lower():
+                        primitive_type = "cylinder"
+                    elif "plane" in obj_name.lower() or "ground" in obj_name.lower():
+                        primitive_type = "plane"
+                    
+                    if primitive_type == "uv_sphere":
+                        code_lines.extend([
+                            f"# Create {obj_name} (simplified as sphere)",
+                            f"bpy.ops.mesh.primitive_uv_sphere_add(location=({location[0]}, {location[1]}, {location[2]}))",
+                            f"{obj_name} = bpy.context.active_object",
+                            f"{obj_name}.name = '{obj_name}'",
+                            f"{obj_name}.scale = ({scale[0]}, {scale[1]}, {scale[2]})",
+                            f"{obj_name}.rotation_euler = ({rotation[0]}, {rotation[1]}, {rotation[2]})",
+                            ""
+                        ])
+                    elif primitive_type == "cylinder":
+                        code_lines.extend([
+                            f"# Create {obj_name} (simplified as cylinder)",
+                            f"bpy.ops.mesh.primitive_cylinder_add(location=({location[0]}, {location[1]}, {location[2]}))",
+                            f"{obj_name} = bpy.context.active_object",
+                            f"{obj_name}.name = '{obj_name}'",
+                            f"{obj_name}.scale = ({scale[0]}, {scale[1]}, {scale[2]})",
+                            f"{obj_name}.rotation_euler = ({rotation[0]}, {rotation[1]}, {rotation[2]})",
+                            ""
+                        ])
+                    elif primitive_type == "plane":
+                        code_lines.extend([
+                            f"# Create {obj_name} (simplified as plane)",
+                            f"bpy.ops.mesh.primitive_plane_add(location=({location[0]}, {location[1]}, {location[2]}))",
+                            f"{obj_name} = bpy.context.active_object",
+                            f"{obj_name}.name = '{obj_name}'",
+                            f"{obj_name}.scale = ({scale[0]}, {scale[1]}, {scale[2]})",
+                            f"{obj_name}.rotation_euler = ({rotation[0]}, {rotation[1]}, {rotation[2]})",
+                            ""
+                        ])
+                    else:
+                        code_lines.extend([
+                            f"# Create {obj_name} (simplified as cube - complex geometry placeholder)",
+                            f"bpy.ops.mesh.primitive_cube_add(location=({location[0]}, {location[1]}, {location[2]}))",
+                            f"{obj_name} = bpy.context.active_object",
+                            f"{obj_name}.name = '{obj_name}'",
+                            f"{obj_name}.scale = ({scale[0]}, {scale[1]}, {scale[2]})",
+                            f"{obj_name}.rotation_euler = ({rotation[0]}, {rotation[1]}, {rotation[2]})",
+                            ""
+                        ])
+                elif obj_type == "LIGHT":
+                    light_type = "SUN"
+                    if "point" in obj_name.lower():
+                        light_type = "POINT"
+                    elif "spot" in obj_name.lower():
+                        light_type = "SPOT"
+                    elif "area" in obj_name.lower():
+                        light_type = "AREA"
+                    
                     code_lines.extend([
                         f"# Create {obj_name}",
-                        f"bpy.ops.mesh.primitive_cube_add(location=({location[0]}, {location[1]}, {location[2]}))",
+                        f"bpy.ops.object.light_add(type='{light_type}', location=({location[0]}, {location[1]}, {location[2]}))",
                         f"{obj_name} = bpy.context.active_object",
                         f"{obj_name}.name = '{obj_name}'",
-                        f"{obj_name}.scale = ({scale[0]}, {scale[1]}, {scale[2]})",
+                        ""
+                    ])
+                elif obj_type == "CAMERA":
+                    code_lines.extend([
+                        f"# Create {obj_name}",
+                        f"bpy.ops.object.camera_add(location=({location[0]}, {location[1]}, {location[2]}))",
+                        f"{obj_name} = bpy.context.active_object",
+                        f"{obj_name}.name = '{obj_name}'",
                         f"{obj_name}.rotation_euler = ({rotation[0]}, {rotation[1]}, {rotation[2]})",
                         ""
                     ])
-                elif obj_type == "LIGHT":
-                    code_lines.extend([
-                        f"# Create {obj_name}",
-                        f"bpy.ops.object.light_add(type='SUN', location=({location[0]}, {location[1]}, {location[2]}))",
-                        f"{obj_name} = bpy.context.active_object",
-                        f"{obj_name}.name = '{obj_name}'",
-                        ""
-                    ])
+            
+            # Add a note about limitations and suggestions
+            code_lines.extend([
+                "",
+                "# Additional notes:",
+                "# - This is a simplified representation of your scene",
+                "# - Complex geometry has been replaced with basic primitives",
+                "# - For complex models, consider:",
+                "#   * Using asset libraries (PolyHaven, Sketchfab)",
+                "#   * Importing the original model files",
+                "#   * Using Hyper3D for custom model generation",
+                "# - Materials and textures are not included in this representation",
+                "# - For full scene reconstruction, you may need to manually add materials and textures"
+            ])
             
             return chr(10).join(code_lines)
         except Exception as e:
