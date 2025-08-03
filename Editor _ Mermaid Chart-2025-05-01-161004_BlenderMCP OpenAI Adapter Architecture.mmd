@@ -1,0 +1,33 @@
+---
+config:
+  layout: fixed
+---
+flowchart TB
+    OpenAI["OpenAI API"] --> OpenAIAdapter["OpenAIAdapter (adapter.py)"]
+    OpenAIAdapter -- Chat Request Flow --> OpenAI & Dispatch["Tool Dispatch (dispatch.py)"]
+    CLI["CLI (cli.py)"] -- Initialization Flow --> Config["Configuration (config.py)"]
+    Config <-- Bidirectional --> OpenAIAdapter
+    Config -- Support Flow --> Logging["Logging (logging_utils.py)"]
+    Logging -- Support Flow --> BlenderMCP["BlenderMCP"]
+    OpenAIAdapter -- Initialization --> Schema["Schema Extraction (schema.py)"] & Context["Context Management (context.py)"]
+    OpenAIAdapter -- Tool Import --> BlenderMCP
+    Dispatch -- Execute Tool --> BlenderMCP
+    Dispatch -- Context Update --> Context
+    OpenAIAdapter -- Streaming Flow --> StreamingCore["Streaming (streaming.py)"]
+    StreamingCore -- Stream Handled --> Dispatch
+    BackCompat["Backward Compatibility (backward_compat.py)"] -- Support Flow --> OpenAIAdapter
+    OpenAIAdapter -- Logging Flow --> Logging
+     OpenAI:::external
+     OpenAIAdapter:::core
+     Dispatch:::core
+     CLI:::support
+     Config:::support
+     Logging:::support
+     BlenderMCP:::external
+     Schema:::core
+     Context:::core
+     StreamingCore:::core
+     BackCompat:::support
+    classDef core fill:#E0F7FA,stroke:#007BFF,stroke-width:2px
+    classDef support fill:#E8F5E9,stroke:#388E3C,stroke-width:2px
+    classDef external fill:#F5F5F5,stroke:#9E9E9E,stroke-width:2px

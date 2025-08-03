@@ -21,7 +21,7 @@ dependencies = [
 blender-mcp = "blender_mcp.server:main"
 
 [build-system]
-requires = ["setuptools>=61.0", "wheel"]
+requires = ["setuptools>=42", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
@@ -30,3 +30,16 @@ package-dir = {"" = "src"}
 [project.urls]
 "Homepage" = "https://github.com/yourusername/blender-mcp"
 "Bug Tracker" = "https://github.com/yourusername/blender-mcp/issues"
+
+[tool.black]
+line-length = 100
+target-version = ["py38"]
+include = '\.pyi?$'
+
+[tool.isort]
+profile = "black"
+line_length = 100
+
+[tool.pytest.ini_options]
+testpaths = ["blender_mcp_openai/tests"]
+python_files = "test_*.py"
