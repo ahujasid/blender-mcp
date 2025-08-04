@@ -153,6 +153,12 @@ For Windows users, go to Settings > MCP > Add Server, add a new server with the 
 
 **⚠️ Only run one instance of the MCP server (either on Cursor or Claude Desktop), not both**
 
+### Visual Studio Code Integration
+
+_Prerequisites_: Make sure you have [Visual Studio Code](https://code.visualstudio.com/) installed before proceeding.
+
+[![Install in VS Code](https://img.shields.io/badge/VS_Code-Install_blender--mcp_server-0098FF?style=flat-square&logo=visualstudiocode&logoColor=ffffff)](vscode:mcp/install?%7B%22name%22%3A%22blender-mcp%22%2C%22type%22%3A%22stdio%22%2C%22command%22%3A%22uvx%22%2C%22args%22%3A%5B%22blender-mcp%22%5D%7D)
+
 ### Installing the Blender Addon
 
 1. Download the `addon.py` file from this repo
