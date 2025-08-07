@@ -31,7 +31,8 @@ class BlenderConnection:
             
         try:
             self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            self.sock.connect((self.host, self.port))
+            HOST = os.getenv("BLENDER_MCP_HOST", self.host)
+            self.sock.connect((HOST, self.port))
             logger.info(f"Connected to Blender at {self.host}:{self.port}")
             return True
         except Exception as e:
