@@ -1769,7 +1769,7 @@ class BLENDERMCP_OT_StopServer(bpy.types.Operator):
 def register():
     bpy.types.Scene.blendermcp_addr = bpy.props.StringProperty(
         name="Address",
-        description="Listener address for the BlenderMCP server",
+        description="Listener address for the BlenderMCP server. Use 127.0.0.1 for localhost, 0.0.0.0 for all interfaces (security risk on untrusted networks), or a specific IP address",
         default="127.0.0.1"
     )
     
