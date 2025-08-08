@@ -29,7 +29,7 @@ bl_info = {
 RODIN_FREE_TRIAL_KEY = "k9TcfFoEhNd9cCPP2guHAHHHkctZHIRhZDywZ1euGUXwihbYLpOjQhofby80NJez"
 
 class BlenderMCPServer:
-    def __init__(self, host='0.0.0.0', port=9876):
+    def __init__(self, host='127.0.0.1', port=9876):
         self.host = host
         self.port = port
         self.running = False
@@ -1738,7 +1738,7 @@ class BLENDERMCP_OT_StartServer(bpy.types.Operator):
         
         # Create a new server instance
         if not hasattr(bpy.types, "blendermcp_server") or not bpy.types.blendermcp_server:
-            bpy.types.blendermcp_server = BlenderMCPServer(port=scene.blendermcp_port)
+            bpy.types.blendermcp_server = BlenderMCPServer(host=scene.blendermcp_addr, port=scene.blendermcp_port)
         
         # Start the server
         bpy.types.blendermcp_server.start()
@@ -1766,6 +1766,11 @@ class BLENDERMCP_OT_StopServer(bpy.types.Operator):
 
 # Registration functions
 def register():
+    bpy.types.Scene.blendermcp_addr = bpy.props.StringProperty(
+        name="Address",
+        description="Listener address for the BlenderMCP server",
+        default="127.0.0.1"
+    )
     bpy.types.Scene.blendermcp_port = IntProperty(
         name="Port",
         description="Port for the BlenderMCP server",
