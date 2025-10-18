@@ -79,13 +79,15 @@ The system consists of two main components:
 brew install uv
 ```
 **On Windows**
-```bash
+```powershell
 powershell -c "irm https://astral.sh/uv/install.ps1 | iex" 
 ```
-and then
-```bash
-set Path=C:\Users\nntra\.local\bin;%Path%
+and then add uv to the user path in Windows (you may need to restart Claude Desktop after):
+```powershell
+$localBin = "$env:USERPROFILE\.local\bin"
+[Environment]::SetEnvironmentVariable("Path", "$env:Path;$localBin", "User")
 ```
+
 
 Otherwise installation instructions are on their website: [Install uv](https://docs.astral.sh/uv/getting-started/installation/)
 
