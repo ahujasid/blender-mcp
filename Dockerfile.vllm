@@ -1,0 +1,4 @@
+FROM vllm/vllm-openai:v0.8.5.post1
+
+# Install missing dependencies required by DeepSeek-OCR model
+RUN pip install --no-cache-dir addict easydict matplotlib

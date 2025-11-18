@@ -1,0 +1,66 @@
+services:
+  blender-mcp:
+    build:
+      context: .
+    environment:
+      BLENDER_HOST: host.docker.internal
+      BLENDER_PORT: 9876
+      VLLM_ENDPOINT: http://vllm:8000/v1/chat/completions
+    volumes:
+      - blender_mcp_settings:/root/.config/blender-mcp
+    depends_on:
+      vllm:
+        condition: service_healthy
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    # The MCP server communicates over stdio; no ports are exposed.
+
+  vllm:
+    image: vllm/vllm-openai:v0.8.5.post1
+    command:
+      - "--model"
+      - "${VLLM_MODEL:-llava-hf/llava-1.5-7b-hf}"
+      - "--host"
+      - "0.0.0.0"
+      - "--port"
+      - "8000"
+      - "--max-model-len"
+      - "${VLLM_MAX_MODEL_LEN:-2048}"
+      - "--gpu-memory-utilization"
+      - "0.8"
+      - "--trust-remote-code"
+      - "--dtype"
+      - "half"
+    environment:
+      HF_HOME: /cache/huggingface
+      NVIDIA_VISIBLE_DEVICES: ${NVIDIA_VISIBLE_DEVICES:-all}
+      NVIDIA_DRIVER_CAPABILITIES: ${NVIDIA_DRIVER_CAPABILITIES:-compute,utility}
+      VLLM_USE_V1: "0"  # LLaVA works better with legacy V0 engine
+    ports:
+      - "8000:8000"
+    volumes:
+      - vllm_cache:/cache
+    ipc: host
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')"
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: ${VLLM_GPU_COUNT:-1}
+              capabilities: ["gpu"]
+
+volumes:
+  blender_mcp_settings:
+  vllm_cache:

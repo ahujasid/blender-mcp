@@ -19,12 +19,14 @@ from contextlib import redirect_stdout, suppress
 bl_info = {
     "name": "Blender MCP",
     "author": "BlenderMCP",
-    "version": (1, 2),
+    "version": (1, 2, 0),
     "blender": (3, 0, 0),
     "location": "View3D > Sidebar > BlenderMCP",
     "description": "Connect Blender to Claude via MCP",
     "category": "Interface",
 }
+
+ADDON_VERSION = ".".join(str(part) for part in bl_info["version"])
 
 RODIN_FREE_TRIAL_KEY = "k9TcfFoEhNd9cCPP2guHAHHHkctZHIRhZDywZ1euGUXwihbYLpOjQhofby80NJez"
 
@@ -1701,6 +1703,7 @@ class BLENDERMCP_PT_Panel(bpy.types.Panel):
         layout = self.layout
         scene = context.scene
 
+        layout.label(text=f"Blender MCP v{ADDON_VERSION}")
         layout.prop(scene, "blendermcp_port")
         layout.prop(scene, "blendermcp_use_polyhaven", text="Use assets from Poly Haven")
 

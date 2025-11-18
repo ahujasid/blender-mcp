@@ -1,0 +1,9 @@
+repos:
+  - repo: local
+    hooks:
+      - id: sync-blender-version
+        name: sync-blender-version
+        entry: python3 scripts/sync_blender_version.py --write
+        language: system
+        pass_filenames: false
+        files: ^(pyproject\.toml|src/blender_mcp/__init__\.py|addon\.py)$

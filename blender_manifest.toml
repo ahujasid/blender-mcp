@@ -1,0 +1,59 @@
+# Blender Extension Manifest
+# https://docs.blender.org/manual/en/latest/advanced/extensions/
+
+schema_version = "1.0.0"
+
+# Unique identifier (reverse domain notation)
+id = "blender_mcp"
+
+# Version (semantic versioning)
+version = "2.0.0"
+
+# Display name
+name = "Blender MCP"
+
+# Short description
+tagline = "Model Context Protocol integration for Claude AI and other LLM agents"
+
+# Maintainer information
+maintainer = "Elastic Dot Ventures <noreply@elasticdotventures.com>"
+
+# Extension type
+type = "add-on"
+
+# Minimum Blender version
+blender_version_min = "4.2.0"
+
+# License (must be SPDX identifier)
+license = ["SPDX:MIT"]
+
+# Website
+website = "https://github.com/elasticdotventures/blender-awesome"
+
+# Tags for discovery
+tags = [
+    "3D View",
+    "Interface",
+    "Import-Export",
+    "AI",
+    "Automation"
+]
+
+# Permissions required by this extension
+[permissions]
+network = "Access external APIs (PolyHaven, Hyper3D, Sketchfab)"
+files = "Import/export models and assets"
+clipboard = "Copy/paste data"
+
+# Optional: Build configuration
+# [build]
+# paths_exclude_pattern = [
+#     "__pycache__/",
+#     "*.pyc",
+#     ".git/",
+#     "test_*.py"
+# ]
+
+# Optional: Wheel dependencies (for future use)
+# [wheels]
+# "./wheels/requests-2.31.0-py3-none-any.whl"

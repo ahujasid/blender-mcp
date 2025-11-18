@@ -22,9 +22,12 @@ Give feedback, get inspired, and build on top of the MCP: [Discord](https://disc
 
 [Support this project](https://github.com/sponsors/ahujasid)
 
-## Release notes (1.2.0)
-- View screenshots for Blender viewport to better understand the scene
-- Search and download Sketchfab models
+## Release notes (1.3.0)
+- Vision via vLLM: inspect single or multiple Blender views and images using OpenAI-compatible vLLM endpoints (e.g., DeepSeek-OCR)
+- Chains: register/update self-defined (MCP-addressable & mutable) LangChain v1-like specs, including per-chain filters and views
+- Multi-model runs: pass multiple models per request or per chain and aggregate results
+- Scene filters: basic boolean filters (collision/material) evaluated in Blender alongside text filters
+- Map-reduce groundwork: simple concatenation aggregator for multi-view and multi-model responses
 
 
 ### Previously added features:
@@ -41,6 +44,7 @@ Give feedback, get inspired, and build on top of the MCP: [Discord](https://disc
 - **Material control**: Apply and modify materials and colors
 - **Scene inspection**: Get detailed information about the current Blender scene
 - **Code execution**: Run arbitrary Python code in Blender from Claude
+- **Vision analysis**: Query vLLM-hosted vision models with chain-defined prompts, views, and filters
 
 ## Components
 
@@ -184,6 +188,81 @@ _Prerequisites_: Make sure you have [Visual Studio Code](https://code.visualstud
 Once the config file has been set on Claude, and the addon is running on Blender, you will see a hammer icon with tools for the Blender MCP.
 
 ![BlenderMCP in the sidebar](assets/hammer-icon.png)
+
+### Vision Tools (vLLM + Chains)
+
+- `register_vision_chain(name, chain_spec_json)`
+  - Registers or updates a named chain. Example spec:
+    ```json
+    {
+      "endpoint": "http://localhost:8000/v1/chat/completions",
+      "models": {
+        "type": "ring",
+        "items": ["deepseek-ocr", "deepseek-ocr-vision"],
+        "rotate_on_call": true
+      },
+      "prompt": "Analyze the image and return text.",
+      "temperature": 0.0,
+      "max_tokens": 512,
+      "views": ["front","left","right","top","iso"],
+      "filters": [
+        {"type":"includes","value":"Invoice"},
+        {"type":"regex","pattern":"\\\d{2,}/\\\d{2,}/\\\d{4}"},
+        {"type":"scene:collision","object":"active","with":"any"},
+        {"type":"scene:has_material","name_contains":"metal"}
+      ]
+    }
+    ```
+
+- `list_vision_chains()`
+  - Lists registered chains with minimal info (endpoint/model(s)/views).
+
+- `verify_vllm_connection(...)`
+  - Pings the configured vLLM endpoint (or an override) using the new health-check
+    flow. Logs the outcome to the MCP console and returns a JSON report.
+
+- `vision_inspect_view(...)`
+  - Params: `chain`, `chain_spec_json`, `models_csv`, `view`, `image_path`, `image_url`, `max_tokens`, `temperature`, `lighting`, `distance`, `filter_spec_json`, `prompt`
+  - Behavior: captures a viewport shot (unless `image_*` provided), optionally positions camera/lighting, runs one or more models, and returns:
+    - `scene_filters`: boolean scene checks in Blender
+    - `results`: per-model `response` and `text_filters` outcomes
+
+- `vision_multi_view(...)`
+  - Params: `chain`, `chain_spec_json`, `views_csv`, `models_csv`, `map_reduce`, `lighting`, `distance`, `per_view_prompt`, `filter_spec_json`
+  - Behavior: iterates over views, evaluates scene filters per view, runs models per view, and returns results with a simple `concat` aggregator.
+
+Notes
+- vLLM endpoint must be OpenAI-compatible `/v1/chat/completions`.
+- Scene filters supported: `scene:collision` (AABB overlap heuristic) and `scene:has_material`.
+- Text filters supported: `includes(value)`, `regex(pattern)`.
+
+#### Configuration & Persistence
+
+- Persistent settings now live at `~/.config/blender-mcp/settings.json` on Linux
+  (or `%APPDATA%\blender-mcp\settings.json` on Windows). Override the path with
+  `BLENDER_MCP_SETTINGS_PATH`.
+- The `vllm.models` entry is stored as a **model ring** (`{"type":"ring", ...}`),
+  enabling round-robin selection with optional rotation per call.
+- Adjust `rotate_on_call` to cycle the primary model each invocation, or edit the
+  `items` array to control the order.
+- Run `python test_vllm_connection.py` (or the MCP tool `verify_vllm_connection`)
+  to confirm the vLLM server is reachable; both routes log to the system console
+  and exit non-zero if the endpoint cannot be contacted.
+
+### Docker Compose Setup
+
+- Use the provided `docker-compose.yml` to start both the MCP server and a vLLM
+  OpenAI-compatible endpoint:
+  ```bash
+  docker compose up --build
+  ```
+- Override defaults by exporting:
+  - `VLLM_MODEL_DIR` – host directory containing your model weights (mounted read-only at `/models`)
+  - `VLLM_MODEL` – model identifier passed to `vllm.entrypoints.openai.api_server`
+  - `VLLM_MAX_MODEL_LEN` – optional context length override
+- The compose file maps Blender’s socket target to `host.docker.internal`; ensure
+  the Blender addon listens on `9876` (default) and that the host mapping is
+  supported on your platform.
 
 #### Capabilities
 

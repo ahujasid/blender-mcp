@@ -7,11 +7,14 @@ import logging
 import tempfile
 from dataclasses import dataclass
 from contextlib import asynccontextmanager
-from typing import AsyncIterator, Dict, Any, List
+from typing import AsyncIterator, Dict, Any, List, Optional
 import os
 from pathlib import Path
 import base64
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urljoin
+import re
+import requests
+from blender_mcp.settings import get_settings_manager, ModelRing
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, 
@@ -21,6 +24,8 @@ logger = logging.getLogger("BlenderMCPServer")
 # Default configuration
 DEFAULT_HOST = "localhost"
 DEFAULT_PORT = 9876
+SETTINGS = get_settings_manager()
+_VLLM_HEALTH_CACHE: Dict[str, bool] = {}
 
 @dataclass
 class BlenderConnection:
@@ -199,6 +204,15 @@ mcp = FastMCP(
     "BlenderMCP",
     lifespan=server_lifespan
 )
+
+@mcp.tool()
+def ping(ctx: Context) -> str:
+    """
+    Lightweight health check that does not contact Blender.
+    Returns 'ok' when the MCP server process is up and serving stdio.
+    """
+    return "ok"
+
 
 # Resource endpoints
 
@@ -941,6 +955,673 @@ def asset_creation_strategy() -> str:
     - Hyper3D Rodin failed to generate the desired asset
     - The task specifically requires a basic material/color
     """
+
+# =========================
+# Vision/vLLM integration
+# =========================
+
+# In-memory registry for "self-defined (MCP addressable & mutable) LangChain v1-like" chains.
+# A chain spec is a JSON dict you can register and call by name, e.g.:
+# {
+#   "name": "deepseek_ocr_default",
+#   "endpoint": "http://localhost:8000/v1/chat/completions",
+#   "model": "deepseek-ocr",             # or a single model string
+#   "models": ["deepseek-ocr","another"], # optional list of models for multi-model runs
+#   "prompt": "Extract all text and layout from the image. Return JSON with keys: text, words.",
+#   "temperature": 0.0,
+#   "max_tokens": 512,
+#   "filters": [
+#       {"type": "includes", "value": "Invoice"},
+#       {"type": "regex", "pattern": "\\d{2,}/\\d{2,}/\\d{4}"},
+#       {"type": "scene:collision", "object": "active", "with": "any"},
+#       {"type": "scene:has_material", "name_contains": "metal"}
+#   ],
+#   "views": ["active"]  # or ["front","left","right","top","iso"], future map-reduce supported
+# }
+VISION_CHAINS: Dict[str, Dict[str, Any]] = {}
+
+
+def _default_vllm_endpoint() -> str:
+    return os.getenv("VLLM_ENDPOINT", SETTINGS.get_vllm_endpoint())
+
+
+def _default_model_ring() -> ModelRing:
+    return SETTINGS.get_vllm_model_ring()
+
+
+def _ensure_model_ring(value: Optional[object]) -> ModelRing:
+    if value is None:
+        return _default_model_ring()
+    return ModelRing.from_config(value)
+
+
+def _check_vllm_health(endpoint: str, relative_path: Optional[str], timeout: int) -> Dict[str, Any]:
+    parsed = urlparse(endpoint)
+    if not parsed.scheme or not parsed.netloc:
+        raise ValueError(f"Invalid endpoint URL for health check: {endpoint}")
+
+    base = f"{parsed.scheme}://{parsed.netloc}"
+    health_url = urljoin(base, relative_path or "/health")
+
+    try:
+        response = requests.get(health_url, timeout=timeout)
+        reachable = response.status_code < 500
+        logger.info("vLLM health check %s -> %s", health_url, response.status_code)
+        return {
+            "reachable": reachable,
+            "status_code": response.status_code,
+            "reason": response.reason,
+            "url": health_url,
+        }
+    except requests.RequestException as exc:
+        logger.error("vLLM health check failed for %s (%s)", health_url, exc)
+        return {
+            "reachable": False,
+            "status_code": None,
+            "reason": str(exc),
+            "url": health_url,
+        }
+
+
+def _ensure_vllm_reachable(
+    endpoint: str,
+    force: bool = False,
+    relative_path: Optional[str] = None,
+    timeout_seconds: Optional[int] = None,
+) -> Dict[str, Any]:
+    health_cfg = SETTINGS.get_vllm_health_check()
+    if not health_cfg.get("enabled", True):
+        return {
+            "reachable": True,
+            "status_code": None,
+            "reason": "Health check disabled",
+            "url": None,
+        }
+
+    if relative_path is not None:
+        health_cfg["relative_path"] = relative_path
+    if timeout_seconds is not None:
+        health_cfg["timeout_seconds"] = timeout_seconds
+
+    cache_key = (
+        endpoint,
+        health_cfg.get("relative_path"),
+        int(health_cfg.get("timeout_seconds", 5)),
+    )
+    if not force and _VLLM_HEALTH_CACHE.get(cache_key):
+        return {
+            "reachable": True,
+            "status_code": None,
+            "reason": "Cached success",
+            "url": None,
+        }
+
+    timeout = int(health_cfg.get("timeout_seconds", 5))
+    result = _check_vllm_health(endpoint, health_cfg.get("relative_path"), timeout)
+    if result["reachable"]:
+        _VLLM_HEALTH_CACHE[cache_key] = True
+    return result
+
+
+def _data_url_from_image_bytes(image_bytes: bytes, fmt: str = "png") -> str:
+    b64 = base64.b64encode(image_bytes).decode("ascii")
+    return f"data:image/{fmt};base64,{b64}"
+
+
+def _vllm_chat(
+    endpoint: str,
+    model: str,
+    prompt: str,
+    image_data_url: Optional[str] = None,
+    image_url: Optional[str] = None,
+    max_tokens: int = 512,
+    temperature: float = 0.0,
+    timeout_s: int = 60,
+) -> str:
+    """
+    Call an OpenAI-compatible vLLM /v1/chat/completions endpoint with optional vision content.
+    Returns assistant message content (str).
+    """
+    content: List[Dict[str, Any]] = []
+    if prompt:
+        content.append({"type": "text", "text": prompt})
+    if image_data_url:
+        content.append({"type": "image_url", "image_url": {"url": image_data_url}})
+    if image_url:
+        content.append({"type": "image_url", "image_url": {"url": image_url}})
+
+    payload = {
+        "model": model,
+        "messages": [
+            {"role": "user", "content": content if content else [{"type": "text", "text": "Analyze this image"}]}
+        ],
+        "max_tokens": max_tokens,
+        "temperature": temperature,
+    }
+    headers = {"Content-Type": "application/json"}
+    health = _ensure_vllm_reachable(endpoint)
+    if not health["reachable"]:
+        raise RuntimeError(f"vLLM endpoint unreachable: {health['reason']}")
+
+    resp = requests.post(endpoint, headers=headers, json=payload, timeout=timeout_s)
+    resp.raise_for_status()
+    data = resp.json()
+    # Defensive extraction
+    return (
+        data.get("choices", [{}])[0]
+        .get("message", {})
+        .get("content", "")
+    )
+
+
+def _apply_filters(text: str, filters: Optional[List[Dict[str, Any]]]) -> Dict[str, Any]:
+    """
+    Apply simple pragmatic filters (includes / regex). Returns dict with pass/fail and reasons.
+    """
+    if not filters:
+        return {"passed": True, "reasons": []}
+    reasons: List[str] = []
+    passed = True
+    for f in filters:
+        ftype = f.get("type")
+        if ftype == "includes":
+            val = f.get("value", "")
+            ok = val in (text or "")
+            passed = passed and ok
+            reasons.append(f"includes('{val}')={'ok' if ok else 'fail'}")
+        elif ftype == "regex":
+            pat = f.get("pattern", "")
+            try:
+                ok = re.search(pat, text or "") is not None
+            except re.error:
+                ok = False
+            passed = passed and ok
+            reasons.append(f"regex('{pat}')={'ok' if ok else 'fail'}")
+        else:
+            reasons.append(f"unknown_filter_type('{ftype}')=ignored")
+    return {"passed": passed, "reasons": reasons}
+
+def _evaluate_scene_filters(blender: BlenderConnection, filters: Optional[List[Dict[str, Any]]]) -> Dict[str, Any]:
+    """
+    Evaluate basic scene-level boolean filters inside Blender via execute_code.
+    Supported types (pragmatic, minimal):
+    - scene:collision   {object: 'active'|name, with: 'any'|name}
+    - scene:has_material{name_contains: str}
+    Returns: {passed: bool, reasons: [str]}
+    """
+    if not filters:
+        return {"passed": True, "reasons": []}
+
+    reasons: List[str] = []
+    passed = True
+
+    for f in filters:
+        ftype = f.get("type")
+        if not ftype or not str(ftype).startswith("scene:"):
+            continue
+
+        if ftype == "scene:collision":
+            obj_sel = f.get("object", "active")
+            with_sel = f.get("with", "any")
+            code = "\n".join([
+                "import bpy, mathutils",
+                "def aabb(obj):",
+                "    if obj.type != 'MESH':",
+                "        return None",
+                "    corners = [mathutils.Vector(c) for c in obj.bound_box]",
+                "    wc = [obj.matrix_world @ v for v in corners]",
+                "    xs = [v.x for v in wc]; ys = [v.y for v in wc]; zs = [v.z for v in wc]",
+                "    return (min(xs), min(ys), min(zs), max(xs), max(ys), max(zs))",
+                "def overlap(a,b):",
+                "    if a is None or b is None: return False",
+                "    ax0,ay0,az0,ax1,ay1,az1 = a; bx0,by0,bz0,bx1,by1,bz1 = b",
+                "    return (ax0 <= bx1 and ax1 >= bx0 and ay0 <= by1 and ay1 >= by0 and az0 <= bz1 and az1 >= bz0)",
+                f"obj = bpy.context.view_layer.objects.active if {repr(obj_sel)}=='active' else bpy.data.objects.get({repr(obj_sel)})",
+                "hit = False",
+                "if obj:",
+                "    a = aabb(obj)",
+                f"    target_name = {repr(with_sel)}",
+                "    for other in bpy.context.scene.objects:",
+                "        if other is obj: continue",
+                "        if target_name != 'any' and other.name != target_name: continue",
+                "        if overlap(a, aabb(other)):",
+                "            hit = True; break",
+                "print('TRUE' if hit else 'FALSE')",
+            ])
+            result = blender.send_command("execute_code", {"code": code})
+            out = (result or {}).get("result") or (result or {}).get("output", "")
+            ok = isinstance(out, str) and ("TRUE" in out)
+            passed = passed and ok
+            reasons.append(f"scene:collision({obj_sel} vs {with_sel})={'ok' if ok else 'fail'}")
+        elif ftype == "scene:has_material":
+            needle = f.get("name_contains", "")
+            code = "\n".join([
+                "import bpy",
+                f"needle = {repr(needle)}.lower()",
+                "hit = False",
+                "for m in bpy.data.materials:",
+                "    if needle in (m.name or '').lower():",
+                "        hit = True; break",
+                "print('TRUE' if hit else 'FALSE')",
+            ])
+            result = blender.send_command("execute_code", {"code": code})
+            out = (result or {}).get("result") or (result or {}).get("output", "")
+            ok = isinstance(out, str) and ("TRUE" in out)
+            passed = passed and ok
+            reasons.append(f"scene:has_material(*{needle}*)={'ok' if ok else 'fail'}")
+        else:
+            reasons.append(f"unknown_scene_filter('{ftype}')=ignored")
+
+    return {"passed": passed, "reasons": reasons}
+
+
+def _blender_set_view_and_lighting(blender: BlenderConnection, view: Optional[str], lighting: Optional[str], distance: float = 5.0):
+    """
+    Position active camera by named view around origin and optionally tweak world lighting.
+    Views: active|front|back|left|right|top|bottom|iso
+    """
+    if not view and not lighting:
+        return
+
+    code_lines = [
+        "import bpy, math",
+        "scene = bpy.context.scene",
+        "cam = scene.camera",
+        "if cam is None:",
+        "    bpy.ops.object.camera_add()",
+        "    cam = bpy.context.active_object",
+        "    scene.camera = cam",
+        "target = (0.0, 0.0, 0.0)",
+        f"dist = {float(distance)}",
+        "def look_at(cam_obj, target):",
+        "    import mathutils",
+        "    direction = mathutils.Vector(target) - cam_obj.location",
+        "    rot_quat = direction.to_track_quat('-Z', 'Y')",
+        "    cam_obj.rotation_euler = rot_quat.to_euler()",
+    ]
+    if view:
+        code_lines += [
+            f"view = {repr(view)}",
+            "if view == 'front':",
+            "    cam.location = (0, -dist, 0)",
+            "elif view == 'back':",
+            "    cam.location = (0, dist, 0)",
+            "elif view == 'left':",
+            "    cam.location = (-dist, 0, 0)",
+            "elif view == 'right':",
+            "    cam.location = (dist, 0, 0)",
+            "elif view == 'top':",
+            "    cam.location = (0, 0, dist)",
+            "elif view == 'bottom':",
+            "    cam.location = (0, 0, -dist)",
+            "elif view == 'iso':",
+            "    cam.location = (dist*0.7, -dist*0.7, dist*0.7)",
+            "else:",
+            "    pass  # 'active' or unknown -> do nothing",
+            "look_at(cam, target)",
+        ]
+    if lighting:
+        # Simple pragmatic lighting control: strength:X or clear or hdr:ENV-NAME (placeholder)
+        code_lines += [
+            f"lighting = {repr(lighting)}",
+            "world = bpy.context.scene.world or bpy.data.worlds.new('World')",
+            "bpy.context.scene.world = world",
+            "if lighting.startswith('strength:'):",
+            "    try:",
+            "        val = float(lighting.split(':',1)[1])",
+            "        if world.node_tree is None:",
+            "            world.use_nodes = True",
+            "        nt = world.node_tree",
+            "        bg = next((n for n in nt.nodes if n.type=='BACKGROUND'), None)",
+            "        if bg is None:",
+            "            bg = nt.nodes.new('ShaderNodeBackground')",
+            "        bg.inputs[1].default_value = val",
+            "    except Exception:",
+            "        pass",
+            "elif lighting == 'clear':",
+            "    world.use_nodes = False",
+            "# hdr:... could be implemented via environment texture hookup later",
+        ]
+    code = "\n".join(code_lines)
+    blender.send_command("execute_code", {"code": code})
+
+
+def _capture_view_screenshot(blender: BlenderConnection, max_size: int = 800) -> bytes:
+    temp_dir = tempfile.gettempdir()
+    temp_path = os.path.join(temp_dir, f"blender_screenshot_{os.getpid()}_vision.png")
+    result = blender.send_command(
+        "get_viewport_screenshot",
+        {"max_size": max_size, "filepath": temp_path, "format": "png"},
+    )
+    if "error" in result:
+        raise Exception(result["error"])
+    if not os.path.exists(temp_path):
+        raise Exception("Viewport screenshot failed (no file).")
+    with open(temp_path, "rb") as f:
+        img = f.read()
+    try:
+        os.remove(temp_path)
+    except Exception:
+        pass
+    return img
+
+
+@mcp.tool()
+def register_vision_chain(ctx: Context, name: str, chain_spec_json: str) -> str:
+    """
+    Register or update a named vision chain (LangChain v1-like spec as JSON).
+    """
+    try:
+        spec = json.loads(chain_spec_json)
+        if "models" in spec:
+            spec["models"] = ModelRing.from_config(spec["models"]).to_config()
+        elif "model" in spec:
+            spec["models"] = ModelRing.from_config(spec["model"]).to_config()
+            spec.pop("model", None)
+        VISION_CHAINS[name] = spec
+        return f"Registered chain '{name}' with keys: {list(spec.keys())}"
+    except Exception as e:
+        return f"Error registering chain: {str(e)}"
+
+
+@mcp.tool()
+def list_vision_chains(ctx: Context) -> str:
+    """
+    List registered vision chains and their minimal info.
+    """
+    summary = {
+        name: {
+            "endpoint": spec.get("endpoint"),
+            "model": spec.get("model"),
+            "has_filters": bool(spec.get("filters")),
+            "views": spec.get("views"),
+            "models": spec.get("models"),
+        }
+        for name, spec in VISION_CHAINS.items()
+    }
+    return json.dumps(summary, indent=2)
+
+
+@mcp.tool()
+def verify_vllm_connection(
+    ctx: Context,
+    endpoint: Optional[str] = None,
+    health_path: Optional[str] = None,
+    timeout_seconds: Optional[int] = None,
+    force: bool = True,
+) -> str:
+    """
+    Perform a connectivity check against the configured vLLM endpoint.
+
+    Parameters:
+    - endpoint: override the endpoint URL (defaults to settings/env)
+    - health_path: override relative health endpoint path
+    - timeout_seconds: request timeout in seconds
+    - force: if False, returns cached success when available
+    """
+    eff_endpoint = endpoint or _default_vllm_endpoint()
+    health_cfg = SETTINGS.get_vllm_health_check()
+    if health_path is not None:
+        health_cfg["relative_path"] = health_path
+    if timeout_seconds is not None:
+        health_cfg["timeout_seconds"] = timeout_seconds
+
+    rel_path = health_cfg.get("relative_path")
+    timeout = int(health_cfg.get("timeout_seconds", 5))
+
+    result = _ensure_vllm_reachable(
+        eff_endpoint,
+        force=force,
+        relative_path=rel_path,
+        timeout_seconds=timeout,
+    )
+    cache_key = (
+        eff_endpoint,
+        rel_path,
+        timeout,
+    )
+    if result.get("reachable"):
+        _VLLM_HEALTH_CACHE[cache_key] = True
+    logger.info("verify_vllm_connection result: %s", result)
+    return json.dumps(result, indent=2)
+
+
+def _resolve_chain(chain: Optional[str], chain_spec_json: Optional[str]) -> Dict[str, Any]:
+    if chain_spec_json:
+        raw_spec = json.loads(chain_spec_json)
+    elif chain and chain in VISION_CHAINS:
+        raw_spec = VISION_CHAINS[chain]
+    else:
+        raw_spec = {}
+
+    resolved = dict(raw_spec)
+
+    endpoint = resolved.get("endpoint") or _default_vllm_endpoint()
+    resolved["endpoint"] = endpoint
+
+    model_ring = _ensure_model_ring(resolved.get("models") or resolved.get("model"))
+    resolved["model_ring"] = model_ring
+    resolved["models"] = model_ring.as_list()
+
+    if not resolved.get("model"):
+        resolved["model"] = model_ring.peek_primary()
+
+    resolved.setdefault(
+        "prompt",
+        "Read and reason about this image. Return plain text unless JSON is explicitly requested.",
+    )
+    resolved.setdefault("temperature", 0.0)
+    resolved.setdefault("max_tokens", 512)
+    resolved.setdefault("filters", [])
+    resolved.setdefault("views", ["active"])
+
+    return resolved
+
+
+@mcp.tool()
+def vision_inspect_view(
+    ctx: Context,
+    chain: Optional[str] = None,
+    chain_spec_json: Optional[str] = None,
+    prompt: Optional[str] = None,
+    models_csv: Optional[str] = None,
+    view: str = "active",
+    image_path: Optional[str] = None,
+    image_url: Optional[str] = None,
+    max_tokens: int = 512,
+    temperature: float = 0.0,
+    lighting: Optional[str] = None,
+    distance: float = 5.0,
+    filter_spec_json: Optional[str] = None,
+) -> str:
+    """
+    Inspect a single view with a vLLM-hosted vision model (e.g., DeepSeek-OCR) using a LangChain-like chain spec.
+    - If image_path or image_url is not provided, captures Blender viewport (optionally repositioning camera via 'view').
+    - 'view' supports: active|front|back|left|right|top|bottom|iso.
+    - 'lighting' pragmatic control supports: 'strength:2.0' or 'clear'.
+    - Filter spec (JSON) supports [{'type':'includes','value':'foo'}, {'type':'regex','pattern':'...'}]
+    """
+    try:
+        spec = _resolve_chain(chain, chain_spec_json)
+        endpoint = spec.get("endpoint", _default_vllm_endpoint())
+        model_ring: ModelRing = spec.get("model_ring", _default_model_ring())
+
+        # Support multi-model via models list or models_csv
+        models: List[str] = []
+        if models_csv:
+            models = [m.strip() for m in models_csv.split(",") if m.strip()]
+        else:
+            models = [m for m in model_ring.choose_order() if m]
+
+        if not models:
+            primary = model_ring.peek_primary()
+            if primary:
+                models = [primary]
+
+        if not models:
+            return "Error: No models configured for vision inspection"
+
+        eff_prompt = prompt or spec.get("prompt", "Analyze the image")
+        eff_temp = float(spec.get("temperature", temperature))
+        eff_max = int(spec.get("max_tokens", max_tokens))
+        filters = spec.get("filters", None)
+        filter_override = json.loads(filter_spec_json) if filter_spec_json else None
+
+        img_data_url = None
+        used_image_url = None
+
+        if image_path:
+            if not os.path.exists(image_path):
+                return f"Error: image_path does not exist: {image_path}"
+            with open(image_path, "rb") as f:
+                img_bytes = f.read()
+            img_data_url = _data_url_from_image_bytes(img_bytes, fmt=Path(image_path).suffix.lstrip(".") or "png")
+        elif image_url:
+            used_image_url = image_url
+        else:
+            # Capture from Blender
+            blender = get_blender_connection()
+            _blender_set_view_and_lighting(blender, view=view, lighting=lighting, distance=distance)
+            img_bytes = _capture_view_screenshot(blender, max_size=800)
+            img_data_url = _data_url_from_image_bytes(img_bytes, fmt="png")
+
+        # Scene-level filters (evaluated even if not sending image to model)
+        sf = _evaluate_scene_filters(get_blender_connection(), filter_override or filters)
+
+        per_model: List[Dict[str, Any]] = []
+        for m in models:
+            content = _vllm_chat(
+                endpoint=endpoint,
+                model=m,
+                prompt=eff_prompt,
+                image_data_url=img_data_url,
+                image_url=used_image_url,
+                max_tokens=eff_max,
+                temperature=eff_temp,
+            )
+            tf = _apply_filters(content, filter_override or filters)
+            per_model.append({"model": m, "text_filters": tf, "response": content})
+
+        return json.dumps(
+            {
+                "chain": chain or "(ad-hoc)",
+                "view": view,
+                "lighting": lighting,
+                "endpoint": endpoint,
+                "models": models,
+                "prompt": eff_prompt,
+                "scene_filters": sf,
+                "results": per_model,
+            },
+            indent=2,
+        )
+    except Exception as e:
+        logger.error(f"vision_inspect_view error: {str(e)}")
+        return f"Error: {str(e)}"
+
+
+@mcp.tool()
+def vision_multi_view(
+    ctx: Context,
+    chain: Optional[str] = None,
+    chain_spec_json: Optional[str] = None,
+    views_csv: Optional[str] = None,
+    map_reduce: str = "concat",
+    models_csv: Optional[str] = None,
+    lighting: Optional[str] = None,
+    distance: float = 5.0,
+    per_view_prompt: Optional[str] = None,
+    filter_spec_json: Optional[str] = None,
+) -> str:
+    """
+    Inspect multiple views and aggregate results (future-proof for map-reduce).
+    - views_csv: comma-separated views, defaults to chain.views or 'front,left,right,top,iso'
+    - map_reduce: 'concat' (default). Future: 'vote', 'boolean_and', etc.
+    """
+    try:
+        spec = _resolve_chain(chain, chain_spec_json)
+        default_views = spec.get("views") or ["front", "left", "right", "top", "iso"]
+        views = [v.strip() for v in (views_csv.split(",") if views_csv else default_views) if v.strip()]
+        endpoint = spec.get("endpoint", _default_vllm_endpoint())
+        model_ring: ModelRing = spec.get("model_ring", _default_model_ring())
+
+        # Support multi-model via models list or models_csv
+        models: List[str] = []
+        if models_csv:
+            models = [m.strip() for m in models_csv.split(",") if m.strip()]
+        else:
+            models = [m for m in model_ring.choose_order() if m]
+
+        if not models:
+            primary = model_ring.peek_primary()
+            if primary:
+                models = [primary]
+
+        if not models:
+            return "Error: No models configured for multi-view inspection"
+
+        base_prompt = per_view_prompt or spec.get("prompt", "Analyze the image")
+        eff_temp = float(spec.get("temperature", 0.0))
+        eff_max = int(spec.get("max_tokens", 512))
+        filter_override = json.loads(filter_spec_json) if filter_spec_json else None
+        filters = filter_override or spec.get("filters", None)
+
+        blender = get_blender_connection()
+        per_view_results: List[Dict[str, Any]] = []
+
+        for v in views:
+            _blender_set_view_and_lighting(blender, view=v, lighting=lighting, distance=distance)
+            img_bytes = _capture_view_screenshot(blender, max_size=800)
+            img_data_url = _data_url_from_image_bytes(img_bytes, fmt="png")
+            # Evaluate scene filters for this view
+            sf = _evaluate_scene_filters(blender, filters)
+
+            per_model: List[Dict[str, Any]] = []
+            for m in models:
+                content = _vllm_chat(
+                    endpoint=endpoint,
+                    model=m,
+                    prompt=base_prompt,
+                    image_data_url=img_data_url,
+                    image_url=None,
+                    max_tokens=eff_max,
+                    temperature=eff_temp,
+                )
+                tf = _apply_filters(content, filters)
+                per_model.append({"model": m, "text_filters": tf, "response": content})
+            per_view_results.append(
+                {
+                    "view": v,
+                    "scene_filters": sf,
+                    "results": per_model,
+                }
+            )
+
+        # Simple map-reduce: concat
+        if map_reduce == "concat":
+            aggregated = "\n\n".join([
+                f"[{r['view']}]\n" + "\n".join([pm['response'] for pm in r.get('results', [])])
+                for r in per_view_results
+            ])
+        else:
+            aggregated = "(unsupported map_reduce, defaulted to concat)"
+
+        return json.dumps(
+            {
+                "chain": chain or "(ad-hoc)",
+                "endpoint": endpoint,
+                "models": models,
+                "views": views,
+                "lighting": lighting,
+                "map_reduce": map_reduce,
+                "results": per_view_results,
+                "aggregated": aggregated,
+            },
+            indent=2,
+        )
+    except Exception as e:
+        logger.error(f"vision_multi_view error: {str(e)}")
+        return f"Error: {str(e)}"
 
 # Main execution
 
