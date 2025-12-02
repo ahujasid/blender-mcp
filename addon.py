@@ -237,6 +237,7 @@ class BlenderMCPServer:
         if bpy.context.scene.blendermcp_use_sketchfab:
             sketchfab_handlers = {
                 "search_sketchfab_models": self.search_sketchfab_models,
+                "get_sketchfab_model_preview": self.get_sketchfab_model_preview,
                 "download_sketchfab_model": self.download_sketchfab_model,
             }
             handlers.update(sketchfab_handlers)
@@ -1582,8 +1583,100 @@ class BlenderMCPServer:
             traceback.print_exc()
             return {"error": str(e)}
 
-    def download_sketchfab_model(self, uid):
-        """Download a model from Sketchfab by its UID"""
+    def get_sketchfab_model_preview(self, uid):
+        """Get thumbnail preview image of a Sketchfab model by its UID"""
+        try:
+            import base64
+            
+            api_key = bpy.context.scene.blendermcp_sketchfab_api_key
+            if not api_key:
+                return {"error": "Sketchfab API key is not configured"}
+
+            headers = {"Authorization": f"Token {api_key}"}
+            
+            # Get model info which includes thumbnails
+            response = requests.get(
+                f"https://api.sketchfab.com/v3/models/{uid}",
+                headers=headers,
+                timeout=30
+            )
+            
+            if response.status_code == 401:
+                return {"error": "Authentication failed (401). Check your API key."}
+            
+            if response.status_code == 404:
+                return {"error": f"Model not found: {uid}"}
+            
+            if response.status_code != 200:
+                return {"error": f"Failed to get model info: {response.status_code}"}
+            
+            data = response.json()
+            thumbnails = data.get("thumbnails", {}).get("images", [])
+            
+            if not thumbnails:
+                return {"error": "No thumbnail available for this model"}
+            
+            # Find a suitable thumbnail (prefer medium size ~640px)
+            selected_thumbnail = None
+            for thumb in thumbnails:
+                width = thumb.get("width", 0)
+                if 400 <= width <= 800:
+                    selected_thumbnail = thumb
+                    break
+            
+            # Fallback to the first available thumbnail
+            if not selected_thumbnail:
+                selected_thumbnail = thumbnails[0]
+            
+            thumbnail_url = selected_thumbnail.get("url")
+            if not thumbnail_url:
+                return {"error": "Thumbnail URL not found"}
+            
+            # Download the thumbnail image
+            img_response = requests.get(thumbnail_url, timeout=30)
+            if img_response.status_code != 200:
+                return {"error": f"Failed to download thumbnail: {img_response.status_code}"}
+            
+            # Encode image as base64
+            image_data = base64.b64encode(img_response.content).decode('ascii')
+            
+            # Determine format from content type or URL
+            content_type = img_response.headers.get("Content-Type", "")
+            if "png" in content_type or thumbnail_url.endswith(".png"):
+                img_format = "png"
+            else:
+                img_format = "jpeg"
+            
+            # Get additional model info for context
+            model_name = data.get("name", "Unknown")
+            author = data.get("user", {}).get("username", "Unknown")
+            
+            return {
+                "success": True,
+                "image_data": image_data,
+                "format": img_format,
+                "model_name": model_name,
+                "author": author,
+                "uid": uid,
+                "thumbnail_width": selected_thumbnail.get("width"),
+                "thumbnail_height": selected_thumbnail.get("height")
+            }
+            
+        except requests.exceptions.Timeout:
+            return {"error": "Request timed out. Check your internet connection."}
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            return {"error": f"Failed to get model preview: {str(e)}"}
+
+    def download_sketchfab_model(self, uid, normalize_size=False, target_size=1.0):
+        """Download a model from Sketchfab by its UID
+        
+        Parameters:
+        - uid: The unique identifier of the Sketchfab model
+        - normalize_size: If True, scale the model so its largest dimension equals target_size
+        - target_size: The target size in Blender units (meters) for the largest dimension
+        """
         try:
             api_key = bpy.context.scene.blendermcp_sketchfab_api_key
             if not api_key:
@@ -1680,18 +1773,115 @@ class BlenderMCPServer:
             # Import the model
             bpy.ops.import_scene.gltf(filepath=main_file)
 
-            # Get the names of imported objects
-            imported_objects = [obj.name for obj in bpy.context.selected_objects]
+            # Get the imported objects
+            imported_objects = list(bpy.context.selected_objects)
+            imported_object_names = [obj.name for obj in imported_objects]
 
             # Clean up temporary files
             with suppress(Exception):
                 shutil.rmtree(temp_dir)
 
-            return {
+            # Find root objects (objects without parents in the imported set)
+            root_objects = [obj for obj in imported_objects if obj.parent is None]
+
+            # Helper function to recursively get all mesh children
+            def get_all_mesh_children(obj):
+                """Recursively collect all mesh objects in the hierarchy"""
+                meshes = []
+                if obj.type == 'MESH':
+                    meshes.append(obj)
+                for child in obj.children:
+                    meshes.extend(get_all_mesh_children(child))
+                return meshes
+
+            # Collect ALL meshes from the entire hierarchy (starting from roots)
+            all_meshes = []
+            for obj in root_objects:
+                all_meshes.extend(get_all_mesh_children(obj))
+            
+            if all_meshes:
+                # Calculate combined world bounding box for all meshes
+                all_min = mathutils.Vector((float('inf'), float('inf'), float('inf')))
+                all_max = mathutils.Vector((float('-inf'), float('-inf'), float('-inf')))
+                
+                for mesh_obj in all_meshes:
+                    # Get world-space bounding box corners
+                    for corner in mesh_obj.bound_box:
+                        world_corner = mesh_obj.matrix_world @ mathutils.Vector(corner)
+                        all_min.x = min(all_min.x, world_corner.x)
+                        all_min.y = min(all_min.y, world_corner.y)
+                        all_min.z = min(all_min.z, world_corner.z)
+                        all_max.x = max(all_max.x, world_corner.x)
+                        all_max.y = max(all_max.y, world_corner.y)
+                        all_max.z = max(all_max.z, world_corner.z)
+                
+                # Calculate dimensions
+                dimensions = [
+                    all_max.x - all_min.x,
+                    all_max.y - all_min.y,
+                    all_max.z - all_min.z
+                ]
+                max_dimension = max(dimensions)
+                
+                # Apply normalization if requested
+                scale_applied = 1.0
+                if normalize_size and max_dimension > 0:
+                    scale_factor = target_size / max_dimension
+                    scale_applied = scale_factor
+                    
+                    # ✅ Only apply scale to ROOT objects (not children!)
+                    # Child objects inherit parent's scale through matrix_world
+                    for root in root_objects:
+                        root.scale = (
+                            root.scale.x * scale_factor,
+                            root.scale.y * scale_factor,
+                            root.scale.z * scale_factor
+                        )
+                    
+                    # Update the scene to recalculate matrix_world for all objects
+                    bpy.context.view_layer.update()
+                    
+                    # Recalculate bounding box after scaling
+                    all_min = mathutils.Vector((float('inf'), float('inf'), float('inf')))
+                    all_max = mathutils.Vector((float('-inf'), float('-inf'), float('-inf')))
+                    
+                    for mesh_obj in all_meshes:
+                        for corner in mesh_obj.bound_box:
+                            world_corner = mesh_obj.matrix_world @ mathutils.Vector(corner)
+                            all_min.x = min(all_min.x, world_corner.x)
+                            all_min.y = min(all_min.y, world_corner.y)
+                            all_min.z = min(all_min.z, world_corner.z)
+                            all_max.x = max(all_max.x, world_corner.x)
+                            all_max.y = max(all_max.y, world_corner.y)
+                            all_max.z = max(all_max.z, world_corner.z)
+                    
+                    dimensions = [
+                        all_max.x - all_min.x,
+                        all_max.y - all_min.y,
+                        all_max.z - all_min.z
+                    ]
+                
+                world_bounding_box = [[all_min.x, all_min.y, all_min.z], [all_max.x, all_max.y, all_max.z]]
+            else:
+                world_bounding_box = None
+                dimensions = None
+                scale_applied = 1.0
+
+            result = {
                 "success": True,
                 "message": "Model imported successfully",
-                "imported_objects": imported_objects
+                "imported_objects": imported_object_names
             }
+            
+            if world_bounding_box:
+                result["world_bounding_box"] = world_bounding_box
+            if dimensions:
+                result["dimensions"] = [round(d, 4) for d in dimensions]
+            if normalize_size:
+                result["scale_applied"] = round(scale_applied, 6)
+                result["normalized"] = True
+            
+            return result
 
         except requests.exceptions.Timeout:
             return {"error": "Request timed out. Check your internet connection and try again with a simpler model."}
