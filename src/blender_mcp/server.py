@@ -701,24 +701,31 @@ def get_sketchfab_model_preview(
 @mcp.tool()
 def download_sketchfab_model(
     ctx: Context,
-    uid: str
+    uid: str,
+    normalize_size: bool = True,
+    target_size: float = 1.0
 ) -> str:
     """
     Download and import a Sketchfab model by its UID.
     
     Parameters:
     - uid: The unique identifier of the Sketchfab model
+    - normalize_size: If True (default), scale the model so its largest dimension equals target_size.
+                     This prevents extremely large or small models from being imported.
+    - target_size: The target size in Blender units/meters for the largest dimension (default: 1.0).
+                  For example, target_size=2.0 will make the model's largest dimension 2 meters.
     
-    Returns a message indicating success or failure.
+    Returns a message with import details including object names, dimensions, and bounding box.
     The model must be downloadable and you must have proper access rights.
     """
     try:
-        
         blender = get_blender_connection()
-        logger.info(f"Attempting to download Sketchfab model with UID: {uid}")
+        logger.info(f"Downloading Sketchfab model: {uid}, normalize={normalize_size}, target_size={target_size}")
         
         result = blender.send_command("download_sketchfab_model", {
-            "uid": uid
+            "uid": uid,
+            "normalize_size": normalize_size,
+            "target_size": target_size
         })
         
         if result is None:
@@ -732,7 +739,26 @@ def download_sketchfab_model(
         if result.get("success"):
             imported_objects = result.get("imported_objects", [])
             object_names = ", ".join(imported_objects) if imported_objects else "none"
-            return f"Successfully imported model. Created objects: {object_names}"
+            
+            output = f"Successfully imported model.\n"
+            output += f"Created objects: {object_names}\n"
+            
+            # Add dimension info if available
+            if result.get("dimensions"):
+                dims = result["dimensions"]
+                output += f"Dimensions (X, Y, Z): {dims[0]:.3f} x {dims[1]:.3f} x {dims[2]:.3f} meters\n"
+            
+            # Add bounding box info if available
+            if result.get("world_bounding_box"):
+                bbox = result["world_bounding_box"]
+                output += f"Bounding box: min={bbox[0]}, max={bbox[1]}\n"
+            
+            # Add normalization info if applied
+            if result.get("normalized"):
+                scale = result.get("scale_applied", 1.0)
+                output += f"Size normalized: scale factor {scale:.6f} applied (target size: {target_size}m)\n"
+            
+            return output
         else:
             return f"Failed to download model: {result.get('message', 'Unknown error')}"
     except Exception as e:

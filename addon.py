@@ -1655,8 +1655,14 @@ class BlenderMCPServer:
             traceback.print_exc()
             return {"error": f"Failed to get model preview: {str(e)}"}
 
-    def download_sketchfab_model(self, uid):
-        """Download a model from Sketchfab by its UID"""
+    def download_sketchfab_model(self, uid, normalize_size=False, target_size=1.0):
+        """Download a model from Sketchfab by its UID
+        
+        Parameters:
+        - uid: The unique identifier of the Sketchfab model
+        - normalize_size: If True, scale the model so its largest dimension equals target_size
+        - target_size: The target size in Blender units (meters) for the largest dimension
+        """
         try:
             api_key = bpy.context.scene.blendermcp_sketchfab_api_key
             if not api_key:
@@ -1753,18 +1759,111 @@ class BlenderMCPServer:
             # Import the model
             bpy.ops.import_scene.gltf(filepath=main_file)
 
-            # Get the names of imported objects
-            imported_objects = [obj.name for obj in bpy.context.selected_objects]
+            # Get the imported objects
+            imported_objects = list(bpy.context.selected_objects)
+            imported_object_names = [obj.name for obj in imported_objects]
 
             # Clean up temporary files
             with suppress(Exception):
                 shutil.rmtree(temp_dir)
 
-            return {
+            # Calculate combined bounding box for all mesh objects
+            mesh_objects = [obj for obj in imported_objects if obj.type == 'MESH']
+            
+            if mesh_objects:
+                # Calculate combined AABB for all meshes
+                all_min = mathutils.Vector((float('inf'), float('inf'), float('inf')))
+                all_max = mathutils.Vector((float('-inf'), float('-inf'), float('-inf')))
+                
+                for obj in mesh_objects:
+                    try:
+                        bbox = self._get_aabb(obj)
+                        obj_min = mathutils.Vector(bbox[0])
+                        obj_max = mathutils.Vector(bbox[1])
+                        
+                        all_min.x = min(all_min.x, obj_min.x)
+                        all_min.y = min(all_min.y, obj_min.y)
+                        all_min.z = min(all_min.z, obj_min.z)
+                        
+                        all_max.x = max(all_max.x, obj_max.x)
+                        all_max.y = max(all_max.y, obj_max.y)
+                        all_max.z = max(all_max.z, obj_max.z)
+                    except Exception as e:
+                        print(f"Warning: Could not get AABB for {obj.name}: {e}")
+                        continue
+                
+                # Calculate dimensions
+                dimensions = [
+                    all_max.x - all_min.x,
+                    all_max.y - all_min.y,
+                    all_max.z - all_min.z
+                ]
+                max_dimension = max(dimensions)
+                
+                # Apply normalization if requested
+                scale_applied = 1.0
+                if normalize_size and max_dimension > 0:
+                    scale_factor = target_size / max_dimension
+                    scale_applied = scale_factor
+                    
+                    # Apply scale to all imported objects (not just meshes)
+                    for obj in imported_objects:
+                        obj.scale = (
+                            obj.scale.x * scale_factor,
+                            obj.scale.y * scale_factor,
+                            obj.scale.z * scale_factor
+                        )
+                    
+                    # Update the scene to recalculate bounding boxes
+                    bpy.context.view_layer.update()
+                    
+                    # Recalculate bounding box after scaling
+                    all_min = mathutils.Vector((float('inf'), float('inf'), float('inf')))
+                    all_max = mathutils.Vector((float('-inf'), float('-inf'), float('-inf')))
+                    
+                    for obj in mesh_objects:
+                        try:
+                            bbox = self._get_aabb(obj)
+                            obj_min = mathutils.Vector(bbox[0])
+                            obj_max = mathutils.Vector(bbox[1])
+                            
+                            all_min.x = min(all_min.x, obj_min.x)
+                            all_min.y = min(all_min.y, obj_min.y)
+                            all_min.z = min(all_min.z, obj_min.z)
+                            
+                            all_max.x = max(all_max.x, obj_max.x)
+                            all_max.y = max(all_max.y, obj_max.y)
+                            all_max.z = max(all_max.z, obj_max.z)
+                        except Exception:
+                            continue
+                    
+                    dimensions = [
+                        all_max.x - all_min.x,
+                        all_max.y - all_min.y,
+                        all_max.z - all_min.z
+                    ]
+                
+                world_bounding_box = [[all_min.x, all_min.y, all_min.z], [all_max.x, all_max.y, all_max.z]]
+            else:
+                world_bounding_box = None
+                dimensions = None
+                scale_applied = 1.0
+
+            result = {
                 "success": True,
                 "message": "Model imported successfully",
-                "imported_objects": imported_objects
+                "imported_objects": imported_object_names
             }
+            
+            if world_bounding_box:
+                result["world_bounding_box"] = world_bounding_box
+            if dimensions:
+                result["dimensions"] = [round(d, 4) for d in dimensions]
+            if normalize_size:
+                result["scale_applied"] = round(scale_applied, 6)
+                result["normalized"] = True
+            
+            return result
 
         except requests.exceptions.Timeout:
             return {"error": "Request timed out. Check your internet connection and try again with a simpler model."}
