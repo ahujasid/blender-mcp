@@ -1759,7 +1759,7 @@ class BlenderMCPServer:
             # Import the model
             bpy.ops.import_scene.gltf(filepath=main_file)
 
-            # Get the imported objects
+            # Get the imported objects (root level)
             imported_objects = list(bpy.context.selected_objects)
             imported_object_names = [obj.name for obj in imported_objects]
 
@@ -1767,30 +1767,43 @@ class BlenderMCPServer:
             with suppress(Exception):
                 shutil.rmtree(temp_dir)
 
-            # Calculate combined bounding box for all mesh objects
-            mesh_objects = [obj for obj in imported_objects if obj.type == 'MESH']
+            # Helper function to recursively get all mesh children
+            def get_all_mesh_children(obj):
+                """Recursively collect all mesh objects in the hierarchy"""
+                meshes = []
+                if obj.type == 'MESH':
+                    meshes.append(obj)
+                for child in obj.children:
+                    meshes.extend(get_all_mesh_children(child))
+                return meshes
             
-            if mesh_objects:
-                # Calculate combined AABB for all meshes
+            # Helper function to recursively select all objects in hierarchy
+            def select_hierarchy(obj):
+                """Recursively select an object and all its children"""
+                obj.select_set(True)
+                for child in obj.children:
+                    select_hierarchy(child)
+
+            # Collect ALL meshes from the entire hierarchy
+            all_meshes = []
+            for obj in imported_objects:
+                all_meshes.extend(get_all_mesh_children(obj))
+            
+            if all_meshes:
+                # Calculate combined world bounding box for all meshes
                 all_min = mathutils.Vector((float('inf'), float('inf'), float('inf')))
                 all_max = mathutils.Vector((float('-inf'), float('-inf'), float('-inf')))
                 
-                for obj in mesh_objects:
-                    try:
-                        bbox = self._get_aabb(obj)
-                        obj_min = mathutils.Vector(bbox[0])
-                        obj_max = mathutils.Vector(bbox[1])
-                        
-                        all_min.x = min(all_min.x, obj_min.x)
-                        all_min.y = min(all_min.y, obj_min.y)
-                        all_min.z = min(all_min.z, obj_min.z)
-                        
-                        all_max.x = max(all_max.x, obj_max.x)
-                        all_max.y = max(all_max.y, obj_max.y)
-                        all_max.z = max(all_max.z, obj_max.z)
-                    except Exception as e:
-                        print(f"Warning: Could not get AABB for {obj.name}: {e}")
-                        continue
+                for mesh_obj in all_meshes:
+                    # Get world-space bounding box corners
+                    for corner in mesh_obj.bound_box:
+                        world_corner = mesh_obj.matrix_world @ mathutils.Vector(corner)
+                        all_min.x = min(all_min.x, world_corner.x)
+                        all_min.y = min(all_min.y, world_corner.y)
+                        all_min.z = min(all_min.z, world_corner.z)
+                        all_max.x = max(all_max.x, world_corner.x)
+                        all_max.y = max(all_max.y, world_corner.y)
+                        all_max.z = max(all_max.z, world_corner.z)
                 
                 # Calculate dimensions
                 dimensions = [
@@ -1806,36 +1819,39 @@ class BlenderMCPServer:
                     scale_factor = target_size / max_dimension
                     scale_applied = scale_factor
                     
-                    # Apply scale to all imported objects (not just meshes)
+                    # Deselect all first
+                    bpy.ops.object.select_all(action='DESELECT')
+                    
+                    # Apply scale to root objects and select entire hierarchy
                     for obj in imported_objects:
                         obj.scale = (
                             obj.scale.x * scale_factor,
                             obj.scale.y * scale_factor,
                             obj.scale.z * scale_factor
                         )
+                        select_hierarchy(obj)
                     
-                    # Update the scene to recalculate bounding boxes
+                    # Set active object and apply transform to entire hierarchy
+                    if imported_objects:
+                        bpy.context.view_layer.objects.active = imported_objects[0]
+                        bpy.ops.object.transform_apply(location=False, rotation=False, scale=True)
+                    
+                    # Update the scene
                     bpy.context.view_layer.update()
                     
                     # Recalculate bounding box after scaling
                     all_min = mathutils.Vector((float('inf'), float('inf'), float('inf')))
                     all_max = mathutils.Vector((float('-inf'), float('-inf'), float('-inf')))
                     
-                    for obj in mesh_objects:
-                        try:
-                            bbox = self._get_aabb(obj)
-                            obj_min = mathutils.Vector(bbox[0])
-                            obj_max = mathutils.Vector(bbox[1])
-                            
-                            all_min.x = min(all_min.x, obj_min.x)
-                            all_min.y = min(all_min.y, obj_min.y)
-                            all_min.z = min(all_min.z, obj_min.z)
-                            
-                            all_max.x = max(all_max.x, obj_max.x)
-                            all_max.y = max(all_max.y, obj_max.y)
-                            all_max.z = max(all_max.z, obj_max.z)
-                        except Exception:
-                            continue
+                    for mesh_obj in all_meshes:
+                        for corner in mesh_obj.bound_box:
+                            world_corner = mesh_obj.matrix_world @ mathutils.Vector(corner)
+                            all_min.x = min(all_min.x, world_corner.x)
+                            all_min.y = min(all_min.y, world_corner.y)
+                            all_min.z = min(all_min.z, world_corner.z)
+                            all_max.x = max(all_max.x, world_corner.x)
+                            all_max.y = max(all_max.y, world_corner.y)
+                            all_max.z = max(all_max.z, world_corner.z)
                     
                     dimensions = [
                         all_max.x - all_min.x,
