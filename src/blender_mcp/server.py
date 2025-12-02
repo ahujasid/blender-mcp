@@ -657,6 +657,48 @@ def search_sketchfab_models(
         return f"Error searching Sketchfab models: {str(e)}"
 
 @mcp.tool()
+def get_sketchfab_model_preview(
+    ctx: Context,
+    uid: str
+) -> Image:
+    """
+    Get a preview thumbnail of a Sketchfab model by its UID.
+    Use this to visually confirm a model before downloading.
+    
+    Parameters:
+    - uid: The unique identifier of the Sketchfab model (obtained from search_sketchfab_models)
+    
+    Returns the model's thumbnail as an Image for visual confirmation.
+    """
+    try:
+        blender = get_blender_connection()
+        logger.info(f"Getting Sketchfab model preview for UID: {uid}")
+        
+        result = blender.send_command("get_sketchfab_model_preview", {"uid": uid})
+        
+        if result is None:
+            raise Exception("Received no response from Blender")
+        
+        if "error" in result:
+            raise Exception(result["error"])
+        
+        # Decode base64 image data
+        image_data = base64.b64decode(result["image_data"])
+        img_format = result.get("format", "jpeg")
+        
+        # Log model info
+        model_name = result.get("model_name", "Unknown")
+        author = result.get("author", "Unknown")
+        logger.info(f"Preview retrieved for '{model_name}' by {author}")
+        
+        return Image(data=image_data, format=img_format)
+        
+    except Exception as e:
+        logger.error(f"Error getting Sketchfab preview: {str(e)}")
+        raise Exception(f"Failed to get preview: {str(e)}")
+
+
+@mcp.tool()
 def download_sketchfab_model(
     ctx: Context,
     uid: str
