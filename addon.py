@@ -1759,13 +1759,16 @@ class BlenderMCPServer:
             # Import the model
             bpy.ops.import_scene.gltf(filepath=main_file)
 
-            # Get the imported objects (root level)
+            # Get the imported objects
             imported_objects = list(bpy.context.selected_objects)
             imported_object_names = [obj.name for obj in imported_objects]
 
             # Clean up temporary files
             with suppress(Exception):
                 shutil.rmtree(temp_dir)
+
+            # Find root objects (objects without parents in the imported set)
+            root_objects = [obj for obj in imported_objects if obj.parent is None]
 
             # Helper function to recursively get all mesh children
             def get_all_mesh_children(obj):
@@ -1776,17 +1779,10 @@ class BlenderMCPServer:
                 for child in obj.children:
                     meshes.extend(get_all_mesh_children(child))
                 return meshes
-            
-            # Helper function to recursively select all objects in hierarchy
-            def select_hierarchy(obj):
-                """Recursively select an object and all its children"""
-                obj.select_set(True)
-                for child in obj.children:
-                    select_hierarchy(child)
 
-            # Collect ALL meshes from the entire hierarchy
+            # Collect ALL meshes from the entire hierarchy (starting from roots)
             all_meshes = []
-            for obj in imported_objects:
+            for obj in root_objects:
                 all_meshes.extend(get_all_mesh_children(obj))
             
             if all_meshes:
@@ -1819,24 +1815,16 @@ class BlenderMCPServer:
                     scale_factor = target_size / max_dimension
                     scale_applied = scale_factor
                     
-                    # Deselect all first
-                    bpy.ops.object.select_all(action='DESELECT')
-                    
-                    # Apply scale to root objects and select entire hierarchy
-                    for obj in imported_objects:
-                        obj.scale = (
-                            obj.scale.x * scale_factor,
-                            obj.scale.y * scale_factor,
-                            obj.scale.z * scale_factor
+                    # ✅ Only apply scale to ROOT objects (not children!)
+                    # Child objects inherit parent's scale through matrix_world
+                    for root in root_objects:
+                        root.scale = (
+                            root.scale.x * scale_factor,
+                            root.scale.y * scale_factor,
+                            root.scale.z * scale_factor
                         )
-                        select_hierarchy(obj)
                     
-                    # Set active object and apply transform to entire hierarchy
-                    if imported_objects:
-                        bpy.context.view_layer.objects.active = imported_objects[0]
-                        bpy.ops.object.transform_apply(location=False, rotation=False, scale=True)
-                    
-                    # Update the scene
+                    # Update the scene to recalculate matrix_world for all objects
                     bpy.context.view_layer.update()
                     
                     # Recalculate bounding box after scaling
