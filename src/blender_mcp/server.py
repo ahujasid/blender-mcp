@@ -702,29 +702,33 @@ def get_sketchfab_model_preview(
 def download_sketchfab_model(
     ctx: Context,
     uid: str,
-    normalize_size: bool = True,
-    target_size: float = 1.0
+    target_size: float
 ) -> str:
     """
     Download and import a Sketchfab model by its UID.
+    The model will be scaled so its largest dimension equals target_size.
     
     Parameters:
     - uid: The unique identifier of the Sketchfab model
-    - normalize_size: If True (default), scale the model so its largest dimension equals target_size.
-                     This prevents extremely large or small models from being imported.
-    - target_size: The target size in Blender units/meters for the largest dimension (default: 1.0).
-                  For example, target_size=2.0 will make the model's largest dimension 2 meters.
+    - target_size: REQUIRED. The target size in Blender units/meters for the largest dimension.
+                  You must specify the desired size for the model.
+                  Examples:
+                  - Chair: target_size=1.0 (1 meter tall)
+                  - Table: target_size=0.75 (75cm tall)
+                  - Car: target_size=4.5 (4.5 meters long)
+                  - Person: target_size=1.7 (1.7 meters tall)
+                  - Small object (cup, phone): target_size=0.1 to 0.3
     
     Returns a message with import details including object names, dimensions, and bounding box.
     The model must be downloadable and you must have proper access rights.
     """
     try:
         blender = get_blender_connection()
-        logger.info(f"Downloading Sketchfab model: {uid}, normalize={normalize_size}, target_size={target_size}")
+        logger.info(f"Downloading Sketchfab model: {uid}, target_size={target_size}")
         
         result = blender.send_command("download_sketchfab_model", {
             "uid": uid,
-            "normalize_size": normalize_size,
+            "normalize_size": True,  # Always normalize
             "target_size": target_size
         })
         
