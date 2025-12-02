@@ -1,2 +1,0 @@
-# BlenderMCP Tests
-
