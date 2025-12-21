@@ -1065,6 +1065,7 @@ def import_generated_asset(
         logger.error(f"Error generating Hyper3D task: {str(e)}")
         return f"Error generating Hyper3D task: {str(e)}"
 
+@telemetry_tool("get_hunyuan3d_status")
 @mcp.tool(
     annotations=ToolAnnotations(
         title="Get Hunyuan3D Status",
@@ -1087,6 +1088,7 @@ def get_hunyuan3d_status(ctx: Context) -> str:
         logger.error(f"Error checking Hunyuan3D status: {str(e)}")
         return f"Error checking Hunyuan3D status: {str(e)}"
     
+@telemetry_tool("generate_hunyuan3d_model")
 @mcp.tool(
     annotations=ToolAnnotations(
         title="Generate Hunyuan3D Model",
@@ -1129,6 +1131,7 @@ def generate_hunyuan3d_model(
         logger.error(f"Error generating Hunyuan3D task: {str(e)}")
         return f"Error generating Hunyuan3D task: {str(e)}"
     
+@telemetry_tool("poll_hunyuan_job_status")
 @mcp.tool(
     annotations=ToolAnnotations(
         title="Poll Hunyuan Job Status",
@@ -1163,6 +1166,7 @@ def poll_hunyuan_job_status(
         logger.error(f"Error generating Hunyuan3D task: {str(e)}")
         return f"Error generating Hunyuan3D task: {str(e)}"
 
+@telemetry_tool("import_generated_asset_hunyuan")
 @mcp.tool(
     annotations=ToolAnnotations(
         title="Import Generated Asset Hunyuan",
