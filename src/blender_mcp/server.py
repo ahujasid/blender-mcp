@@ -521,7 +521,6 @@ def download_polyhaven_asset(
 @mcp.tool(
     annotations=ToolAnnotations(
         title="Set Texture",
-        destructiveHint=True,
     ),
 )
 def set_texture(
