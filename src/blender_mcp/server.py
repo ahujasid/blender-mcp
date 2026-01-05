@@ -679,26 +679,79 @@ def search_sketchfab_models(
 
 @telemetry_tool("download_sketchfab_model")
 @mcp.tool()
-def download_sketchfab_model(
+def get_sketchfab_model_preview(
     ctx: Context,
     uid: str
+) -> Image:
+    """
+    Get a preview thumbnail of a Sketchfab model by its UID.
+    Use this to visually confirm a model before downloading.
+    
+    Parameters:
+    - uid: The unique identifier of the Sketchfab model (obtained from search_sketchfab_models)
+    
+    Returns the model's thumbnail as an Image for visual confirmation.
+    """
+    try:
+        blender = get_blender_connection()
+        logger.info(f"Getting Sketchfab model preview for UID: {uid}")
+        
+        result = blender.send_command("get_sketchfab_model_preview", {"uid": uid})
+        
+        if result is None:
+            raise Exception("Received no response from Blender")
+        
+        if "error" in result:
+            raise Exception(result["error"])
+        
+        # Decode base64 image data
+        image_data = base64.b64decode(result["image_data"])
+        img_format = result.get("format", "jpeg")
+        
+        # Log model info
+        model_name = result.get("model_name", "Unknown")
+        author = result.get("author", "Unknown")
+        logger.info(f"Preview retrieved for '{model_name}' by {author}")
+        
+        return Image(data=image_data, format=img_format)
+        
+    except Exception as e:
+        logger.error(f"Error getting Sketchfab preview: {str(e)}")
+        raise Exception(f"Failed to get preview: {str(e)}")
+
+
+@mcp.tool()
+def download_sketchfab_model(
+    ctx: Context,
+    uid: str,
+    target_size: float
 ) -> str:
     """
     Download and import a Sketchfab model by its UID.
+    The model will be scaled so its largest dimension equals target_size.
     
     Parameters:
     - uid: The unique identifier of the Sketchfab model
+    - target_size: REQUIRED. The target size in Blender units/meters for the largest dimension.
+                  You must specify the desired size for the model.
+                  Examples:
+                  - Chair: target_size=1.0 (1 meter tall)
+                  - Table: target_size=0.75 (75cm tall)
+                  - Car: target_size=4.5 (4.5 meters long)
+                  - Person: target_size=1.7 (1.7 meters tall)
+                  - Small object (cup, phone): target_size=0.1 to 0.3
     
-    Returns a message indicating success or failure.
+    Returns a message with import details including object names, dimensions, and bounding box.
     The model must be downloadable and you must have proper access rights.
     """
     try:
-        
         blender = get_blender_connection()
-        logger.info(f"Attempting to download Sketchfab model with UID: {uid}")
+        logger.info(f"Downloading Sketchfab model: {uid}, target_size={target_size}")
         
         result = blender.send_command("download_sketchfab_model", {
-            "uid": uid
+            "uid": uid,
+            "normalize_size": True,  # Always normalize
+            "target_size": target_size
         })
         
         if result is None:
@@ -712,7 +765,26 @@ def download_sketchfab_model(
         if result.get("success"):
             imported_objects = result.get("imported_objects", [])
             object_names = ", ".join(imported_objects) if imported_objects else "none"
-            return f"Successfully imported model. Created objects: {object_names}"
+            
+            output = f"Successfully imported model.\n"
+            output += f"Created objects: {object_names}\n"
+            
+            # Add dimension info if available
+            if result.get("dimensions"):
+                dims = result["dimensions"]
+                output += f"Dimensions (X, Y, Z): {dims[0]:.3f} x {dims[1]:.3f} x {dims[2]:.3f} meters\n"
+            
+            # Add bounding box info if available
+            if result.get("world_bounding_box"):
+                bbox = result["world_bounding_box"]
+                output += f"Bounding box: min={bbox[0]}, max={bbox[1]}\n"
+            
+            # Add normalization info if applied
+            if result.get("normalized"):
+                scale = result.get("scale_applied", 1.0)
+                output += f"Size normalized: scale factor {scale:.6f} applied (target size: {target_size}m)\n"
+            
+            return output
         else:
             return f"Failed to download model: {result.get('message', 'Unknown error')}"
     except Exception as e:
