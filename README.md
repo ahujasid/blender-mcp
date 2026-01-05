@@ -114,6 +114,15 @@ Go to Claude > Settings > Developer > Edit Config > claude_desktop_config.json t
     }
 }
 ```
+<details>
+<summary>Claude Code</summary>
+
+Use the Claude Code CLI to add the blender MCP server:
+
+```bash
+claude mcp add blender uvx blender-mcp
+```
+</details>
 
 ### Cursor integration
 
