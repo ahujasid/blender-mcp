@@ -2344,6 +2344,11 @@ class BLENDERMCP_AddonPreferences(bpy.types.AddonPreferences):
         box.separator()
         box.label(text="All data is anonymized and helps improve Blender MCP.", icon='INFO')
         box.label(text="You can opt out anytime by unchecking the box above.", icon='INFO')
+        
+        # Terms and Conditions link
+        box.separator()
+        row = box.row()
+        row.operator("blendermcp.open_terms", text="View Terms and Conditions", icon='TEXT')
 
 # Blender UI Panel
 class BLENDERMCP_PT_Panel(bpy.types.Panel):
@@ -2435,6 +2440,24 @@ class BLENDERMCP_OT_StopServer(bpy.types.Operator):
 
         scene.blendermcp_server_running = False
 
+        return {'FINISHED'}
+
+# Operator to open Terms and Conditions
+class BLENDERMCP_OT_OpenTerms(bpy.types.Operator):
+    bl_idname = "blendermcp.open_terms"
+    bl_label = "View Terms and Conditions"
+    bl_description = "Open the Terms and Conditions document"
+
+    def execute(self, context):
+        # Open the Terms and Conditions on GitHub
+        terms_url = "https://github.com/ahujasid/blender-mcp/blob/main/TERMS_AND_CONDITIONS.md"
+        try:
+            import webbrowser
+            webbrowser.open(terms_url)
+            self.report({'INFO'}, "Terms and Conditions opened in browser")
+        except Exception as e:
+            self.report({'ERROR'}, f"Could not open Terms and Conditions: {str(e)}")
+        
         return {'FINISHED'}
 
 # Registration functions
@@ -2566,6 +2589,7 @@ def register():
     bpy.utils.register_class(BLENDERMCP_OT_SetFreeTrialHyper3DAPIKey)
     bpy.utils.register_class(BLENDERMCP_OT_StartServer)
     bpy.utils.register_class(BLENDERMCP_OT_StopServer)
+    bpy.utils.register_class(BLENDERMCP_OT_OpenTerms)
 
     print("BlenderMCP addon registered")
 
@@ -2579,6 +2603,7 @@ def unregister():
     bpy.utils.unregister_class(BLENDERMCP_OT_SetFreeTrialHyper3DAPIKey)
     bpy.utils.unregister_class(BLENDERMCP_OT_StartServer)
     bpy.utils.unregister_class(BLENDERMCP_OT_StopServer)
+    bpy.utils.unregister_class(BLENDERMCP_OT_OpenTerms)
     bpy.utils.unregister_class(BLENDERMCP_AddonPreferences)
 
     del bpy.types.Scene.blendermcp_port

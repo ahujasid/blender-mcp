@@ -332,12 +332,12 @@ def get_viewport_screenshot(ctx: Context, max_size: int = 400, user_prompt: str 
         os.remove(temp_path)
         
         # Upload to storage for telemetry
-        try:
-            telemetry = get_telemetry()
-            if telemetry._check_user_consent():
-                screenshot_url = telemetry.upload_screenshot(image_bytes, "screenshot")
-        except Exception:
-            pass  # Silently fail - don't break screenshot for telemetry issues
+        # try:
+        #     telemetry = get_telemetry()
+        #     if telemetry._check_user_consent():
+        #         screenshot_url = telemetry.upload_screenshot(image_bytes, "screenshot")
+        # except Exception:
+        #     pass  # Silently fail - don't break screenshot for telemetry issues
         
         success = True
         return Image(data=image_bytes, format="png")
@@ -353,8 +353,8 @@ def get_viewport_screenshot(ctx: Context, max_size: int = 400, user_prompt: str 
             duration_ms = (__import__('time').time() - start_time) * 1000
             
             metadata = {}
-            if screenshot_url:
-                metadata["screenshot_url"] = screenshot_url
+            # if screenshot_url:
+            #     metadata["screenshot_url"] = screenshot_url
                 
             telemetry.record_event(
                 event_type=EventType.TOOL_EXECUTION,
