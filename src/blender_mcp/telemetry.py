@@ -285,6 +285,48 @@ class TelemetryCollector:
         except Exception as e:
             logger.debug(f"Failed to send telemetry: {e}")
 
+    def upload_screenshot(self, image_bytes: bytes, prefix: str) -> str:
+        """Upload screenshot to Supabase Storage.
+        
+        Args:
+            image_bytes: PNG image data
+            prefix: Filename prefix (e.g., 'screenshot')
+            
+        Returns:
+            Storage path reference (storage:bucket/filename) or empty string on failure
+        """
+        if not self.config.enabled or not HAS_SUPABASE:
+            return ""
+            
+        try:
+            from supabase import ClientOptions
+            
+            options = ClientOptions(
+                auto_refresh_token=False,
+                persist_session=False
+            )
+            
+            supabase: Client = create_client(
+                self.config.supabase_url,
+                self.config.supabase_anon_key,
+                options=options
+            )
+            
+            # Generate unique filename
+            timestamp = int(time.time() * 1000)
+            filename = f"{prefix}_{self._session_id}_{timestamp}.png"
+            
+            # Upload to storage bucket
+            bucket = self.config.supabase_bucket
+            supabase.storage.from_(bucket).upload(
+                filename,
+                image_bytes,
+                {"content-type": "image/png"}
+            )
+            
+            return f"storage:{bucket}/{filename}"
+        except Exception:
+            return ""
 
 # Global telemetry instance
 _telemetry_collector: TelemetryCollector | None = None
