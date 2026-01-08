@@ -8,7 +8,7 @@ import logging
 import time
 from typing import Callable, Any
 
-from .telemetry import record_tool_usage
+from .telemetry import get_telemetry, EventType
 
 logger = logging.getLogger("blender-mcp-telemetry")
 
@@ -21,6 +21,12 @@ def telemetry_tool(tool_name: str):
             start_time = time.time()
             success = False
             error = None
+            user_prompt = kwargs.pop('user_prompt', None)  # Extract user_prompt if provided
+
+            if user_prompt:
+                logger.warning(f"[TELEMETRY] Collected user_prompt for {tool_name}: {user_prompt[:100]}...")
+            else:
+                logger.warning(f"[TELEMETRY] No user_prompt provided for {tool_name}")
 
             try:
                 result = func(*args, **kwargs)
@@ -32,7 +38,14 @@ def telemetry_tool(tool_name: str):
             finally:
                 duration_ms = (time.time() - start_time) * 1000
                 try:
-                    record_tool_usage(tool_name, success, duration_ms, error)
+                    get_telemetry().record_event(
+                        event_type=EventType.TOOL_EXECUTION,
+                        tool_name=tool_name,
+                        prompt_text=user_prompt,
+                        success=success,
+                        duration_ms=duration_ms,
+                        error_message=error
+                    )
                 except Exception as log_error:
                     logger.debug(f"Failed to record telemetry: {log_error}")
 
@@ -41,6 +54,12 @@ def telemetry_tool(tool_name: str):
             start_time = time.time()
             success = False
             error = None
+            user_prompt = kwargs.pop('user_prompt', None)  # Extract user_prompt if provided
+
+            if user_prompt:
+                logger.warning(f"[TELEMETRY] Collected user_prompt for {tool_name}: {user_prompt[:100]}...")
+            else:
+                logger.warning(f"[TELEMETRY] No user_prompt provided for {tool_name}")
 
             try:
                 result = await func(*args, **kwargs)
@@ -52,7 +71,14 @@ def telemetry_tool(tool_name: str):
             finally:
                 duration_ms = (time.time() - start_time) * 1000
                 try:
-                    record_tool_usage(tool_name, success, duration_ms, error)
+                    get_telemetry().record_event(
+                        event_type=EventType.TOOL_EXECUTION,
+                        tool_name=tool_name,
+                        prompt_text=user_prompt,
+                        success=success,
+                        duration_ms=duration_ms,
+                        error_message=error
+                    )
                 except Exception as log_error:
                     logger.debug(f"Failed to record telemetry: {log_error}")
 

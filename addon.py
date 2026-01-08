@@ -13,7 +13,7 @@ import traceback
 import os
 import shutil
 import zipfile
-from bpy.props import IntProperty
+from bpy.props import IntProperty, BoolProperty
 import io
 from datetime import datetime
 import hashlib, hmac, base64
@@ -208,6 +208,7 @@ class BlenderMCPServer:
             "get_object_info": self.get_object_info,
             "get_viewport_screenshot": self.get_viewport_screenshot,
             "execute_code": self.execute_code,
+            "get_telemetry_consent": self.get_telemetry_consent,
             "get_polyhaven_status": self.get_polyhaven_status,
             "get_hyper3d_status": self.get_hyper3d_status,
             "get_sketchfab_status": self.get_sketchfab_status,
@@ -1107,6 +1108,11 @@ class BlenderMCPServer:
             print(f"Error in set_texture: {str(e)}")
             traceback.print_exc()
             return {"error": f"Failed to apply texture: {str(e)}"}
+
+    def get_telemetry_consent(self):
+        """Get the current telemetry consent status"""
+        consent = bpy.context.scene.blendermcp_telemetry_consent
+        return {"consent": consent}
 
     def get_polyhaven_status(self):
         """Get the current status of PolyHaven integration"""
@@ -2348,6 +2354,19 @@ class BLENDERMCP_PT_Panel(bpy.types.Panel):
             layout.operator("blendermcp.stop_server", text="Disconnect from MCP server")
             layout.label(text=f"Running on port {scene.blendermcp_port}")
 
+        # Telemetry section
+        layout.separator()
+        layout.label(text="Telemetry & Privacy:", icon='PREFERENCES')
+
+        box = layout.box()
+        row = box.row()
+        row.prop(scene, "blendermcp_telemetry_consent", text="Allow Anonymized Prompt Collection")
+
+        # Info text
+        box.separator()
+        box.label(text="All data is anonymized and helps improve Blender MCP.", icon='INFO')
+        box.label(text="You can opt out anytime by unchecking the box above.", icon='INFO')
+
 # Operator to set Hyper3D API Key
 class BLENDERMCP_OT_SetFreeTrialHyper3DAPIKey(bpy.types.Operator):
     bl_idname = "blendermcp.set_hyper3d_free_trial_api_key"
@@ -2516,6 +2535,12 @@ def register():
         subtype="PASSWORD",
         description="API Key provided by Sketchfab",
         default=""
+    )
+
+    bpy.types.Scene.blendermcp_telemetry_consent = BoolProperty(
+        name="Allow Anonymized Prompt Collection",
+        description="Allow collection of anonymized prompts to help improve Blender MCP",
+        default=True
     )
 
     bpy.utils.register_class(BLENDERMCP_PT_Panel)

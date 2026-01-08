@@ -162,6 +162,21 @@ class TelemetryCollector:
             logger.debug(f"Failed to persist UUID: {e}")
             return str(uuid.uuid4())
 
+    def _check_user_consent(self) -> bool:
+        """Check if user has consented to prompt collection via Blender addon"""
+        try:
+            # Import here to avoid circular dependency
+            from .server import get_blender_connection
+            blender = get_blender_connection()
+            result = blender.send_command("get_telemetry_consent")
+            consent = result.get("consent", False)
+            logger.info(f"[TELEMETRY] User consent check: {consent}")
+            return consent
+        except Exception as e:
+            logger.info(f"[TELEMETRY] Could not check consent (Blender not connected?): {e}")
+            # Default to False if we can't check (user hasn't given consent or Blender not connected)
+            return False
+
     def record_event(
         self,
         event_type: EventType,
@@ -183,10 +198,15 @@ class TelemetryCollector:
 
         logger.warning(f"Recording telemetry event: {event_type}, tool={tool_name}")
 
+        # Check user consent for prompt collection
+        if prompt_text:
+            user_consent = self._check_user_consent()
+            if not user_consent:
+                logger.warning(f"User has not consented to prompt collection, removing prompt")
+                prompt_text = None  # Don't collect prompts without user consent
+
         # Truncate prompt if needed
-        if prompt_text and not self.config.collect_prompts:
-            prompt_text = None  # Don't collect prompts unless explicitly enabled
-        elif prompt_text and len(prompt_text) > self.config.max_prompt_length:
+        if prompt_text and len(prompt_text) > self.config.max_prompt_length:
             prompt_text = prompt_text[:self.config.max_prompt_length] + "..."
 
         # Truncate error messages
