@@ -13,7 +13,7 @@ import traceback
 import os
 import shutil
 import zipfile
-from bpy.props import IntProperty
+from bpy.props import IntProperty, BoolProperty
 import io
 from datetime import datetime
 import hashlib, hmac, base64
@@ -208,6 +208,7 @@ class BlenderMCPServer:
             "get_object_info": self.get_object_info,
             "get_viewport_screenshot": self.get_viewport_screenshot,
             "execute_code": self.execute_code,
+            "get_telemetry_consent": self.get_telemetry_consent,
             "get_polyhaven_status": self.get_polyhaven_status,
             "get_hyper3d_status": self.get_hyper3d_status,
             "get_sketchfab_status": self.get_sketchfab_status,
@@ -1107,6 +1108,21 @@ class BlenderMCPServer:
             print(f"Error in set_texture: {str(e)}")
             traceback.print_exc()
             return {"error": f"Failed to apply texture: {str(e)}"}
+
+    def get_telemetry_consent(self):
+        """Get the current telemetry consent status"""
+        try:
+            # Get addon preferences - use the module name
+            addon_prefs = bpy.context.preferences.addons.get(__name__)
+            if addon_prefs:
+                consent = addon_prefs.preferences.telemetry_consent
+            else:
+                # Fallback to default if preferences not available
+                consent = True
+        except (AttributeError, KeyError):
+            # Fallback to default if preferences not available
+            consent = True
+        return {"consent": consent}
 
     def get_polyhaven_status(self):
         """Get the current status of PolyHaven integration"""
@@ -2304,6 +2320,36 @@ class BlenderMCPServer:
                 print(f"Failed to clean up temporary directory {temp_dir}: {e}")
     #endregion
 
+# Blender Addon Preferences
+class BLENDERMCP_AddonPreferences(bpy.types.AddonPreferences):
+    bl_idname = __name__
+    
+    telemetry_consent: BoolProperty(
+        name="Allow Anonymized Prompt Collection",
+        description="Allow collection of anonymized prompts to help improve Blender MCP",
+        default=True
+    )
+
+    def draw(self, context):
+        layout = self.layout
+        
+        # Telemetry section
+        layout.label(text="Telemetry & Privacy:", icon='PREFERENCES')
+        
+        box = layout.box()
+        row = box.row()
+        row.prop(self, "telemetry_consent", text="Allow Anonymized Prompt Collection")
+        
+        # Info text
+        box.separator()
+        box.label(text="All data is anonymized and helps improve Blender MCP.", icon='INFO')
+        box.label(text="You can opt out anytime by unchecking the box above.", icon='INFO')
+        
+        # Terms and Conditions link
+        box.separator()
+        row = box.row()
+        row.operator("blendermcp.open_terms", text="View Terms and Conditions", icon='TEXT')
+
 # Blender UI Panel
 class BLENDERMCP_PT_Panel(bpy.types.Panel):
     bl_label = "Blender MCP"
@@ -2394,6 +2440,24 @@ class BLENDERMCP_OT_StopServer(bpy.types.Operator):
 
         scene.blendermcp_server_running = False
 
+        return {'FINISHED'}
+
+# Operator to open Terms and Conditions
+class BLENDERMCP_OT_OpenTerms(bpy.types.Operator):
+    bl_idname = "blendermcp.open_terms"
+    bl_label = "View Terms and Conditions"
+    bl_description = "Open the Terms and Conditions document"
+
+    def execute(self, context):
+        # Open the Terms and Conditions on GitHub
+        terms_url = "https://github.com/ahujasid/blender-mcp/blob/main/TERMS_AND_CONDITIONS.md"
+        try:
+            import webbrowser
+            webbrowser.open(terms_url)
+            self.report({'INFO'}, "Terms and Conditions opened in browser")
+        except Exception as e:
+            self.report({'ERROR'}, f"Could not open Terms and Conditions: {str(e)}")
+        
         return {'FINISHED'}
 
 # Registration functions
@@ -2518,10 +2582,14 @@ def register():
         default=""
     )
 
+    # Register preferences class
+    bpy.utils.register_class(BLENDERMCP_AddonPreferences)
+
     bpy.utils.register_class(BLENDERMCP_PT_Panel)
     bpy.utils.register_class(BLENDERMCP_OT_SetFreeTrialHyper3DAPIKey)
     bpy.utils.register_class(BLENDERMCP_OT_StartServer)
     bpy.utils.register_class(BLENDERMCP_OT_StopServer)
+    bpy.utils.register_class(BLENDERMCP_OT_OpenTerms)
 
     print("BlenderMCP addon registered")
 
@@ -2535,6 +2603,8 @@ def unregister():
     bpy.utils.unregister_class(BLENDERMCP_OT_SetFreeTrialHyper3DAPIKey)
     bpy.utils.unregister_class(BLENDERMCP_OT_StartServer)
     bpy.utils.unregister_class(BLENDERMCP_OT_StopServer)
+    bpy.utils.unregister_class(BLENDERMCP_OT_OpenTerms)
+    bpy.utils.unregister_class(BLENDERMCP_AddonPreferences)
 
     del bpy.types.Scene.blendermcp_port
     del bpy.types.Scene.blendermcp_server_running
