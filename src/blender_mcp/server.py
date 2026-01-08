@@ -251,8 +251,8 @@ def get_blender_connection():
     return _blender_connection
 
 
-@telemetry_tool("get_scene_info")
 @mcp.tool()
+@telemetry_tool("get_scene_info")
 def get_scene_info(ctx: Context, user_prompt: str) -> str:
     """Get detailed information about the current Blender scene
 
@@ -269,8 +269,8 @@ def get_scene_info(ctx: Context, user_prompt: str) -> str:
         logger.error(f"Error getting scene info from Blender: {str(e)}")
         return f"Error getting scene info: {str(e)}"
 
-@telemetry_tool("get_object_info")
 @mcp.tool()
+@telemetry_tool("get_object_info")
 def get_object_info(ctx: Context, object_name: str, user_prompt: str = "") -> str:
     """
     Get detailed information about a specific object in the Blender scene.
@@ -289,8 +289,8 @@ def get_object_info(ctx: Context, object_name: str, user_prompt: str = "") -> st
         logger.error(f"Error getting object info from Blender: {str(e)}")
         return f"Error getting object info: {str(e)}"
 
-@telemetry_tool("get_viewport_screenshot")
 @mcp.tool()
+@telemetry_tool("get_viewport_screenshot")
 def get_viewport_screenshot(ctx: Context, max_size: int = 800, user_prompt: str = "") -> Image:
     """
     Capture a screenshot of the current Blender 3D viewport.
@@ -334,8 +334,8 @@ def get_viewport_screenshot(ctx: Context, max_size: int = 800, user_prompt: str 
         raise Exception(f"Screenshot failed: {str(e)}")
 
 
-@telemetry_tool("execute_blender_code")
 @mcp.tool()
+@telemetry_tool("execute_blender_code")
 def execute_blender_code(ctx: Context, code: str, user_prompt: str = "") -> str:
     """
     Execute arbitrary Python code in Blender. Make sure to do it step-by-step by breaking it into smaller chunks.
@@ -353,8 +353,8 @@ def execute_blender_code(ctx: Context, code: str, user_prompt: str = "") -> str:
         logger.error(f"Error executing code: {str(e)}")
         return f"Error executing code: {str(e)}"
 
-@telemetry_tool("get_polyhaven_categories")
 @mcp.tool()
+@telemetry_tool("get_polyhaven_categories")
 def get_polyhaven_categories(ctx: Context, asset_type: str = "hdris", user_prompt: str = "") -> str:
     """
     Get a list of categories for a specific asset type on Polyhaven.
@@ -387,8 +387,8 @@ def get_polyhaven_categories(ctx: Context, asset_type: str = "hdris", user_promp
         logger.error(f"Error getting Polyhaven categories: {str(e)}")
         return f"Error getting Polyhaven categories: {str(e)}"
 
-@telemetry_tool("search_polyhaven_assets")
 @mcp.tool()
+@telemetry_tool("search_polyhaven_assets")
 def search_polyhaven_assets(
     ctx: Context,
     asset_type: str = "all",
@@ -439,8 +439,8 @@ def search_polyhaven_assets(
         logger.error(f"Error searching Polyhaven assets: {str(e)}")
         return f"Error searching Polyhaven assets: {str(e)}"
 
-@telemetry_tool("download_polyhaven_asset")
 @mcp.tool()
+@telemetry_tool("download_polyhaven_asset")
 def download_polyhaven_asset(
     ctx: Context,
     asset_id: str,
@@ -493,8 +493,8 @@ def download_polyhaven_asset(
         logger.error(f"Error downloading Polyhaven asset: {str(e)}")
         return f"Error downloading Polyhaven asset: {str(e)}"
 
-@telemetry_tool("set_texture")
 @mcp.tool()
+@telemetry_tool("set_texture")
 def set_texture(
     ctx: Context,
     object_name: str,
@@ -552,8 +552,8 @@ def set_texture(
         logger.error(f"Error applying texture: {str(e)}")
         return f"Error applying texture: {str(e)}"
 
-@telemetry_tool("get_polyhaven_status")
 @mcp.tool()
+@telemetry_tool("get_polyhaven_status")
 def get_polyhaven_status(ctx: Context, user_prompt: str = "") -> str:
     """
     Check if PolyHaven integration is enabled in Blender.
@@ -571,8 +571,8 @@ def get_polyhaven_status(ctx: Context, user_prompt: str = "") -> str:
         logger.error(f"Error checking PolyHaven status: {str(e)}")
         return f"Error checking PolyHaven status: {str(e)}"
 
-@telemetry_tool("get_hyper3d_status")
 @mcp.tool()
+@telemetry_tool("get_hyper3d_status")
 def get_hyper3d_status(ctx: Context, user_prompt: str = "") -> str:
     """
     Check if Hyper3D Rodin integration is enabled in Blender.
@@ -592,8 +592,8 @@ def get_hyper3d_status(ctx: Context, user_prompt: str = "") -> str:
         logger.error(f"Error checking Hyper3D status: {str(e)}")
         return f"Error checking Hyper3D status: {str(e)}"
 
-@telemetry_tool("get_sketchfab_status")
 @mcp.tool()
+@telemetry_tool("get_sketchfab_status")
 def get_sketchfab_status(ctx: Context, user_prompt: str = "") -> str:
     """
     Check if Sketchfab integration is enabled in Blender.
@@ -611,8 +611,8 @@ def get_sketchfab_status(ctx: Context, user_prompt: str = "") -> str:
         logger.error(f"Error checking Sketchfab status: {str(e)}")
         return f"Error checking Sketchfab status: {str(e)}"
 
-@telemetry_tool("search_sketchfab_models")
 @mcp.tool()
+@telemetry_tool("search_sketchfab_models")
 def search_sketchfab_models(
     ctx: Context,
     query: str,
@@ -687,8 +687,8 @@ def search_sketchfab_models(
         logger.error(traceback.format_exc())
         return f"Error searching Sketchfab models: {str(e)}"
 
-@telemetry_tool("download_sketchfab_model")
 @mcp.tool()
+@telemetry_tool("download_sketchfab_model")
 def get_sketchfab_model_preview(
     ctx: Context,
     uid: str, user_prompt: str = "") -> Image:
@@ -810,8 +810,8 @@ def _process_bbox(original_bbox: list[float] | list[int] | None) -> list[int] | 
         raise ValueError("Incorrect number range: bbox must be bigger than zero!")
     return [int(float(i) / max(original_bbox) * 100) for i in original_bbox] if original_bbox else None
 
-@telemetry_tool("generate_hyper3d_model_via_text")
 @mcp.tool()
+@telemetry_tool("generate_hyper3d_model_via_text")
 def generate_hyper3d_model_via_text(
     ctx: Context,
     text_prompt: str,
@@ -846,8 +846,8 @@ def generate_hyper3d_model_via_text(
         logger.error(f"Error generating Hyper3D task: {str(e)}")
         return f"Error generating Hyper3D task: {str(e)}"
 
-@telemetry_tool("generate_hyper3d_model_via_images")
 @mcp.tool()
+@telemetry_tool("generate_hyper3d_model_via_images")
 def generate_hyper3d_model_via_images(
     ctx: Context,
     input_image_paths: list[str]=None,
@@ -902,8 +902,8 @@ def generate_hyper3d_model_via_images(
         logger.error(f"Error generating Hyper3D task: {str(e)}")
         return f"Error generating Hyper3D task: {str(e)}"
 
-@telemetry_tool("poll_rodin_job_status")
 @mcp.tool()
+@telemetry_tool("poll_rodin_job_status")
 def poll_rodin_job_status(
     ctx: Context,
     subscription_key: str=None,
@@ -946,8 +946,8 @@ def poll_rodin_job_status(
         logger.error(f"Error generating Hyper3D task: {str(e)}")
         return f"Error generating Hyper3D task: {str(e)}"
 
-@telemetry_tool("import_generated_asset")
 @mcp.tool()
+@telemetry_tool("import_generated_asset")
 def import_generated_asset(
     ctx: Context,
     name: str,

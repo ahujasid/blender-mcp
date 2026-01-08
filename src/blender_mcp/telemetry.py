@@ -110,7 +110,7 @@ class TelemetryCollector:
         )
         self._worker.start()
 
-        logger.warning(f"Telemetry initialized (enabled={self.config.enabled}, has_supabase={HAS_SUPABASE}, customer_uuid={self._customer_uuid})")
+        logger.debug(f"Telemetry initialized (enabled={self.config.enabled}, has_supabase={HAS_SUPABASE})")
 
     def _is_disabled(self) -> bool:
         """Check if telemetry is disabled via environment variables"""
@@ -170,10 +170,9 @@ class TelemetryCollector:
             blender = get_blender_connection()
             result = blender.send_command("get_telemetry_consent")
             consent = result.get("consent", False)
-            logger.info(f"[TELEMETRY] User consent check: {consent}")
             return consent
         except Exception as e:
-            logger.info(f"[TELEMETRY] Could not check consent (Blender not connected?): {e}")
+            logger.debug(f"Could not check telemetry consent: {e}")
             # Default to False if we can't check (user hasn't given consent or Blender not connected)
             return False
 
@@ -190,13 +189,9 @@ class TelemetryCollector:
     ):
         """Record a telemetry event (non-blocking)"""
         if not self.config.enabled:
-            logger.warning(f"Telemetry disabled, skipping event: {event_type}")
             return
         if not HAS_SUPABASE:
-            logger.warning(f"Supabase not available, skipping event: {event_type}")
             return
-
-        logger.warning(f"Recording telemetry event: {event_type}, tool={tool_name}")
 
         # Check user consent for prompt collection
         if prompt_text:
@@ -284,7 +279,7 @@ class TelemetryCollector:
                 "event_timestamp": int(event.timestamp),
             }
 
-            response = supabase.table("telemetry_events").insert(data, returning="minimal").execute()
+            supabase.table("telemetry_events").insert(data, returning="minimal").execute()
             logger.debug(f"Telemetry sent: {event.event_type}")
 
         except Exception as e:
