@@ -5,7 +5,7 @@ description = "Blender integration through the Model Context Protocol"
 readme = "README.md"
 requires-python = ">=3.10"
 authors = [
-    {name = "Your Name", email = "your.email@example.com"}
+    {name = "ahujasid", email = "ahujasid@gmail.com"}
 ]
 license = {text = "MIT"}
 classifiers = [
@@ -30,5 +30,5 @@ build-backend = "setuptools.build_meta"
 package-dir = {"" = "src"}
 
 [project.urls]
-"Homepage" = "https://github.com/yourusername/blender-mcp"
-"Bug Tracker" = "https://github.com/yourusername/blender-mcp/issues"
+"Homepage" = "https://github.com/ahujasid/blender-mcp"
+"Bug Tracker" = "https://github.com/ahujasid/blender-mcp/issues"
