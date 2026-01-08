@@ -1111,7 +1111,17 @@ class BlenderMCPServer:
 
     def get_telemetry_consent(self):
         """Get the current telemetry consent status"""
-        consent = bpy.context.scene.blendermcp_telemetry_consent
+        try:
+            # Get addon preferences - use the module name
+            addon_prefs = bpy.context.preferences.addons.get(__name__)
+            if addon_prefs:
+                consent = addon_prefs.preferences.telemetry_consent
+            else:
+                # Fallback to default if preferences not available
+                consent = True
+        except (AttributeError, KeyError):
+            # Fallback to default if preferences not available
+            consent = True
         return {"consent": consent}
 
     def get_polyhaven_status(self):
@@ -2310,6 +2320,31 @@ class BlenderMCPServer:
                 print(f"Failed to clean up temporary directory {temp_dir}: {e}")
     #endregion
 
+# Blender Addon Preferences
+class BLENDERMCP_AddonPreferences(bpy.types.AddonPreferences):
+    bl_idname = __name__
+    
+    telemetry_consent: BoolProperty(
+        name="Allow Anonymized Prompt Collection",
+        description="Allow collection of anonymized prompts to help improve Blender MCP",
+        default=True
+    )
+
+    def draw(self, context):
+        layout = self.layout
+        
+        # Telemetry section
+        layout.label(text="Telemetry & Privacy:", icon='PREFERENCES')
+        
+        box = layout.box()
+        row = box.row()
+        row.prop(self, "telemetry_consent", text="Allow Anonymized Prompt Collection")
+        
+        # Info text
+        box.separator()
+        box.label(text="All data is anonymized and helps improve Blender MCP.", icon='INFO')
+        box.label(text="You can opt out anytime by unchecking the box above.", icon='INFO')
+
 # Blender UI Panel
 class BLENDERMCP_PT_Panel(bpy.types.Panel):
     bl_label = "Blender MCP"
@@ -2353,19 +2388,6 @@ class BLENDERMCP_PT_Panel(bpy.types.Panel):
         else:
             layout.operator("blendermcp.stop_server", text="Disconnect from MCP server")
             layout.label(text=f"Running on port {scene.blendermcp_port}")
-
-        # Telemetry section
-        layout.separator()
-        layout.label(text="Telemetry & Privacy:", icon='PREFERENCES')
-
-        box = layout.box()
-        row = box.row()
-        row.prop(scene, "blendermcp_telemetry_consent", text="Allow Anonymized Prompt Collection")
-
-        # Info text
-        box.separator()
-        box.label(text="All data is anonymized and helps improve Blender MCP.", icon='INFO')
-        box.label(text="You can opt out anytime by unchecking the box above.", icon='INFO')
 
 # Operator to set Hyper3D API Key
 class BLENDERMCP_OT_SetFreeTrialHyper3DAPIKey(bpy.types.Operator):
@@ -2537,11 +2559,8 @@ def register():
         default=""
     )
 
-    bpy.types.Scene.blendermcp_telemetry_consent = BoolProperty(
-        name="Allow Anonymized Prompt Collection",
-        description="Allow collection of anonymized prompts to help improve Blender MCP",
-        default=True
-    )
+    # Register preferences class
+    bpy.utils.register_class(BLENDERMCP_AddonPreferences)
 
     bpy.utils.register_class(BLENDERMCP_PT_Panel)
     bpy.utils.register_class(BLENDERMCP_OT_SetFreeTrialHyper3DAPIKey)
@@ -2560,6 +2579,7 @@ def unregister():
     bpy.utils.unregister_class(BLENDERMCP_OT_SetFreeTrialHyper3DAPIKey)
     bpy.utils.unregister_class(BLENDERMCP_OT_StartServer)
     bpy.utils.unregister_class(BLENDERMCP_OT_StopServer)
+    bpy.utils.unregister_class(BLENDERMCP_AddonPreferences)
 
     del bpy.types.Scene.blendermcp_port
     del bpy.types.Scene.blendermcp_server_running
