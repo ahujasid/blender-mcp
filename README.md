@@ -1,6 +1,10 @@
+
+
 # BlenderMCP - Blender Model Context Protocol Integration
 
 BlenderMCP connects Blender to Claude AI through the Model Context Protocol (MCP), allowing Claude to directly interact with and control Blender. This integration enables prompt assisted 3D modeling, scene creation, and manipulation.
+
+**We have no official website. Any website you see online is unofficial and has no affiliation with this project. Use them at your own risk.**
 
 [Full tutorial](https://www.youtube.com/watch?v=lCyQ717DuzQ)
 
@@ -10,21 +14,31 @@ Give feedback, get inspired, and build on top of the MCP: [Discord](https://disc
 
 ### Supporters
 
-**Top supporters:**
-
 [CodeRabbit](https://www.coderabbit.ai/)
+
+[Satish Goda](https://github.com/satishgoda)
 
 **All supporters:**
 
 [Support this project](https://github.com/sponsors/ahujasid)
 
-## Release notes (1.1.0)
+## Release notes (1.4.0)
+- Added Hunyuan3D support
 
-- Added support for Poly Haven assets through their API
-- Added support to prompt 3D models using Hyper3D Rodin
+
+### Previously added features:
+- View screenshots for Blender viewport to better understand the scene
+- Search and download Sketchfab models
+- Support for Poly Haven assets through their API
+- Support to generate 3D models using Hyper3D Rodin
+- Run Blender MCP on a remote host
+- Telemetry for tools executed (completely anonymous)
+
+### Installating a new version (existing users)
 - For newcomers, you can go straight to Installation. For existing users, see the points below
 - Download the latest addon.py file and replace the older one, then add it to Blender
 - Delete the MCP server from Claude and add it back again, and you should be good to go!
+
 
 ## Features
 
@@ -55,18 +69,32 @@ The system consists of two main components:
 brew install uv
 ```
 **On Windows**
-```bash
+```powershell
 powershell -c "irm https://astral.sh/uv/install.ps1 | iex" 
 ```
-and then
-```bash
-set Path=C:\Users\nntra\.local\bin;%Path%
+and then add uv to the user path in Windows (you may need to restart Claude Desktop after):
+```powershell
+$localBin = "$env:USERPROFILE\.local\bin"
+$userPath = [Environment]::GetEnvironmentVariable("Path", "User")
+[Environment]::SetEnvironmentVariable("Path", "$userPath;$localBin", "User")
 ```
 
 Otherwise installation instructions are on their website: [Install uv](https://docs.astral.sh/uv/getting-started/installation/)
 
 **⚠️ Do not proceed before installing UV**
 
+### Environment Variables
+
+The following environment variables can be used to configure the Blender connection:
+
+- `BLENDER_HOST`: Host address for Blender socket server (default: "localhost")
+- `BLENDER_PORT`: Port number for Blender socket server (default: 9876)
+
+Example:
+```bash
+export BLENDER_HOST='host.docker.internal'
+export BLENDER_PORT=9876
+```
 
 ### Claude for Desktop Integration
 
@@ -89,10 +117,25 @@ Go to Claude > Settings > Developer > Edit Config > claude_desktop_config.json t
 
 ### Cursor integration
 
-Run blender-mcp without installing it permanently through uvx. Go to Cursor Settings > MCP and paste this as a command.
+[![Install MCP Server](https://cursor.com/deeplink/mcp-install-dark.svg)](https://cursor.com/install-mcp?name=blender&config=eyJjb21tYW5kIjoidXZ4IGJsZW5kZXItbWNwIn0%3D)
 
-```bash
-uvx blender-mcp
+For Mac users, go to Settings > MCP and paste the following 
+
+- To use as a global server, use "add new global MCP server" button and paste
+- To use as a project specific server, create `.cursor/mcp.json` in the root of the project and paste
+
+
+```json
+{
+    "mcpServers": {
+        "blender": {
+            "command": "uvx",
+            "args": [
+                "blender-mcp"
+            ]
+        }
+    }
+}
 ```
 
 For Windows users, go to Settings > MCP > Add Server, add a new server with the following settings:
@@ -112,10 +155,15 @@ For Windows users, go to Settings > MCP > Add Server, add a new server with the 
 }
 ```
 
-
 [Cursor setup video](https://www.youtube.com/watch?v=wgWsJshecac)
 
 **⚠️ Only run one instance of the MCP server (either on Cursor or Claude Desktop), not both**
+
+### Visual Studio Code Integration
+
+_Prerequisites_: Make sure you have [Visual Studio Code](https://code.visualstudio.com/) installed before proceeding.
+
+[![Install in VS Code](https://img.shields.io/badge/VS_Code-Install_blender--mcp_server-0098FF?style=flat-square&logo=visualstudiocode&logoColor=ffffff)](vscode:mcp/install?%7B%22name%22%3A%22blender-mcp%22%2C%22type%22%3A%22stdio%22%2C%22command%22%3A%22uvx%22%2C%22args%22%3A%5B%22blender-mcp%22%5D%7D)
 
 ### Installing the Blender Addon
 
@@ -151,7 +199,6 @@ Once the config file has been set on Claude, and the addon is running on Blender
 - Execute any Python code in Blender
 - Download the right models, assets and HDRIs through [Poly Haven](https://polyhaven.com/)
 - AI generated 3D models through [Hyper3D Rodin](https://hyper3d.ai/)
-- Geometry Node Module To Create procedural modeling and geometry generation
 
 
 ### Example Commands
@@ -168,20 +215,9 @@ Here are some examples of what you can ask Claude to do:
 - "Make the lighting like a studio"
 - "Point the camera at the scene, and make it isometric"
 
-
-## Geometry Node Module Example Commands
-
-- "Create a simple procedural table"
-- "Create a simple procedural chair"
-- "Create a simple procedural car"
-- "Use geometry nodes to create points distributed on a sphere surface with exposed radius and density parameters"
-- "Use geometry nodes to create a noise-deformed sphere with exposed strength parameter"
-
-
 ## Hyper3D integration
 
 Hyper3D's free trial key allows you to generate a limited number of models per day. If the daily limit is reached, you can wait for the next day's reset or obtain your own key from hyper3d.ai and fal.ai.
-
 
 ## Troubleshooting
 

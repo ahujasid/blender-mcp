@@ -9,4 +9,8 @@ wheels/
 # Virtual environments
 .venv
 
-.idea/
+# macOS
+.DS_Store
+
+# Local config secrets
+src/blender_mcp/config.py
