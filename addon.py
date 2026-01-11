@@ -13,12 +13,14 @@ import traceback
 import os
 import shutil
 import zipfile
-from bpy.props import IntProperty, BoolProperty
+from bpy.props import StringProperty, IntProperty, BoolProperty, EnumProperty
 import io
 from datetime import datetime
 import hashlib, hmac, base64
 import os.path as osp
 from contextlib import redirect_stdout, suppress
+from dataclasses import dataclass, field
+from typing import List, Dict, Union, Any, Optional, Tuple
 
 bl_info = {
     "name": "Blender MCP",
@@ -35,6 +37,68 @@ RODIN_FREE_TRIAL_KEY = "k9TcfFoEhNd9cCPP2guHAHHHkctZHIRhZDywZ1euGUXwihbYLpOjQhof
 # Add User-Agent as required by Poly Haven API
 REQ_HEADERS = requests.utils.default_headers()
 REQ_HEADERS.update({"User-Agent": "blender-mcp"})
+
+# region GeometryNodeDataClass
+IS_BLENDER_4 = bpy.app.version[0] >= 4
+
+@dataclass
+class NodeDefinition:
+    """Node definition data class"""
+    type: str
+    location: List[float] = field(default_factory=lambda: [0.0, 0.0])
+    label: str = ""
+    inputs: Dict[str, Any] = field(default_factory=dict)
+    properties: Dict[str, Any] = field(default_factory=dict)
+
+@dataclass
+class NodeLink:
+    """Node connection data class"""
+    from_node: Union[str, int]
+    from_socket: Union[str, int]
+    to_node: Union[str, int]
+    to_socket: Union[str, int]
+
+@dataclass
+class GeometryNodeNetwork:
+    """Geometry node network data class"""
+    object_name: str
+    nodes: List[NodeDefinition] = field(default_factory=list)
+    links: List[NodeLink] = field(default_factory=list)
+    input_sockets: List[Dict[str, str]] = field(default_factory=list)
+    output_sockets: List[Dict[str, str]] = field(default_factory=list)
+
+@dataclass
+class SocketInfo:
+    """Socket information data class"""
+    name: str
+    type: str
+    description: str = ""
+    identifier: str = ""
+    enabled: bool = True
+    hide: bool = False
+    default_value: Any = None
+
+@dataclass
+class PropertyInfo:
+    """Node property information data class"""
+    identifier: str
+    name: str
+    description: str = ""
+    type: str = ""
+    default_value: Any = None
+    enum_items: List[Dict[str, str]] = field(default_factory=list)
+
+@dataclass
+class NodeInfo:
+    """Node information data class"""
+    name: str
+    description: str = ""
+    inputs: List[SocketInfo] = field(default_factory=list)
+    outputs: List[SocketInfo] = field(default_factory=list)
+    properties: List[PropertyInfo] = field(default_factory=list)
+
+# endregion
+
 
 class BlenderMCPServer:
     def __init__(self, host='localhost', port=9876):
@@ -201,6 +265,9 @@ class BlenderMCPServer:
         # Add a handler for checking PolyHaven status
         if cmd_type == "get_polyhaven_status":
             return {"status": "success", "result": self.get_polyhaven_status()}
+        # Add a handler for checking GeometryNodes status
+        if cmd_type == "get_geometry_nodes_status":
+            return {"status": "success", "result": self.get_geometry_nodes_status()}
 
         # Base handlers that are always available
         handlers = {
@@ -213,6 +280,7 @@ class BlenderMCPServer:
             "get_hyper3d_status": self.get_hyper3d_status,
             "get_sketchfab_status": self.get_sketchfab_status,
             "get_hunyuan3d_status": self.get_hunyuan3d_status,
+            "get_geometry_nodes_status": self.get_geometry_nodes_status,
         }
 
         # Add Polyhaven handlers only if enabled
@@ -251,6 +319,14 @@ class BlenderMCPServer:
                 "import_generated_asset_hunyuan": self.import_generated_asset_hunyuan
             }
             handlers.update(hunyuan_handlers)
+
+        # Add geometry nodes handlers only if enabled
+        if bpy.context.scene.blendermcp_use_geometry_nodes:
+            geometry_nodes_handlers = {
+                "get_node_info": self.get_node_info,
+                "complete_geometry_node": self.complete_geometry_node,
+            }
+            handlers.update(geometry_nodes_handlers)
 
         handler = handlers.get(cmd_type)
         if handler:
@@ -1137,6 +1213,37 @@ class BlenderMCPServer:
                             2. Check the 'Use assets from Poly Haven' checkbox
                             3. Restart the connection to Claude"""
         }
+
+
+    def get_geometry_nodes_status(self):
+        """Get the status of the geometry nodes feature in Blender.
+
+        Returns:
+            dict: A dictionary containing information about the geometry nodes feature status.
+        """
+        try:
+            # Get the geometry nodes setting from Blender preferences
+            enabled = bpy.context.scene.blendermcp_use_geometry_nodes
+            if enabled:
+                return {
+                    "status": "success",
+                    "enabled": True,
+                    "message": "Geometry nodes feature is enabled."
+                }
+            else:
+                return {
+                    "status": "warning",
+                    "enabled": False,
+                    "message": "Geometry nodes feature is disabled. Enable it in the BlenderMCP panel to use geometry node commands."
+                }
+        except Exception as e:
+            # Handle errors when checking status
+            return {
+                "status": "error",
+                "enabled": False,
+                "message": f"Error checking geometry nodes status: {str(e)}"
+            }
+
 
     #region Hyper3D
     def get_hyper3d_status(self):
@@ -2320,6 +2427,722 @@ class BlenderMCPServer:
                 print(f"Failed to clean up temporary directory {temp_dir}: {e}")
     #endregion
 
+
+
+    # region GeometryNodeCreator
+    def complete_geometry_node(self, object_name, nodes, links, input_sockets=None):
+        """Complete geometry node network creation"""
+        try:
+            obj = self._get_or_create_object(object_name)
+            if isinstance(obj, dict) and "error" in obj:
+                return obj
+                
+            geometry_modifier = self._setup_geometry_modifier(obj, object_name)
+            node_group = geometry_modifier.node_group
+            
+            input_node, output_node = self._create_default_nodes(node_group, nodes)
+            created_nodes = self._create_nodes(node_group, nodes)
+            created_links = self._create_links(node_group, links, created_nodes, input_node, output_node)
+            
+            if input_sockets:
+                self._set_modifier_parameters(geometry_modifier, node_group, input_sockets)
+
+            return {
+                "status": "success",
+                "object_name": object_name,
+                "modifier_name": geometry_modifier.name,
+                "node_group_name": node_group.name,
+                "nodes": created_nodes,
+                "links": created_links
+            }
+        except Exception as e:
+            return {"error": f"Error completing geometry node network: {str(e)}"}
+
+    def _get_or_create_object(self, object_name):
+        """Get existing object or create new one"""
+        obj = bpy.data.objects.get(object_name)
+        if not obj:
+            result = self._create_geometry_nodes_object(object_name)
+            if "error" in result:
+                return result
+            obj = bpy.data.objects.get(object_name)
+        return obj
+
+    def _setup_geometry_modifier(self, obj, object_name):
+        """Setup geometry nodes modifier"""
+        geometry_modifier = next((mod for mod in obj.modifiers if mod.type == 'NODES'), None)
+        
+        if geometry_modifier and geometry_modifier.node_group:
+            old_node_group = geometry_modifier.node_group
+            geometry_modifier.node_group = None
+            if old_node_group:
+                bpy.data.node_groups.remove(old_node_group)
+
+        if not geometry_modifier:
+            geometry_modifier = obj.modifiers.new(name="GeometryNodes", type='NODES')
+
+        node_group = bpy.data.node_groups.new(name=f"{object_name}_geometry", type='GeometryNodeTree')
+        if IS_BLENDER_4:
+            node_group.is_modifier = True
+        
+        geometry_modifier.node_group = node_group
+        self._setup_node_group_interface(node_group, None)
+        return geometry_modifier
+
+    def _create_default_nodes(self, node_group, nodes):
+        """Create default input/output nodes if not present"""
+        has_input = any(node_data.get("type") in ['NodeGroupInput', 'GroupInput'] for node_data in nodes)
+        has_output = any(node_data.get("type") in ['NodeGroupOutput', 'GroupOutput'] for node_data in nodes)
+        
+        input_node = None
+        output_node = None
+        
+        if not has_input:
+            input_node = node_group.nodes.new('NodeGroupInput')
+            input_node.location = (-300, 0)
+            
+        if not has_output:
+            output_node = node_group.nodes.new('NodeGroupOutput')
+            output_node.location = (500, 0)
+            
+        return input_node, output_node
+
+    def _create_nodes(self, node_group, nodes):
+        """Create nodes from definitions"""
+        created_nodes = []
+        
+        for node_data in nodes:
+            try:
+                node = node_group.nodes.new(node_data["type"])
+                
+                if "location" in node_data:
+                    node.location = node_data["location"]
+                if "label" in node_data:
+                    node.label = node_data["label"]
+                    
+                self._set_node_properties(node, node_data.get("properties", {}))
+                self._set_node_inputs(node, node_data.get("inputs", {}))
+                
+                created_nodes.append({
+                    "name": node.name,
+                    "type": node.type,
+                    "location": [node.location.x, node.location.y]
+                })
+            except Exception as e:
+                raise Exception(f"Error creating node {node_data['type']}: {str(e)}")
+                
+        return created_nodes
+
+    def _set_node_properties(self, node, properties):
+        """Set node properties"""
+        for prop_name, prop_value in properties.items():
+            if hasattr(node, prop_name):
+                try:
+                    setattr(node, prop_name, prop_value)
+                except Exception as e:
+                    print(f"Error setting property {prop_name}: {e}")
+
+    def _set_node_inputs(self, node, inputs):
+        """Set node input values"""
+        for input_name, input_value in inputs.items():
+            for input_socket in node.inputs:
+                if input_socket.name == input_name and hasattr(input_socket, 'default_value'):
+                    try:
+                        if hasattr(input_socket.default_value, '__len__'):
+                            for i, val in enumerate(input_value):
+                                if i < len(input_socket.default_value):
+                                    input_socket.default_value[i] = val
+                        else:
+                            input_socket.default_value = input_value
+                    except Exception as e:
+                        print(f"Error setting input value: {e}")
+
+    def _find_node(self, node_group, node_id, created_nodes, input_node, output_node):
+        """Find node by ID (name, index, or special identifier)"""
+        if node_id == "input":
+            return input_node
+        elif node_id == "output":
+            return output_node
+        elif isinstance(node_id, int) and 0 <= node_id < len(created_nodes):
+            return node_group.nodes.get(created_nodes[node_id]["name"])
+        else:
+            return node_group.nodes.get(node_id)
+
+    def _find_socket(self, node, socket_id, is_output=True):
+        """Find socket by ID (name or index)"""
+        sockets = node.outputs if is_output else node.inputs
+        
+        if isinstance(socket_id, int) and 0 <= socket_id < len(sockets):
+            return sockets[socket_id]
+        else:
+            return next((s for s in sockets if s.name == socket_id), None)
+
+    def _create_links(self, node_group, links, created_nodes, input_node, output_node):
+        """Create links between nodes"""
+        created_links = []
+        
+        for link_data in links:
+            try:
+                from_node = self._find_node(node_group, link_data["from_node"], created_nodes, input_node, output_node)
+                to_node = self._find_node(node_group, link_data["to_node"], created_nodes, input_node, output_node)
+                
+                if not from_node:
+                    raise Exception(f"Could not find source node: {link_data['from_node']}")
+                if not to_node:
+                    raise Exception(f"Could not find target node: {link_data['to_node']}")
+                
+                from_socket = self._find_socket(from_node, link_data["from_socket"], True)
+                to_socket = self._find_socket(to_node, link_data["to_socket"], False)
+                
+                if not from_socket:
+                    raise Exception(f"Could not find source socket: {link_data['from_socket']}")
+                if not to_socket:
+                    raise Exception(f"Could not find target socket: {link_data['to_socket']}")
+                
+                node_group.links.new(from_socket, to_socket)
+                
+                created_links.append({
+                    "from_node": from_node.name,
+                    "from_socket": from_socket.name,
+                    "to_node": to_node.name,
+                    "to_socket": to_socket.name
+                })
+            except Exception as e:
+                raise Exception(f"Error creating link: {str(e)}")
+                
+        return created_links
+
+    def _set_modifier_parameters(self, geometry_modifier, node_group, input_sockets):
+        """Set modifier parameters from input socket values"""
+        try:
+            group_input_node = next((node for node in node_group.nodes if node.type == 'GROUP_INPUT'), None)
+            if not group_input_node:
+                group_input_node = node_group.nodes.new('NodeGroupInput')
+
+            socket_dict = {output.name: i for i, output in enumerate(group_input_node.outputs)}
+
+            for socket in input_sockets:
+                if "value" in socket and socket.get("type") != "NodeSocketGeometry":
+                    socket_name = socket.get("name")
+                    if socket_name in socket_dict:
+                        socket_key = f"Socket_{socket_dict[socket_name]}"
+                        try:
+                            if socket_key in geometry_modifier:
+                                geometry_modifier[socket_key] = socket["value"]
+                        except Exception as e:
+                            print(f"Error setting modifier parameter {socket_key}: {e}")
+        except Exception as e:
+            print(f"Error setting modifier parameters: {e}")
+
+    def _create_geometry_nodes_object(self, object_name):
+        """Create a base object and add a geometry nodes modifier
+
+        Args:
+            object_name: Object name
+
+        Returns:
+            dict: Dictionary containing operation status and related information
+        """
+        try:
+            # Create base object
+            bpy.ops.mesh.primitive_cube_add()
+            obj = bpy.context.active_object
+            obj.name = object_name
+
+            # Create node group
+            node_group = bpy.data.node_groups.new(name=f"{object_name}_geometry", type='GeometryNodeTree')
+            if IS_BLENDER_4:
+                node_group.is_modifier = True
+
+            # Create interface
+            if IS_BLENDER_4:
+                interface = node_group.interface
+                interface.new_socket(name="Geometry", in_out='INPUT', socket_type='NodeSocketGeometry')
+                interface.new_socket(name="Geometry", in_out='OUTPUT', socket_type='NodeSocketGeometry')
+            else:
+                node_group.inputs.new("NodeSocketGeometry", "Geometry")
+                node_group.outputs.new("NodeSocketGeometry", "Geometry")
+
+            # Add input and output nodes
+            group_in = node_group.nodes.new('NodeGroupInput')
+            group_in.location = (-200, 0)
+
+            group_out = node_group.nodes.new('NodeGroupOutput')
+            group_out.location = (200, 0)
+
+            # Connect geometry flow
+            node_group.links.new(group_in.outputs["Geometry"], group_out.inputs["Geometry"])
+
+            # Create geometry nodes modifier and immediately set the node group
+            mod = obj.modifiers.new(name="GeometryNodes", type='NODES')
+
+            # Ensure the node group exists
+            if node_group.name not in bpy.data.node_groups:
+                return {"error": "Failed to create node group"}
+
+            # Set the modifier's node group
+            mod.node_group = node_group
+
+            # Verify the setup was successful
+            if not mod.node_group:
+                return {"error": "Failed to set modifier node group"}
+
+            return {
+                "status": "success",
+                "object_name": obj.name,
+                "modifier_name": mod.name,
+                "node_group_name": node_group.name
+            }
+        except Exception as e:
+            return {"error": f"Error creating geometry nodes object: {str(e)}"}
+
+    def _setup_node_group_interface(self, node_group, input_sockets=None, output_sockets=None):
+        """Set up input and output interfaces for the node group
+
+        Args:
+            node_group: Node group
+            input_sockets: Input interface list [{"name": "Name", "type": "Type"}]
+            output_sockets: Output interface list [{"name": "Name", "type": "Type"}]
+        """
+        # Default interfaces
+        default_input_sockets = [{"name": "Geometry", "type": "NodeSocketGeometry"}]
+        default_output_sockets = [{"name": "Geometry", "type": "NodeSocketGeometry"}]
+
+        # Use provided interfaces or default values
+        input_sockets = input_sockets or default_input_sockets
+        output_sockets = output_sockets or default_output_sockets
+
+        # Clear existing interfaces
+        if IS_BLENDER_4:
+            # Blender 4.0+
+            interface = node_group.interface
+
+            # Clear existing interfaces
+            sockets_to_remove = []
+            for socket in interface.items_tree:
+                sockets_to_remove.append(socket)
+
+            for socket in sockets_to_remove:
+                interface.remove(socket)
+
+            # Create new interfaces
+            for socket in input_sockets:
+                interface.new_socket(
+                    name=socket["name"],
+                    in_out='INPUT',
+                    socket_type=socket["type"]
+                )
+
+            for socket in output_sockets:
+                interface.new_socket(
+                    name=socket["name"],
+                    in_out='OUTPUT',
+                    socket_type=socket["type"]
+                )
+        else:
+            # Blender 3.x
+            # Clear existing inputs
+            for i in range(len(node_group.inputs) - 1, -1, -1):
+                node_group.inputs.remove(node_group.inputs[i])
+
+            # Clear existing outputs
+            for i in range(len(node_group.outputs) - 1, -1, -1):
+                node_group.outputs.remove(node_group.outputs[i])
+
+            # Create new interfaces
+            for socket in input_sockets:
+                node_group.inputs.new(socket["type"], socket["name"])
+
+            for socket in output_sockets:
+                node_group.outputs.new(socket["type"], socket["name"])
+
+    # endregion
+
+    # region GeometryNodeInfo
+    def get_node_info(self, output_format='text', include_details=False, node_type_name=None):
+        """Get node type information"""
+        try:
+            include_details = self._parse_bool_param(include_details)
+            node_type_names = self._parse_node_type_names(node_type_name)
+            
+            if output_format not in ('text', 'json'):
+                raise ValueError(f"Unsupported output format: {output_format}, please use 'text' or 'json'")
+
+            self._register_node_info_cache()
+            node_infos = self._get_nodes_from_cache_or_collect()
+            
+            if node_type_names:
+                target_nodes = [node for node in node_infos if node.name in node_type_names]
+                if not target_nodes:
+                    missing = ', '.join(node_type_names)
+                    return f"Node{'s' if len(node_type_names) > 1 else ''} {missing} do{'es' if len(node_type_names) == 1 else ''} not exist or cannot be created"
+                node_infos = target_nodes
+
+            return self._format_output(node_infos, output_format, include_details)
+
+        except Exception as e:
+            print(f"Error getting node information: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            return f"Error getting node information: {str(e)}"
+
+    def _parse_bool_param(self, param):
+        """Parse boolean parameter from string or bool"""
+        if isinstance(param, str):
+            return param.lower() in ('true', 'yes', '1')
+        return bool(param)
+
+    def _parse_node_type_names(self, node_type_name):
+        """Parse node type names parameter"""
+        if node_type_name is None:
+            return []
+        
+        if isinstance(node_type_name, str):
+            return [name.strip() for name in node_type_name.split(',') if name.strip()]
+        elif isinstance(node_type_name, list):
+            if not all(isinstance(item, str) for item in node_type_name):
+                raise ValueError("All elements in node_type_name list must be strings")
+            return node_type_name
+        else:
+            raise ValueError(f"node_type_name must be a string or a list, received: {type(node_type_name)}")
+
+    def _format_output(self, node_infos, output_format, include_details):
+        """Format node information output"""
+        if output_format == 'json':
+            node_dicts = [self._node_to_dict(node, include_details) for node in node_infos]
+            result = node_dicts[0] if len(node_dicts) == 1 else node_dicts
+            return json.dumps(result, ensure_ascii=False, indent=2, default=str)
+        else:  # text
+            if len(node_infos) == 1:
+                return self._format_single_node_text(node_infos[0], include_details)
+            else:
+                separator = "\n\n" if include_details else "\n"
+                return separator.join(self._format_node_text(node, include_details) for node in node_infos)
+
+    def _register_node_info_cache(self):
+        """Register custom properties"""
+        if not hasattr(bpy.types.WindowManager, "node_info_cache"):
+            bpy.types.WindowManager.node_info_cache = bpy.props.StringProperty(
+                name="Node Info Cache",
+                description="Cache for node information",
+                default=""
+            )
+
+    def _collect_socket_info(self, node, is_input: bool = True) -> List[SocketInfo]:
+        """Collect node socket information"""
+        socket_list = node.inputs if is_input else node.outputs
+        sockets = []
+
+        for socket in socket_list:
+            default_value = self._get_socket_default_value(socket)
+            sockets.append(SocketInfo(
+                name=socket.name,
+                type=socket.type,
+                description=socket.description,
+                enabled=socket.enabled,
+                hide=socket.hide,
+                default_value=default_value
+            ))
+
+        return sockets
+
+    def _get_socket_default_value(self, socket):
+        """Get socket default value safely"""
+        if not hasattr(socket, 'default_value'):
+            return None
+        try:
+            if hasattr(socket.default_value, '__len__'):
+                return list(socket.default_value)
+            else:
+                return socket.default_value
+        except:
+            return None
+
+    def _collect_property_info(self, node_type) -> List[PropertyInfo]:
+        """Collect node property information"""
+        properties = []
+        excluded_props = {'rna_type', 'name', 'location', 'width', 'width_hidden', 
+                         'height', 'dimensions', 'inputs', 'outputs', 'internal_links'}
+        
+        parent_props = {prop.identifier for base in node_type.__bases__ 
+                       for prop in base.bl_rna.properties}
+
+        for prop in node_type.bl_rna.properties:
+            if prop.identifier in parent_props or prop.identifier in excluded_props:
+                continue
+
+            enum_items = []
+            default_value = None
+            
+            if prop.type == 'ENUM':
+                enum_items = [{'identifier': item.identifier, 'name': item.name, 
+                              'description': item.description} for item in prop.enum_items]
+            elif hasattr(prop, 'default'):
+                default_value = prop.default
+
+            properties.append(PropertyInfo(
+                identifier=prop.identifier,
+                name=prop.name,
+                description=prop.description,
+                type=prop.type,
+                default_value=default_value,
+                enum_items=enum_items
+            ))
+
+        return properties
+
+    def _verify_node_identifier(self, node_type_name: str) -> Tuple[
+        bool, List[SocketInfo], List[SocketInfo], List[PropertyInfo]]:
+        """Verify node identifier is valid for creating a node and get node information
+
+        Args:
+            node_type_name: Node type name
+
+        Returns:
+            Tuple: (is_usable, input_sockets, output_sockets, property_info)
+        """
+        # Create a temporary geometry node tree for testing
+        temp_tree = bpy.data.node_groups.new('TempNodeTree', 'GeometryNodeTree')
+        inputs = []
+        outputs = []
+        properties = []
+
+        try:
+            # Try to create a node
+            node = temp_tree.nodes.new(node_type_name)
+            node_type = getattr(bpy.types, node_type_name)
+
+            # Get socket information
+            inputs = self._collect_socket_info(node, is_input=True)
+            outputs = self._collect_socket_info(node, is_input=False)
+
+            # Get property information
+            properties = self._collect_property_info(node_type)
+
+            return True, inputs, outputs, properties
+        except Exception as e:
+            return False, inputs, outputs, properties
+        finally:
+            # Clean up
+            bpy.data.node_groups.remove(temp_tree)
+
+    def _collect_node_info(self) -> List[NodeInfo]:
+        """Collect node information (internal function)"""
+        # Exclude list
+        denylist = {'filter'}
+        class_denylist = {'CompositorNodeMath', 'TextureNodeMath'}
+
+        # Collect node information
+        node_infos = []
+
+        for node_type_name in dir(bpy.types):
+            # Get type object
+            node_type = getattr(bpy.types, node_type_name)
+
+            # Check if it's a node type
+            if (isinstance(node_type, type) and
+                    issubclass(node_type, bpy.types.Node) and
+                    node_type.is_registered_node_type() and
+                    node_type.bl_rna.name.lower() not in denylist and
+                    node_type.__name__ not in class_denylist):
+
+                # Verify if the node can be created in the geometry node tree and get information
+                valid, inputs, outputs, properties = self._verify_node_identifier(node_type.__name__)
+                if not valid:
+                    continue
+
+                # Get description
+                description = node_type.bl_rna.description
+
+                # Get identifier for creating the node
+                node_identifier = node_type.__name__
+
+                # Create NodeInfo object
+                node_info = NodeInfo(
+                    name=node_identifier,
+                    description=description or "No description available",
+                    inputs=inputs,
+                    outputs=outputs,
+                    properties=properties
+                )
+
+                node_infos.append(node_info)
+
+        # Sort by name
+        node_infos.sort(key=lambda x: x.name)
+        return node_infos
+
+    def _get_nodes_from_cache_or_collect(self) -> List[NodeInfo]:
+        """Get node information from cache or collect new ones"""
+        wm = bpy.context.window_manager
+
+        # Try to get data from cache
+        if wm.node_info_cache:
+            print(f"Using cache..")
+            try:
+                # Deserialize from cache
+                cache_data = json.loads(wm.node_info_cache)
+                node_infos = []
+
+                # Rebuild NodeInfo objects
+                for item in cache_data:
+                    # Rebuild input sockets
+                    inputs = [SocketInfo(**s) for s in item.get('inputs', [])]
+                    # Rebuild output sockets
+                    outputs = [SocketInfo(**s) for s in item.get('outputs', [])]
+                    # Rebuild property information
+                    properties = []
+                    for p in item.get('properties', []):
+                        prop = PropertyInfo(
+                            identifier=p['identifier'],
+                            name=p['name'],
+                            description=p['description'],
+                            type=p['type'],
+                            default_value=p.get('default_value'),
+                            enum_items=p.get('enum_items', [])
+                        )
+                        properties.append(prop)
+
+                    # Create NodeInfo object
+                    node_infos.append(NodeInfo(
+                        name=item['name'],
+                        description=item['description'],
+                        inputs=inputs,
+                        outputs=outputs,
+                        properties=properties
+                    ))
+                return node_infos
+            except Exception as e:
+                print(f"Error parsing cache: {e}")
+
+        # Collect node information
+        print(f"Collecting node information..")
+        node_infos = self._collect_node_info()
+
+        # Update cache
+        self._update_cache(node_infos)
+        return node_infos
+
+    def _format_item_text(self, item, index: int, indent: str = "  ") -> List[str]:
+        """Format socket or property information as text lines"""
+        lines = [f"{indent}{index}. {item.name} ({item.type})"]
+        
+        if hasattr(item, 'description') and item.description:
+            lines.append(f"{indent}   Description: {item.description}")
+        
+        if hasattr(item, 'default_value') and item.default_value is not None:
+            lines.append(f"{indent}   Default value: {item.default_value}")
+        
+        if hasattr(item, 'enum_items') and item.enum_items:
+            lines.append(f"{indent}   Options:")
+            for i, enum_item in enumerate(item.enum_items):
+                lines.append(f"{indent}    {i}. {enum_item['name']} ('{enum_item['identifier']}')")
+                if enum_item['description']:
+                    lines.append(f"{indent}       Description: {enum_item['description']}")
+        
+        return lines
+
+    def _format_node_text(self, node: NodeInfo, include_details: bool = False) -> str:
+        """Format node information as text"""
+        if not include_details:
+            return f"{node.name}:{node.description}"
+
+        lines = [f"{node.name}:{node.description}"]
+        
+        for section_name, items in [("Properties", node.properties), 
+                                   ("Input sockets", node.inputs), 
+                                   ("Output sockets", node.outputs)]:
+            if items:
+                lines.append(f"   {section_name}:")
+                for i, item in enumerate(items):
+                    lines.extend(self._format_item_text(item, i, "    "))
+
+        return "\n".join(lines)
+
+    def _format_single_node_text(self, node: NodeInfo, include_details: bool = False) -> str:
+        """Format single node information as detailed text"""
+        lines = [f"Node: {node.name}", f"Description: {node.description}"]
+
+        if include_details:
+            for section_name, items in [("Properties", node.properties), 
+                                       ("Input sockets", node.inputs), 
+                                       ("Output sockets", node.outputs)]:
+                if items:
+                    lines.append(f"\n{section_name}:")
+                    for i, item in enumerate(items):
+                        lines.append(f"  {i}. {item.name} ({item.type})")
+                        if hasattr(item, 'description') and item.description:
+                            lines.append(f"      Description: {item.description}")
+                        if hasattr(item, 'default_value') and item.default_value is not None:
+                            lines.append(f"      Default value: {item.default_value}")
+                        if hasattr(item, 'enum_items') and item.enum_items:
+                            lines.append("      Options:")
+                            for j, enum_item in enumerate(item.enum_items):
+                                lines.append(f"       {j}. {enum_item['name']} ('{enum_item['identifier']}')")
+                                if enum_item['description']:
+                                    lines.append(f"           Description: {enum_item['description']}")
+
+        return '\n'.join(lines)
+
+    def _node_to_dict(self, node: NodeInfo, include_details: bool = False) -> dict:
+        """Convert node information to dictionary"""
+        if include_details:
+            return {
+                'name': node.name,
+                'description': node.description,
+                'properties': [{
+                    'identifier': p.identifier,
+                    'name': p.name,
+                    'description': p.description,
+                    'type': p.type,
+                    'default_value': p.default_value,
+                    'enum_items': p.enum_items
+                } for p in node.properties],
+                'inputs': [socket.__dict__ for socket in node.inputs],
+                'outputs': [socket.__dict__ for socket in node.outputs]
+            }
+        else:
+            return {
+                'name': node.name,
+                'description': node.description
+            }
+
+    def _update_cache(self, node_infos: List[NodeInfo]):
+        """Update node information cache
+
+        Args:
+            node_infos: List of NodeInfo objects
+        """
+        wm = bpy.context.window_manager
+
+        # Convert NodeInfo objects to serializable dictionary
+        serializable_data = []
+        for info in node_infos:
+            node_dict = {
+                'name': info.name,
+                'description': info.description,
+                'properties': [{
+                    'identifier': p.identifier,
+                    'name': p.name,
+                    'description': p.description,
+                    'type': p.type,
+                    'default_value': p.default_value,
+                    'enum_items': p.enum_items
+                } for p in info.properties],
+                'inputs': [socket.__dict__ for socket in info.inputs],
+                'outputs': [socket.__dict__ for socket in info.outputs]
+            }
+            serializable_data.append(node_dict)
+
+        # Update cache
+        try:
+            wm.node_info_cache = json.dumps(serializable_data, default=str)
+        except Exception as e:
+            print(f"Error updating cache: {e}")
+
+    # endregion
+
+
 # Blender Addon Preferences
 class BLENDERMCP_AddonPreferences(bpy.types.AddonPreferences):
     bl_idname = __name__
@@ -2387,7 +3210,10 @@ class BLENDERMCP_PT_Panel(bpy.types.Panel):
                 layout.prop(scene, "blendermcp_hunyuan3d_num_inference_steps", text="Number of Inference Steps")
                 layout.prop(scene, "blendermcp_hunyuan3d_guidance_scale", text="Guidance Scale")
                 layout.prop(scene, "blendermcp_hunyuan3d_texture", text="Generate Texture")
-        
+
+        layout.prop(scene, "blendermcp_use_geometry_nodes", text="Use Geometry Nodes for procedural modeling")
+
+
         if not scene.blendermcp_server_running:
             layout.operator("blendermcp.start_server", text="Connect to MCP server")
         else:
@@ -2582,6 +3408,12 @@ def register():
         default=""
     )
 
+    bpy.types.Scene.blendermcp_use_geometry_nodes = bpy.props.BoolProperty(
+        name="Use Geometry Nodes",
+        description="Enable Geometry Nodes integration for procedural modeling",
+        default=False
+    )
+
     # Register preferences class
     bpy.utils.register_class(BLENDERMCP_AddonPreferences)
 
@@ -2623,6 +3455,7 @@ def unregister():
     del bpy.types.Scene.blendermcp_hunyuan3d_num_inference_steps
     del bpy.types.Scene.blendermcp_hunyuan3d_guidance_scale
     del bpy.types.Scene.blendermcp_hunyuan3d_texture
+    del bpy.types.Scene.blendermcp_use_geometry_nodes
 
     print("BlenderMCP addon unregistered")
 
