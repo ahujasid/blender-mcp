@@ -44,58 +44,58 @@ IS_BLENDER_4 = bpy.app.version[0] >= 4
 @dataclass
 class NodeDefinition:
     """Node definition data class"""
-    type: str  # Node type name
-    location: List[float] = field(default_factory=lambda: [0.0, 0.0])  # Node position [x, y]
-    label: str = ""  # Node label
-    inputs: Dict[str, Any] = field(default_factory=dict)  # Input values dictionary
-    properties: Dict[str, Any] = field(default_factory=dict)  # Node properties parameter dictionary
+    type: str
+    location: List[float] = field(default_factory=lambda: [0.0, 0.0])
+    label: str = ""
+    inputs: Dict[str, Any] = field(default_factory=dict)
+    properties: Dict[str, Any] = field(default_factory=dict)
 
 @dataclass
 class NodeLink:
     """Node connection data class"""
-    from_node: Union[str, int]  # Source node name or index
-    from_socket: Union[str, int]  # Source socket name or index
-    to_node: Union[str, int]  # Target node name or index
-    to_socket: Union[str, int]  # Target socket name or index
+    from_node: Union[str, int]
+    from_socket: Union[str, int]
+    to_node: Union[str, int]
+    to_socket: Union[str, int]
 
 @dataclass
 class GeometryNodeNetwork:
     """Geometry node network data class"""
-    object_name: str  # Object name
-    nodes: List[NodeDefinition] = field(default_factory=list)  # Node list
-    links: List[NodeLink] = field(default_factory=list)  # Connection list
-    input_sockets: List[Dict[str, str]] = field(default_factory=list)  # Input interface definition
-    output_sockets: List[Dict[str, str]] = field(default_factory=list)  # Output interface definition
+    object_name: str
+    nodes: List[NodeDefinition] = field(default_factory=list)
+    links: List[NodeLink] = field(default_factory=list)
+    input_sockets: List[Dict[str, str]] = field(default_factory=list)
+    output_sockets: List[Dict[str, str]] = field(default_factory=list)
 
 @dataclass
 class SocketInfo:
     """Socket information data class"""
-    name: str  # Socket name
-    type: str  # Socket type
-    description: str  # Socket description
-    identifier: str  # Socket identifier
-    enabled: bool  # Whether enabled
-    hide: bool  # Whether hidden
-    default_value: Any = None  # Default value (if any)
+    name: str
+    type: str
+    description: str = ""
+    identifier: str = ""
+    enabled: bool = True
+    hide: bool = False
+    default_value: Any = None
 
 @dataclass
 class PropertyInfo:
     """Node property information data class"""
-    identifier: str  # Property identifier
-    name: str  # Property name
-    description: str  # Property description
-    type: str  # Property type
-    default_value: Any = None  # Default value (if any)
-    enum_items: List[Dict[str, str]] = field(default_factory=list)  # Enum options (if any)
+    identifier: str
+    name: str
+    description: str = ""
+    type: str = ""
+    default_value: Any = None
+    enum_items: List[Dict[str, str]] = field(default_factory=list)
 
 @dataclass
 class NodeInfo:
     """Node information data class"""
-    name: str  # Node type name (identifier used to create the node)
-    description: str  # Node description
-    inputs: List[SocketInfo] = field(default_factory=list)  # Input socket information
-    outputs: List[SocketInfo] = field(default_factory=list)  # Output socket information
-    properties: List[PropertyInfo] = field(default_factory=list)  # Node property information
+    name: str
+    description: str = ""
+    inputs: List[SocketInfo] = field(default_factory=list)
+    outputs: List[SocketInfo] = field(default_factory=list)
+    properties: List[PropertyInfo] = field(default_factory=list)
 
 # endregion
 
@@ -2431,282 +2431,21 @@ class BlenderMCPServer:
 
     # region GeometryNodeCreator
     def complete_geometry_node(self, object_name, nodes, links, input_sockets=None):
-        """Complete geometry node network creation
-
-        Args:
-            object_name: Object name
-            nodes: List of node definitions
-            links: List of node connections
-            input_sockets: Node group input interface definitions [{"name": "Name", "type": "Type", "value": "DefaultValue"}]
-
-        Returns:
-            dict: Dictionary containing operation status and related information
-        """
+        """Complete geometry node network creation"""
         try:
-            obj = bpy.data.objects.get(object_name)
-            if not obj:
-                result = self._create_geometry_nodes_object(object_name)
-                if "error" in result:
-                    return result
-                obj = bpy.data.objects.get(object_name)
-
-            # Find geometry nodes modifier
-            geometry_modifier = None
-            for modifier in obj.modifiers:
-                if modifier.type == 'NODES':
-                    geometry_modifier = modifier
-                    break
-
-            if geometry_modifier and geometry_modifier.node_group:
-                old_node_group_name = geometry_modifier.node_group.name
-                geometry_modifier.node_group = None
-
-                # Try to delete the old node group
-                old_node_group = bpy.data.node_groups.get(old_node_group_name)
-                if old_node_group:
-                    bpy.data.node_groups.remove(old_node_group)
-
-            # If there's no geometry nodes modifier, create one
-            if not geometry_modifier:
-                geometry_modifier = obj.modifiers.new(name="GeometryNodes", type='NODES')
-
-            # Create a new node group
-            node_group = bpy.data.node_groups.new(name=f"{object_name}_geometry", type='GeometryNodeTree')
-            if IS_BLENDER_4:
-                node_group.is_modifier = True
-
-            # Set the node group for the modifier
-            geometry_modifier.node_group = node_group
-
-            has_input_node = False
-            has_output_node = False
-            for node_data in nodes:
-                node_type = node_data.get("type", "")
-                if node_type in ['NodeGroupInput', 'GroupInput']:
-                    has_input_node = True
-                elif node_type in ['NodeGroupOutput', 'GroupOutput']:
-                    has_output_node = True
-
-            self._setup_node_group_interface(node_group, input_sockets)
-
-            # First create all nodes
-            created_nodes = []
-
-            input_node = None
-            output_node = None
-
-            if not has_input_node:
-                input_node = node_group.nodes.new('NodeGroupInput')
-                input_node.location = (-300, 0)
-
-            if not has_output_node:
-                output_node = node_group.nodes.new('NodeGroupOutput')
-                output_node.location = (500, 0)
-
-            for node_data in nodes:
-                try:
-                    node_type = node_data["type"]
-
-                    node = node_group.nodes.new(node_type)
-
-                    if "location" in node_data:
-                        node.location = node_data["location"]
-
-                    if "label" in node_data:
-                        node.label = node_data["label"]
-
-                    if "properties" in node_data:
-                        for prop_name, prop_value in node_data["properties"].items():
-                            if hasattr(node, prop_name):
-                                try:
-                                    setattr(node, prop_name, prop_value)
-                                except Exception as prop_error:
-                                    print(f"Error setting property {prop_name}: {prop_error}")
-
-                    if "inputs" in node_data:
-                        for input_name, input_value in node_data["inputs"].items():
-                            for input in node.inputs:
-                                if input.name == input_name and hasattr(input, 'default_value'):
-                                    try:
-                                        if hasattr(input.default_value, '__len__'):
-                                            for i, val in enumerate(input_value):
-                                                if i < len(input.default_value):
-                                                    input.default_value[i] = val
-                                        else:
-                                            input.default_value = input_value
-                                    except Exception as input_error:
-                                        print(f"Error setting input value: {input_error}")
-
-                    node_info = {
-                        "name": node.name,
-                        "type": node.type,
-                        "location": [node.location.x, node.location.y]
-                    }
-
-                    created_nodes.append(node_info)
-                except Exception as node_error:
-                    return {"error": f"Error creating node {node_data['type']}: {str(node_error)}"}
-
-            # Create links
-            created_links = []
-
-            for link_data in links:
-                try:
-                    # Find nodes by index or name
-                    from_node_id = link_data["from_node"]
-                    to_node_id = link_data["to_node"]
-
-                    from_node = None
-                    to_node = None
-
-                    # Special handling for "input" and "output" identifiers
-                    if from_node_id == "input":
-                        from_node = input_node
-                    elif from_node_id == "output":
-                        from_node = output_node
-                    elif isinstance(from_node_id, int):
-                        # Assume integer index points to created node
-                        if 0 <= from_node_id < len(created_nodes):
-                            from_node = node_group.nodes.get(created_nodes[from_node_id]["name"])
-                    else:
-                        # Find by name
-                        from_node = node_group.nodes.get(from_node_id)
-
-                    if to_node_id == "input":
-                        to_node = input_node
-                    elif to_node_id == "output":
-                        to_node = output_node
-                    elif isinstance(to_node_id, int):
-                        # Assume integer index points to created node
-                        if 0 <= to_node_id < len(created_nodes):
-                            to_node = node_group.nodes.get(created_nodes[to_node_id]["name"])
-                    else:
-                        # Find by name
-                        to_node = node_group.nodes.get(to_node_id)
-
-                    if not from_node:
-                        return {"error": f"Could not find source node: {from_node_id}"}
-
-                    if not to_node:
-                        return {"error": f"Could not find target node: {to_node_id}"}
-
-                    # Find socket
-                    from_socket_id = link_data["from_socket"]
-                    to_socket_id = link_data["to_socket"]
-
-                    from_socket = None
-                    to_socket = None
-
-                    # Find socket by index or name
-                    if isinstance(from_socket_id, int):
-                        if 0 <= from_socket_id < len(from_node.outputs):
-                            from_socket = from_node.outputs[from_socket_id]
-                    else:
-                        # Search by name
-                        for socket in from_node.outputs:
-                            if socket.name == from_socket_id:
-                                from_socket = socket
-                                break
-
-                    if isinstance(to_socket_id, int):
-                        if 0 <= to_socket_id < len(to_node.inputs):
-                            to_socket = to_node.inputs[to_socket_id]
-                    else:
-                        # Search by name
-                        for socket in to_node.inputs:
-                            if socket.name == to_socket_id:
-                                to_socket = socket
-                                break
-
-                    if not from_socket:
-                        return {"error": f"Could not find source socket: {from_socket_id}"}
-
-                    if not to_socket:
-                        return {"error": f"Could not find target socket: {to_socket_id}"}
-
-                    # Create connection
-                    link = node_group.links.new(from_socket, to_socket)
-
-                    # Record created link
-                    link_info = {
-                        "from_node": from_node.name,
-                        "from_socket": from_socket.name,
-                        "to_node": to_node.name,
-                        "to_socket": to_socket.name
-                    }
-
-                    created_links.append(link_info)
-                except Exception as link_error:
-                    return {"error": f"Error creating link: {str(link_error)}"}
-
-            # If input sockets are provided and contain values, set modifier parameters
+            obj = self._get_or_create_object(object_name)
+            if isinstance(obj, dict) and "error" in obj:
+                return obj
+                
+            geometry_modifier = self._setup_geometry_modifier(obj, object_name)
+            node_group = geometry_modifier.node_group
+            
+            input_node, output_node = self._create_default_nodes(node_group, nodes)
+            created_nodes = self._create_nodes(node_group, nodes)
+            created_links = self._create_links(node_group, links, created_nodes, input_node, output_node)
+            
             if input_sockets:
-                try:
-                    # Find the NodeGroupInput node
-                    group_input_node = None
-                    for node in node_group.nodes:
-                        if node.type == 'GROUP_INPUT':
-                            group_input_node = node
-                            break
-
-                    # Create one if not found
-                    if not group_input_node:
-                        group_input_node = node_group.nodes.new('NodeGroupInput')
-
-                    # Get socket information directly from the NodeGroupInput node
-                    socket_dict = {}
-                    for i, output in enumerate(group_input_node.outputs):
-                        socket_dict[output.name] = i
-
-                    # Output debug information
-                    print(f"Sockets from NodeGroupInput: {socket_dict}")
-
-                    # Set modifier parameter values
-                    for socket in input_sockets:
-                        if "value" in socket and socket.get("type") != "NodeSocketGeometry":
-                            socket_name = socket.get("name")
-
-                            if socket_name in socket_dict:
-                                socket_index = socket_dict[socket_name]
-                                socket_key = f"Socket_{socket_index}"
-
-                                try:
-                                    if socket_key in geometry_modifier:
-                                        geometry_modifier[socket_key] = socket["value"]
-                                        print(
-                                            f"Successfully set parameter {socket_name} ({socket_key}) = {socket['value']}")
-                                    else:
-                                        print(f"Warning: {socket_key} does not exist in modifier")
-                                except Exception as e:
-                                    print(f"Error when setting modifier parameter {socket_key}: {str(e)}")
-                            else:
-                                print(f"Warning: Could not find socket named '{socket_name}' in NodeGroupInput")
-
-                    # Output all available Socket keys for debugging
-                    available_sockets = [key for key in geometry_modifier.keys() if key.startswith("Socket_")]
-                    if available_sockets:
-                        print(f"Available Socket keys in modifier: {available_sockets}")
-
-                except Exception as e:
-                    print(f"Error setting modifier parameters: {str(e)}")
-                    # Fall back to compatibility mode
-                    try:
-                        # Directly iterate through modifier properties and set values
-                        for socket in input_sockets:
-                            if "value" in socket and socket.get("type") != "NodeSocketGeometry":
-                                socket_name = socket.get("name")
-                                # Try to find matching socket keys
-                                for key in geometry_modifier.keys():
-                                    if key.startswith("Socket_"):
-                                        # Try to set directly
-                                        try:
-                                            geometry_modifier[key] = socket["value"]
-                                            print(f"Directly set {key} = {socket['value']}")
-                                            break
-                                        except:
-                                            pass
-                    except:
-                        pass
+                self._set_modifier_parameters(geometry_modifier, node_group, input_sockets)
 
             return {
                 "status": "success",
@@ -2718,6 +2457,182 @@ class BlenderMCPServer:
             }
         except Exception as e:
             return {"error": f"Error completing geometry node network: {str(e)}"}
+
+    def _get_or_create_object(self, object_name):
+        """Get existing object or create new one"""
+        obj = bpy.data.objects.get(object_name)
+        if not obj:
+            result = self._create_geometry_nodes_object(object_name)
+            if "error" in result:
+                return result
+            obj = bpy.data.objects.get(object_name)
+        return obj
+
+    def _setup_geometry_modifier(self, obj, object_name):
+        """Setup geometry nodes modifier"""
+        geometry_modifier = next((mod for mod in obj.modifiers if mod.type == 'NODES'), None)
+        
+        if geometry_modifier and geometry_modifier.node_group:
+            old_node_group = geometry_modifier.node_group
+            geometry_modifier.node_group = None
+            if old_node_group:
+                bpy.data.node_groups.remove(old_node_group)
+
+        if not geometry_modifier:
+            geometry_modifier = obj.modifiers.new(name="GeometryNodes", type='NODES')
+
+        node_group = bpy.data.node_groups.new(name=f"{object_name}_geometry", type='GeometryNodeTree')
+        if IS_BLENDER_4:
+            node_group.is_modifier = True
+        
+        geometry_modifier.node_group = node_group
+        self._setup_node_group_interface(node_group, None)
+        return geometry_modifier
+
+    def _create_default_nodes(self, node_group, nodes):
+        """Create default input/output nodes if not present"""
+        has_input = any(node_data.get("type") in ['NodeGroupInput', 'GroupInput'] for node_data in nodes)
+        has_output = any(node_data.get("type") in ['NodeGroupOutput', 'GroupOutput'] for node_data in nodes)
+        
+        input_node = None
+        output_node = None
+        
+        if not has_input:
+            input_node = node_group.nodes.new('NodeGroupInput')
+            input_node.location = (-300, 0)
+            
+        if not has_output:
+            output_node = node_group.nodes.new('NodeGroupOutput')
+            output_node.location = (500, 0)
+            
+        return input_node, output_node
+
+    def _create_nodes(self, node_group, nodes):
+        """Create nodes from definitions"""
+        created_nodes = []
+        
+        for node_data in nodes:
+            try:
+                node = node_group.nodes.new(node_data["type"])
+                
+                if "location" in node_data:
+                    node.location = node_data["location"]
+                if "label" in node_data:
+                    node.label = node_data["label"]
+                    
+                self._set_node_properties(node, node_data.get("properties", {}))
+                self._set_node_inputs(node, node_data.get("inputs", {}))
+                
+                created_nodes.append({
+                    "name": node.name,
+                    "type": node.type,
+                    "location": [node.location.x, node.location.y]
+                })
+            except Exception as e:
+                raise Exception(f"Error creating node {node_data['type']}: {str(e)}")
+                
+        return created_nodes
+
+    def _set_node_properties(self, node, properties):
+        """Set node properties"""
+        for prop_name, prop_value in properties.items():
+            if hasattr(node, prop_name):
+                try:
+                    setattr(node, prop_name, prop_value)
+                except Exception as e:
+                    print(f"Error setting property {prop_name}: {e}")
+
+    def _set_node_inputs(self, node, inputs):
+        """Set node input values"""
+        for input_name, input_value in inputs.items():
+            for input_socket in node.inputs:
+                if input_socket.name == input_name and hasattr(input_socket, 'default_value'):
+                    try:
+                        if hasattr(input_socket.default_value, '__len__'):
+                            for i, val in enumerate(input_value):
+                                if i < len(input_socket.default_value):
+                                    input_socket.default_value[i] = val
+                        else:
+                            input_socket.default_value = input_value
+                    except Exception as e:
+                        print(f"Error setting input value: {e}")
+
+    def _find_node(self, node_group, node_id, created_nodes, input_node, output_node):
+        """Find node by ID (name, index, or special identifier)"""
+        if node_id == "input":
+            return input_node
+        elif node_id == "output":
+            return output_node
+        elif isinstance(node_id, int) and 0 <= node_id < len(created_nodes):
+            return node_group.nodes.get(created_nodes[node_id]["name"])
+        else:
+            return node_group.nodes.get(node_id)
+
+    def _find_socket(self, node, socket_id, is_output=True):
+        """Find socket by ID (name or index)"""
+        sockets = node.outputs if is_output else node.inputs
+        
+        if isinstance(socket_id, int) and 0 <= socket_id < len(sockets):
+            return sockets[socket_id]
+        else:
+            return next((s for s in sockets if s.name == socket_id), None)
+
+    def _create_links(self, node_group, links, created_nodes, input_node, output_node):
+        """Create links between nodes"""
+        created_links = []
+        
+        for link_data in links:
+            try:
+                from_node = self._find_node(node_group, link_data["from_node"], created_nodes, input_node, output_node)
+                to_node = self._find_node(node_group, link_data["to_node"], created_nodes, input_node, output_node)
+                
+                if not from_node:
+                    raise Exception(f"Could not find source node: {link_data['from_node']}")
+                if not to_node:
+                    raise Exception(f"Could not find target node: {link_data['to_node']}")
+                
+                from_socket = self._find_socket(from_node, link_data["from_socket"], True)
+                to_socket = self._find_socket(to_node, link_data["to_socket"], False)
+                
+                if not from_socket:
+                    raise Exception(f"Could not find source socket: {link_data['from_socket']}")
+                if not to_socket:
+                    raise Exception(f"Could not find target socket: {link_data['to_socket']}")
+                
+                node_group.links.new(from_socket, to_socket)
+                
+                created_links.append({
+                    "from_node": from_node.name,
+                    "from_socket": from_socket.name,
+                    "to_node": to_node.name,
+                    "to_socket": to_socket.name
+                })
+            except Exception as e:
+                raise Exception(f"Error creating link: {str(e)}")
+                
+        return created_links
+
+    def _set_modifier_parameters(self, geometry_modifier, node_group, input_sockets):
+        """Set modifier parameters from input socket values"""
+        try:
+            group_input_node = next((node for node in node_group.nodes if node.type == 'GROUP_INPUT'), None)
+            if not group_input_node:
+                group_input_node = node_group.nodes.new('NodeGroupInput')
+
+            socket_dict = {output.name: i for i, output in enumerate(group_input_node.outputs)}
+
+            for socket in input_sockets:
+                if "value" in socket and socket.get("type") != "NodeSocketGeometry":
+                    socket_name = socket.get("name")
+                    if socket_name in socket_dict:
+                        socket_key = f"Socket_{socket_dict[socket_name]}"
+                        try:
+                            if socket_key in geometry_modifier:
+                                geometry_modifier[socket_key] = socket["value"]
+                        except Exception as e:
+                            print(f"Error setting modifier parameter {socket_key}: {e}")
+        except Exception as e:
+            print(f"Error setting modifier parameters: {e}")
 
     def _create_geometry_nodes_object(self, object_name):
         """Create a base object and add a geometry nodes modifier
@@ -2845,96 +2760,64 @@ class BlenderMCPServer:
 
     # region GeometryNodeInfo
     def get_node_info(self, output_format='text', include_details=False, node_type_name=None):
-        """Get node type information
-
-        Args:
-            output_format: Output format ('text', 'json')
-            include_details: Whether to include detailed information (properties and sockets)
-            node_type_name: Node type name, can be a single string, comma-separated multiple node names, or a list of strings
-
-        Returns:
-            str: Returns node information in different formats based on output_format:
-            - 'text': String, each line as "TypeName:Description" and detailed information (if include_details is True)
-            - 'json': JSON formatted string
-        """
-        # Handle include_details type conversion
+        """Get node type information"""
         try:
-            if isinstance(include_details, str):
-                include_details_lower = include_details.lower()
-                include_details = include_details_lower == 'true' or include_details_lower == 'yes' or include_details_lower == '1'
-
-            # Handle node_type_name parameter, ensuring it's a list
-            node_type_names = []
-            if node_type_name is not None:
-                # If it's a string, check if it's a comma-separated list
-                if isinstance(node_type_name, str):
-                    # Split by comma and strip whitespace
-                    node_type_names = [name.strip() for name in node_type_name.split(',') if name.strip()]
-                # If it's already a list, use it directly
-                elif isinstance(node_type_name, list):
-                    node_type_names = node_type_name
-                else:
-                    raise ValueError(f"node_type_name must be a string or a list, received: {type(node_type_name)}")
-
-                # Ensure all elements in the list are strings
-                if not all(isinstance(item, str) for item in node_type_names):
-                    raise ValueError(f"All elements in node_type_name list must be strings")
-
-                print(f"Processing node type names: {node_type_names} (from: {node_type_name})")
-
-            # Handle output_format parameter
+            include_details = self._parse_bool_param(include_details)
+            node_type_names = self._parse_node_type_names(node_type_name)
+            
             if output_format not in ('text', 'json'):
                 raise ValueError(f"Unsupported output format: {output_format}, please use 'text' or 'json'")
 
             self._register_node_info_cache()
-
-            # Get all node information
             node_infos = self._get_nodes_from_cache_or_collect()
-
-            # If specific node type names are specified, return only those nodes' information
+            
             if node_type_names:
-                # Find target nodes
                 target_nodes = [node for node in node_infos if node.name in node_type_names]
-
-                # If no target nodes are found
                 if not target_nodes:
-                    if len(node_type_names) == 1:
-                        return f"Node {node_type_names[0]} does not exist or cannot be created"
-                    else:
-                        return f"Specified nodes do not exist or cannot be created: {', '.join(node_type_names)}"
+                    missing = ', '.join(node_type_names)
+                    return f"Node{'s' if len(node_type_names) > 1 else ''} {missing} do{'es' if len(node_type_names) == 1 else ''} not exist or cannot be created"
+                node_infos = target_nodes
 
-                # Return node information based on output_format
-                if output_format == 'text':
-                    if len(target_nodes) == 1:
-                        return self._format_single_node_text(target_nodes[0], include_details)
-                    else:
-                        if include_details:
-                            return "\n\n".join(self._format_node_text(node, True) for node in target_nodes)
-                        else:
-                            return '\n'.join(self._format_node_text(node, False) for node in target_nodes)
-                else:  # 'json'
-                    node_dicts = [self._node_to_dict(node, include_details) for node in target_nodes]
-                    if len(node_dicts) == 1:
-                        return json.dumps(node_dicts[0], ensure_ascii=False, indent=2, default=str)
-                    else:
-                        return json.dumps(node_dicts, ensure_ascii=False, indent=2, default=str)
-
-            # Return information about all nodes based on output_format
-            if output_format == 'text':
-                if include_details:
-                    return "\n\n".join(self._format_node_text(node, True) for node in node_infos)
-                else:
-                    return '\n'.join(self._format_node_text(node, False) for node in node_infos)
-
-            else:  # 'json'
-                node_dicts = [self._node_to_dict(node, include_details) for node in node_infos]
-                return json.dumps(node_dicts, ensure_ascii=False, indent=2, default=str)
+            return self._format_output(node_infos, output_format, include_details)
 
         except Exception as e:
             print(f"Error getting node information: {str(e)}")
             import traceback
             traceback.print_exc()
             return f"Error getting node information: {str(e)}"
+
+    def _parse_bool_param(self, param):
+        """Parse boolean parameter from string or bool"""
+        if isinstance(param, str):
+            return param.lower() in ('true', 'yes', '1')
+        return bool(param)
+
+    def _parse_node_type_names(self, node_type_name):
+        """Parse node type names parameter"""
+        if node_type_name is None:
+            return []
+        
+        if isinstance(node_type_name, str):
+            return [name.strip() for name in node_type_name.split(',') if name.strip()]
+        elif isinstance(node_type_name, list):
+            if not all(isinstance(item, str) for item in node_type_name):
+                raise ValueError("All elements in node_type_name list must be strings")
+            return node_type_name
+        else:
+            raise ValueError(f"node_type_name must be a string or a list, received: {type(node_type_name)}")
+
+    def _format_output(self, node_infos, output_format, include_details):
+        """Format node information output"""
+        if output_format == 'json':
+            node_dicts = [self._node_to_dict(node, include_details) for node in node_infos]
+            result = node_dicts[0] if len(node_dicts) == 1 else node_dicts
+            return json.dumps(result, ensure_ascii=False, indent=2, default=str)
+        else:  # text
+            if len(node_infos) == 1:
+                return self._format_single_node_text(node_infos[0], include_details)
+            else:
+                separator = "\n\n" if include_details else "\n"
+                return separator.join(self._format_node_text(node, include_details) for node in node_infos)
 
     def _register_node_info_cache(self):
         """Register custom properties"""
@@ -2946,97 +2829,65 @@ class BlenderMCPServer:
             )
 
     def _collect_socket_info(self, node, is_input: bool = True) -> List[SocketInfo]:
-        """Collect node socket information
-
-        Args:
-            node: Node object
-            is_input: Whether the socket is an input socket
-
-        Returns:
-            List[SocketInfo]: List of socket information
-        """
-        sockets = []
+        """Collect node socket information"""
         socket_list = node.inputs if is_input else node.outputs
+        sockets = []
 
         for socket in socket_list:
-            # Default value handling
-            default_value = None
-            if hasattr(socket, 'default_value'):
-                try:
-                    # Handling different types of default values
-                    if hasattr(socket.default_value, '__len__'):
-                        # Vectors, colors, etc.
-                        default_value = list(socket.default_value)
-                    else:
-                        # Scalar values
-                        default_value = socket.default_value
-                except:
-                    default_value = None
-
-            # Create SocketInfo object
-            socket_info = SocketInfo(
+            default_value = self._get_socket_default_value(socket)
+            sockets.append(SocketInfo(
                 name=socket.name,
                 type=socket.type,
                 description=socket.description,
-                identifier='',
                 enabled=socket.enabled,
                 hide=socket.hide,
                 default_value=default_value
-            )
-
-            sockets.append(socket_info)
+            ))
 
         return sockets
 
+    def _get_socket_default_value(self, socket):
+        """Get socket default value safely"""
+        if not hasattr(socket, 'default_value'):
+            return None
+        try:
+            if hasattr(socket.default_value, '__len__'):
+                return list(socket.default_value)
+            else:
+                return socket.default_value
+        except:
+            return None
+
     def _collect_property_info(self, node_type) -> List[PropertyInfo]:
-        """Collect node property information
-
-        Args:
-            node_type: Node type
-
-        Returns:
-            List[PropertyInfo]: List of property information
-        """
+        """Collect node property information"""
         properties = []
+        excluded_props = {'rna_type', 'name', 'location', 'width', 'width_hidden', 
+                         'height', 'dimensions', 'inputs', 'outputs', 'internal_links'}
+        
+        parent_props = {prop.identifier for base in node_type.__bases__ 
+                       for prop in base.bl_rna.properties}
 
-        # Get parent class identifier, to exclude inherited properties
-        parent_props = [prop.identifier for base in node_type.__bases__
-                        for prop in base.bl_rna.properties]
-
-        # Iterate over node type's properties
         for prop in node_type.bl_rna.properties:
-            # Skip inherited properties and built-in basic properties
-            if (prop.identifier in parent_props or
-                    prop.identifier in ['rna_type', 'name', 'location', 'width',
-                                        'width_hidden', 'height', 'dimensions',
-                                        'inputs', 'outputs', 'internal_links']):
+            if prop.identifier in parent_props or prop.identifier in excluded_props:
                 continue
 
-            # Get default value (based on property type)
-            default_value = None
             enum_items = []
-
-            # Handling different types of properties
+            default_value = None
+            
             if prop.type == 'ENUM':
-                # Handling enum types
-                enum_items = [{'identifier': item.identifier,
-                               'name': item.name,
-                               'description': item.description}
-                              for item in prop.enum_items]
+                enum_items = [{'identifier': item.identifier, 'name': item.name, 
+                              'description': item.description} for item in prop.enum_items]
             elif hasattr(prop, 'default'):
                 default_value = prop.default
 
-            # Create PropertyInfo object
-            prop_info = PropertyInfo(
+            properties.append(PropertyInfo(
                 identifier=prop.identifier,
                 name=prop.name,
                 description=prop.description,
                 type=prop.type,
                 default_value=default_value,
                 enum_items=enum_items
-            )
-
-            properties.append(prop_info)
+            ))
 
         return properties
 
@@ -3172,31 +3023,23 @@ class BlenderMCPServer:
         self._update_cache(node_infos)
         return node_infos
 
-    def _format_socket_info_text(self, socket: SocketInfo, index: int, indent: str = "  ") -> List[str]:
-        """Format socket information as a list of text lines"""
-        lines = [f"{indent}{index}. {socket.name} ({socket.type})"]
-        if socket.description:
-            lines.append(f"{indent}   Description: {socket.description}")
-        if socket.default_value is not None:
-            lines.append(f"{indent}   Default value: {socket.default_value}")
-        return lines
-
-    def _format_property_info_text(self, prop: PropertyInfo, index: int, indent: str = "  ") -> List[str]:
-        """Format property information as a list of text lines"""
-        lines = [f"{indent}{index}. {prop.name} ({prop.type})"]
-        if prop.description:
-            lines.append(f"{indent}   Description: {prop.description}")
-
-        if prop.default_value is not None:
-            lines.append(f"{indent}   Default value: {prop.default_value}")
-
-        if prop.enum_items:
+    def _format_item_text(self, item, index: int, indent: str = "  ") -> List[str]:
+        """Format socket or property information as text lines"""
+        lines = [f"{indent}{index}. {item.name} ({item.type})"]
+        
+        if hasattr(item, 'description') and item.description:
+            lines.append(f"{indent}   Description: {item.description}")
+        
+        if hasattr(item, 'default_value') and item.default_value is not None:
+            lines.append(f"{indent}   Default value: {item.default_value}")
+        
+        if hasattr(item, 'enum_items') and item.enum_items:
             lines.append(f"{indent}   Options:")
-            for i, item in enumerate(prop.enum_items):
-                lines.append(f"{indent}    {i}. {item['name']} ('{item['identifier']}')")
-                if item['description']:
-                    lines.append(f"{indent}       Description: {item['description']}")
-
+            for i, enum_item in enumerate(item.enum_items):
+                lines.append(f"{indent}    {i}. {enum_item['name']} ('{enum_item['identifier']}')")
+                if enum_item['description']:
+                    lines.append(f"{indent}       Description: {enum_item['description']}")
+        
         return lines
 
     def _format_node_text(self, node: NodeInfo, include_details: bool = False) -> str:
@@ -3205,24 +3048,14 @@ class BlenderMCPServer:
             return f"{node.name}:{node.description}"
 
         lines = [f"{node.name}:{node.description}"]
-
-        # Add property information
-        if node.properties:
-            lines.append("   Properties:")
-            for i, prop in enumerate(node.properties):
-                lines.extend(self._format_property_info_text(prop, i, "    "))
-
-        # Add input socket information
-        if node.inputs:
-            lines.append("   Input sockets:")
-            for i, socket in enumerate(node.inputs):
-                lines.extend(self._format_socket_info_text(socket, i, "    "))
-
-        # Add output socket information
-        if node.outputs:
-            lines.append("   Output sockets:")
-            for i, socket in enumerate(node.outputs):
-                lines.extend(self._format_socket_info_text(socket, i, "    "))
+        
+        for section_name, items in [("Properties", node.properties), 
+                                   ("Input sockets", node.inputs), 
+                                   ("Output sockets", node.outputs)]:
+            if items:
+                lines.append(f"   {section_name}:")
+                for i, item in enumerate(items):
+                    lines.extend(self._format_item_text(item, i, "    "))
 
         return "\n".join(lines)
 
@@ -3231,39 +3064,23 @@ class BlenderMCPServer:
         lines = [f"Node: {node.name}", f"Description: {node.description}"]
 
         if include_details:
-            # Add property information
-            if node.properties:
-                lines.append("\nProperties:")
-                for i, prop in enumerate(node.properties):
-                    lines.append(f"  {i}. {prop.name} ({prop.type})")
-                    if prop.description:
-                        lines.append(f"      Description: {prop.description}")
-                    if prop.default_value is not None:
-                        lines.append(f"      Default value: {prop.default_value}")
-                    if prop.enum_items:
-                        lines.append(f"      Options:")
-                        for j, item in enumerate(prop.enum_items):
-                            lines.append(f"       {j}. {item['name']} ('{item['identifier']}')")
-                            if item['description']:
-                                lines.append(f"           Description: {item['description']}")
-
-            # Add input socket information
-            if node.inputs:
-                lines.append("\nInput sockets:")
-                for i, socket in enumerate(node.inputs):
-                    lines.append(f"  {i}. {socket.name} ({socket.type})")
-                    if socket.description:
-                        lines.append(f"      Description: {socket.description}")
-                    if socket.default_value is not None:
-                        lines.append(f"      Default value: {socket.default_value}")
-
-            # Add output socket information
-            if node.outputs:
-                lines.append("\nOutput sockets:")
-                for i, socket in enumerate(node.outputs):
-                    lines.append(f"  {i}. {socket.name} ({socket.type})")
-                    if socket.description:
-                        lines.append(f"      Description: {socket.description}")
+            for section_name, items in [("Properties", node.properties), 
+                                       ("Input sockets", node.inputs), 
+                                       ("Output sockets", node.outputs)]:
+                if items:
+                    lines.append(f"\n{section_name}:")
+                    for i, item in enumerate(items):
+                        lines.append(f"  {i}. {item.name} ({item.type})")
+                        if hasattr(item, 'description') and item.description:
+                            lines.append(f"      Description: {item.description}")
+                        if hasattr(item, 'default_value') and item.default_value is not None:
+                            lines.append(f"      Default value: {item.default_value}")
+                        if hasattr(item, 'enum_items') and item.enum_items:
+                            lines.append("      Options:")
+                            for j, enum_item in enumerate(item.enum_items):
+                                lines.append(f"       {j}. {enum_item['name']} ('{enum_item['identifier']}')")
+                                if enum_item['description']:
+                                    lines.append(f"           Description: {enum_item['description']}")
 
         return '\n'.join(lines)
 
