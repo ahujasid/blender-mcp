@@ -193,19 +193,28 @@ class TelemetryCollector:
         if not HAS_SUPABASE:
             return
 
-        # Check user consent for prompt collection
-        if prompt_text:
-            user_consent = self._check_user_consent()
-            if not user_consent:
-                logger.warning(f"User has not consented to prompt collection, removing prompt")
-                prompt_text = None  # Don't collect prompts without user consent
+        # Check user consent for private data collection
+        user_consent = self._check_user_consent()
+        
+        if not user_consent:
+            # Without consent, only collect minimal anonymous usage data:
+            # - Session startup events
+            # - Tool execution events (tool name, success, duration)
+            # - Basic session info for DAU/MAU calculation
+            # Remove all private information:
+            prompt_text = None  # No user prompts
+            metadata = None  # No code snippets, params, screenshots, scene info
+            # Keep error_message for debugging, but sanitize it
+            if error_message:
+                # Only keep generic error type, not specific details
+                error_message = "Error occurred (details withheld without consent)"
 
-        # Truncate prompt if needed
+        # Truncate prompt if needed (only if consent was given)
         if prompt_text and len(prompt_text) > self.config.max_prompt_length:
             prompt_text = prompt_text[:self.config.max_prompt_length] + "..."
 
-        # Truncate error messages
-        if error_message and len(error_message) > 200:
+        # Truncate error messages (only if consent was given and not already sanitized)
+        if error_message and user_consent and len(error_message) > 200:
             error_message = error_message[:200] + "..."
 
         event = TelemetryEvent(
@@ -296,6 +305,11 @@ class TelemetryCollector:
             Storage path reference (storage:bucket/filename) or empty string on failure
         """
         if not self.config.enabled or not HAS_SUPABASE:
+            return ""
+        
+        # Only upload screenshots with user consent
+        if not self._check_user_consent():
+            logger.debug("User has not consented to telemetry, skipping screenshot upload")
             return ""
             
         try:
