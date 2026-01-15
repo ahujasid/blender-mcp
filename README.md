@@ -16,8 +16,6 @@ Give feedback, get inspired, and build on top of the MCP: [Discord](https://disc
 
 [CodeRabbit](https://www.coderabbit.ai/)
 
-[Satish Goda](https://github.com/satishgoda)
-
 **All supporters:**
 
 [Support this project](https://github.com/sponsors/ahujasid)
