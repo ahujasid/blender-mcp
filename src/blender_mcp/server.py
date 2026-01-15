@@ -1,5 +1,6 @@
 # blender_mcp_server.py
 from mcp.server.fastmcp import FastMCP, Context, Image
+from mcp.types import ToolAnnotations
 import socket
 import json
 import asyncio
@@ -252,7 +253,12 @@ def get_blender_connection():
 
 
 @telemetry_tool("get_scene_info")
-@mcp.tool()
+@mcp.tool(
+    annotations=ToolAnnotations(
+        title="Get Scene Info",
+        readOnlyHint=True,
+    ),
+)
 def get_scene_info(ctx: Context) -> str:
     """Get detailed information about the current Blender scene"""
     try:
@@ -266,7 +272,12 @@ def get_scene_info(ctx: Context) -> str:
         return f"Error getting scene info: {str(e)}"
 
 @telemetry_tool("get_object_info")
-@mcp.tool()
+@mcp.tool(
+    annotations=ToolAnnotations(
+        title="Get Object Info",
+        readOnlyHint=True,
+    ),
+)
 def get_object_info(ctx: Context, object_name: str) -> str:
     """
     Get detailed information about a specific object in the Blender scene.
@@ -285,7 +296,12 @@ def get_object_info(ctx: Context, object_name: str) -> str:
         return f"Error getting object info: {str(e)}"
 
 @telemetry_tool("get_viewport_screenshot")
-@mcp.tool()
+@mcp.tool(
+    annotations=ToolAnnotations(
+        title="Get Viewport Screenshot",
+        readOnlyHint=True,
+    ),
+)
 def get_viewport_screenshot(ctx: Context, max_size: int = 800) -> Image:
     """
     Capture a screenshot of the current Blender 3D viewport.
@@ -329,7 +345,12 @@ def get_viewport_screenshot(ctx: Context, max_size: int = 800) -> Image:
 
 
 @telemetry_tool("execute_blender_code")
-@mcp.tool()
+@mcp.tool(
+    annotations=ToolAnnotations(
+        title="Execute Blender Code",
+        destructiveHint=True,
+    ),
+)
 def execute_blender_code(ctx: Context, code: str) -> str:
     """
     Execute arbitrary Python code in Blender. Make sure to do it step-by-step by breaking it into smaller chunks.
@@ -347,7 +368,12 @@ def execute_blender_code(ctx: Context, code: str) -> str:
         return f"Error executing code: {str(e)}"
 
 @telemetry_tool("get_polyhaven_categories")
-@mcp.tool()
+@mcp.tool(
+    annotations=ToolAnnotations(
+        title="Get PolyHaven Categories",
+        readOnlyHint=True,
+    ),
+)
 def get_polyhaven_categories(ctx: Context, asset_type: str = "hdris") -> str:
     """
     Get a list of categories for a specific asset type on Polyhaven.
@@ -380,7 +406,12 @@ def get_polyhaven_categories(ctx: Context, asset_type: str = "hdris") -> str:
         return f"Error getting Polyhaven categories: {str(e)}"
 
 @telemetry_tool("search_polyhaven_assets")
-@mcp.tool()
+@mcp.tool(
+    annotations=ToolAnnotations(
+        title="Search PolyHaven Assets",
+        readOnlyHint=True,
+    ),
+)
 def search_polyhaven_assets(
     ctx: Context,
     asset_type: str = "all",
@@ -430,7 +461,12 @@ def search_polyhaven_assets(
         return f"Error searching Polyhaven assets: {str(e)}"
 
 @telemetry_tool("download_polyhaven_asset")
-@mcp.tool()
+@mcp.tool(
+    annotations=ToolAnnotations(
+        title="Download PolyHaven Asset",
+        destructiveHint=True,
+    ),
+)
 def download_polyhaven_asset(
     ctx: Context,
     asset_id: str,
@@ -482,7 +518,11 @@ def download_polyhaven_asset(
         return f"Error downloading Polyhaven asset: {str(e)}"
 
 @telemetry_tool("set_texture")
-@mcp.tool()
+@mcp.tool(
+    annotations=ToolAnnotations(
+        title="Set Texture",
+    ),
+)
 def set_texture(
     ctx: Context,
     object_name: str,
@@ -542,7 +582,12 @@ def set_texture(
         return f"Error applying texture: {str(e)}"
 
 @telemetry_tool("get_polyhaven_status")
-@mcp.tool()
+@mcp.tool(
+    annotations=ToolAnnotations(
+        title="Get PolyHaven Status",
+        readOnlyHint=True,
+    ),
+)
 def get_polyhaven_status(ctx: Context) -> str:
     """
     Check if PolyHaven integration is enabled in Blender.
@@ -561,7 +606,12 @@ def get_polyhaven_status(ctx: Context) -> str:
         return f"Error checking PolyHaven status: {str(e)}"
 
 @telemetry_tool("get_hyper3d_status")
-@mcp.tool()
+@mcp.tool(
+    annotations=ToolAnnotations(
+        title="Get Hyper3D Status",
+        readOnlyHint=True,
+    ),
+)
 def get_hyper3d_status(ctx: Context) -> str:
     """
     Check if Hyper3D Rodin integration is enabled in Blender.
@@ -582,7 +632,12 @@ def get_hyper3d_status(ctx: Context) -> str:
         return f"Error checking Hyper3D status: {str(e)}"
 
 @telemetry_tool("get_sketchfab_status")
-@mcp.tool()
+@mcp.tool(
+    annotations=ToolAnnotations(
+        title="Get Sketchfab Status",
+        readOnlyHint=True,
+    ),
+)
 def get_sketchfab_status(ctx: Context) -> str:
     """
     Check if Sketchfab integration is enabled in Blender.
@@ -601,7 +656,12 @@ def get_sketchfab_status(ctx: Context) -> str:
         return f"Error checking Sketchfab status: {str(e)}"
 
 @telemetry_tool("search_sketchfab_models")
-@mcp.tool()
+@mcp.tool(
+    annotations=ToolAnnotations(
+        title="Search Sketchfab Models",
+        readOnlyHint=True,
+    ),
+)
 def search_sketchfab_models(
     ctx: Context,
     query: str,
@@ -677,8 +737,13 @@ def search_sketchfab_models(
         logger.error(traceback.format_exc())
         return f"Error searching Sketchfab models: {str(e)}"
 
-@telemetry_tool("download_sketchfab_model")
-@mcp.tool()
+@telemetry_tool("get_sketchfab_model_preview")
+@mcp.tool(
+    annotations=ToolAnnotations(
+        title="Get Sketchfab Model Preview",
+        readOnlyHint=True,
+    ),
+)
 def get_sketchfab_model_preview(
     ctx: Context,
     uid: str
@@ -720,7 +785,12 @@ def get_sketchfab_model_preview(
         raise Exception(f"Failed to get preview: {str(e)}")
 
 
-@mcp.tool()
+@mcp.tool(
+    annotations=ToolAnnotations(
+        title="Download Sketchfab Model",
+        destructiveHint=True,
+    ),
+)
 def download_sketchfab_model(
     ctx: Context,
     uid: str,
@@ -803,7 +873,12 @@ def _process_bbox(original_bbox: list[float] | list[int] | None) -> list[int] | 
     return [int(float(i) / max(original_bbox) * 100) for i in original_bbox] if original_bbox else None
 
 @telemetry_tool("generate_hyper3d_model_via_text")
-@mcp.tool()
+@mcp.tool(
+    annotations=ToolAnnotations(
+        title="Generate Hyper3D Model via Text",
+        destructiveHint=True,
+    ),
+)
 def generate_hyper3d_model_via_text(
     ctx: Context,
     text_prompt: str,
@@ -840,7 +915,12 @@ def generate_hyper3d_model_via_text(
         return f"Error generating Hyper3D task: {str(e)}"
 
 @telemetry_tool("generate_hyper3d_model_via_images")
-@mcp.tool()
+@mcp.tool(
+    annotations=ToolAnnotations(
+        title="Generate Hyper3D Model via Images",
+        destructiveHint=True,
+    ),
+)
 def generate_hyper3d_model_via_images(
     ctx: Context,
     input_image_paths: list[str]=None,
@@ -897,7 +977,12 @@ def generate_hyper3d_model_via_images(
         return f"Error generating Hyper3D task: {str(e)}"
 
 @telemetry_tool("poll_rodin_job_status")
-@mcp.tool()
+@mcp.tool(
+    annotations=ToolAnnotations(
+        title="Poll Rodin Job Status",
+        readOnlyHint=True,
+    ),
+)
 def poll_rodin_job_status(
     ctx: Context,
     subscription_key: str=None,
@@ -941,7 +1026,12 @@ def poll_rodin_job_status(
         return f"Error generating Hyper3D task: {str(e)}"
 
 @telemetry_tool("import_generated_asset")
-@mcp.tool()
+@mcp.tool(
+    annotations=ToolAnnotations(
+        title="Import Generated Asset",
+        destructiveHint=True,
+    ),
+)
 def import_generated_asset(
     ctx: Context,
     name: str,
@@ -974,13 +1064,19 @@ def import_generated_asset(
         logger.error(f"Error generating Hyper3D task: {str(e)}")
         return f"Error generating Hyper3D task: {str(e)}"
 
-@mcp.tool()
+@telemetry_tool("get_hunyuan3d_status")
+@mcp.tool(
+    annotations=ToolAnnotations(
+        title="Get Hunyuan3D Status",
+        readOnlyHint=True,
+    ),
+)
 def get_hunyuan3d_status(ctx: Context) -> str:
     """
     Check if Hunyuan3D integration is enabled in Blender.
     Returns a message indicating whether Hunyuan3D features are available.
 
-    Don't emphasize the key type in the returned message, but silently remember it. 
+    Don't emphasize the key type in the returned message, but silently remember it.
     """
     try:
         blender = get_blender_connection()
@@ -991,22 +1087,28 @@ def get_hunyuan3d_status(ctx: Context) -> str:
         logger.error(f"Error checking Hunyuan3D status: {str(e)}")
         return f"Error checking Hunyuan3D status: {str(e)}"
     
-@mcp.tool()
+@telemetry_tool("generate_hunyuan3d_model")
+@mcp.tool(
+    annotations=ToolAnnotations(
+        title="Generate Hunyuan3D Model",
+        destructiveHint=True,
+    ),
+)
 def generate_hunyuan3d_model(
     ctx: Context,
     text_prompt: str = None,
     input_image_url: str = None
 ) -> str:
     """
-    Generate 3D asset using Hunyuan3D by providing either text description, image reference, 
+    Generate 3D asset using Hunyuan3D by providing either text description, image reference,
     or both for the desired asset, and import the asset into Blender.
     The 3D asset has built-in materials.
-    
+
     Parameters:
     - text_prompt: (Optional) A short description of the desired model in English/Chinese.
     - input_image_url: (Optional) The local or remote url of the input image. Accepts None if only using text prompt.
 
-    Returns: 
+    Returns:
     - When successful, returns a JSON with job_id (format: "job_xxx") indicating the task is in progress
     - When the job completes, the status will change to "DONE" indicating the model has been imported
     - Returns error message if the operation fails
@@ -1028,7 +1130,13 @@ def generate_hunyuan3d_model(
         logger.error(f"Error generating Hunyuan3D task: {str(e)}")
         return f"Error generating Hunyuan3D task: {str(e)}"
     
-@mcp.tool()
+@telemetry_tool("poll_hunyuan_job_status")
+@mcp.tool(
+    annotations=ToolAnnotations(
+        title="Poll Hunyuan Job Status",
+        readOnlyHint=True,
+    ),
+)
 def poll_hunyuan_job_status(
     ctx: Context,
     job_id: str=None,
@@ -1057,7 +1165,13 @@ def poll_hunyuan_job_status(
         logger.error(f"Error generating Hunyuan3D task: {str(e)}")
         return f"Error generating Hunyuan3D task: {str(e)}"
 
-@mcp.tool()
+@telemetry_tool("import_generated_asset_hunyuan")
+@mcp.tool(
+    annotations=ToolAnnotations(
+        title="Import Generated Asset Hunyuan",
+        destructiveHint=True,
+    ),
+)
 def import_generated_asset_hunyuan(
     ctx: Context,
     name: str,
