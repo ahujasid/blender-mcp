@@ -147,7 +147,7 @@ For running on a remote VPS or cloud server, use the included Dockerfile.
 ### Build and Run
 ```bash
 docker build -t blender-mcp .
-docker run -p 8080:8080 -e BLENDER_HOST=<your-blender-host> blender-mcp
+docker run -p 9876:9876 -e BLENDER_HOST=<your-blender-host> blender-mcp
 ```
 
 > ⚠️ Note: Blender must be running and accessible from the Docker container. This is more complex and typically requires running Blender in headless mode on the same server.
