@@ -26,7 +26,7 @@ ENV BLENDER_HOST=host.docker.internal
 ENV BLENDER_PORT=9876
 
 # Expose the MCP server port
-EXPOSE 8080
+EXPOSE 9876
 
 # Run the MCP server
 CMD ["uv", "run", "blender-mcp"]
