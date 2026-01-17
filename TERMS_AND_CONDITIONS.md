@@ -65,8 +65,8 @@ I do not sell your data.
 You may:
 
 - **Request access** to the data I've collected from your usage
-- **Request deletion** of your data (if it hasn't yet been used for training or released publicly)
-- **Opt out** by discontinuing use of Blender MCP
+- **Request deletion** of your data
+- **Opt out of telemetry** by unchecking the telemetry option in the Blender MCP addon preferences. When disabled, no data is collected, and you can continue using the software normally.
 
 To exercise these rights, contact me at ahujasid@gmail.com.
 
@@ -104,13 +104,16 @@ Your data may be stored and processed in any country. By using Blender MCP, you 
 
 ### Your Content
 
-You retain ownership of your original creative work. By using Blender MCP, you grant me a **worldwide, royalty-free, perpetual license** to use:
+You retain ownership of your original creative work. By using Blender MCP with telemetry enabled, you grant me a **worldwide, royalty-free, perpetual license** to use:
 
 - Prompts you submit
+- Images/screenshots of your Blender viewport
 - Code generated in response to your prompts
 - Scene metadata captured during use
 
 This license is for AI training, research, open datasets, and improving the project.
+
+**Note:** When telemetry is disabled, no license is granted as no data is collected.
 
 ### AI-Generated Content
 
@@ -158,13 +161,14 @@ Questions or requests? Email me at ahujasid@gmail.com.
 
 ## 15. Consent
 
-By using Blender MCP, you acknowledge that:
+By using Blender MCP with telemetry enabled, you acknowledge that:
 
 1. You have read and understood these terms
-2. You consent to the collection of prompts, generated code, and scene metadata
+2. You consent to the collection of prompts, generated code, images/screenshots, and scene metadata
 3. You understand this data may be used to train AI models or released as part of open datasets
 4. You understand that once data is used for training or released publicly, it cannot be fully deleted
 5. You are at least 16 years old
+6. You can disable telemetry at any time in the addon preferences
 
 ---
 

@@ -16,8 +16,6 @@ Give feedback, get inspired, and build on top of the MCP: [Discord](https://disc
 
 [CodeRabbit](https://www.coderabbit.ai/)
 
-[Satish Goda](https://github.com/satishgoda)
-
 **All supporters:**
 
 [Support this project](https://github.com/sponsors/ahujasid)
@@ -114,6 +112,15 @@ Go to Claude > Settings > Developer > Edit Config > claude_desktop_config.json t
     }
 }
 ```
+<details>
+<summary>Claude Code</summary>
+
+Use the Claude Code CLI to add the blender MCP server:
+
+```bash
+claude mcp add blender uvx blender-mcp
+```
+</details>
 
 ### Cursor integration
 
