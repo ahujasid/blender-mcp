@@ -62,6 +62,10 @@ The system consists of two main components:
 - Python 3.10 or newer
 - uv package manager: 
 
+**If you're on Linux, please install uv as**
+```bash
+curl -LsSf https://astral.sh/uv/install.sh | sh
+```
 **If you're on Mac, please install uv as**
 ```bash
 brew install uv
@@ -121,6 +125,17 @@ Use the Claude Code CLI to add the blender MCP server:
 claude mcp add blender uvx blender-mcp
 ```
 </details>
+
+### ChatMCP integration
+
+- Server type : STDIO
+- Command : uvx
+- Arguments : blender-mcp
+- Environment variables:
+```bash
+BLENDER_HOST=localhost
+BLENDER_PORT=9876
+```
 
 ### Cursor integration
 
