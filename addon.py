@@ -603,7 +603,34 @@ class BlenderMCPServer:
                                     # Download the file
                                     response = requests.get(file_url, headers=REQ_HEADERS)
                                     if response.status_code == 200:
-                                        tmp_file.write(response.content)
+                                        # Verify file integrity with checksum
+                                        content = response.content
+                                        
+                                        # Check if integrity verification metadata is available
+                                        if 'checksum' in file_info and 'algorithm' in file_info:
+                                            import hashlib
+                                            algorithm = file_info['algorithm']
+                                            expected_checksum = file_info['checksum']
+                                            
+                                            # Compute actual checksum
+                                            try:
+                                                hash_obj = hashlib.new(algorithm)
+                                                hash_obj.update(content)
+                                                actual_checksum = hash_obj.hexdigest()
+                                                
+                                                # Verify checksum matches
+                                                if actual_checksum != expected_checksum:
+                                                    raise ValueError(f"Integrity check failed for {map_type}: checksum mismatch (expected: {expected_checksum}, got: {actual_checksum})")
+                                            except ValueError as e:
+                                                raise e
+                                            except Exception as e:
+                                                raise ValueError(f"Failed to verify file integrity: {str(e)}")
+                                        else:
+                                            # Log warning if no checksum available (optional: could make this mandatory)
+                                            import logging
+                                            logging.warning(f"No integrity checksum available for {map_type} - proceeding without verification. Consider adding checksum validation for enhanced security.")
+                                        
+                                        tmp_file.write(content)
                                         tmp_path = tmp_file.name
 
                                         # Load image from temporary file
