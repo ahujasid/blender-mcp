@@ -1341,10 +1341,19 @@ def import_kenney_asset(
 @mcp.prompt()
 def asset_creation_strategy() -> str:
     """Defines the preferred strategy for creating assets in Blender"""
-    return """When creating 3D content in Blender, always start by checking if integrations are available:
+    return """When creating 3D content in Blender:
+
+    IMPORTANT - EXPLICIT USER REQUESTS TAKE PRIORITY:
+    If the user explicitly requests a specific asset source, use it DIRECTLY:
+    - "Using Kenney assets..." → Go straight to get_kenney_status(), then Kenney tools
+    - "Using PolyHaven..." → Go straight to get_polyhaven_status(), then PolyHaven tools
+    - "Using Sketchfab..." → Go straight to get_sketchfab_status(), then Sketchfab tools
+    - "Generate with Hyper3D..." → Go straight to get_hyper3d_status(), then Hyper3D tools
+    Do NOT check other integrations when the user specifies one.
 
     0. Before anything, always check the scene from get_scene_info()
-    1. First use the following tools to verify if the following integrations are enabled:
+
+    1. If NO specific integration is requested, check available integrations:
         1. PolyHaven
             Use get_polyhaven_status() to verify its status
             If PolyHaven is enabled:
@@ -1570,6 +1579,8 @@ def asset_creation_strategy() -> str:
         - Items have right spatial relationship.
 
     4. Recommended asset source priority:
+        - FIRST: If user explicitly names an integration ("Using Kenney...", "with PolyHaven..."),
+          use ONLY that integration - do not check or suggest others
         - For game prototyping/modular building: First try Kenney (if available)
         - For specific existing objects: First try Sketchfab, then PolyHaven
         - For generic objects/furniture: First try PolyHaven, then Sketchfab
