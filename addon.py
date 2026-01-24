@@ -54,6 +54,7 @@ KENNEY_CATEGORY_PATTERNS = {
 
 # Theme-to-pack mapping for curated recommendations
 KENNEY_THEME_PACKS = {
+    # === THEMES ===
     'medieval': ['fantasy-town-kit', 'castle-kit', 'retro-medieval-kit'],
     'fantasy': ['fantasy-town-kit', 'castle-kit', 'nature-kit'],
     'nature': ['nature-kit'],
@@ -76,8 +77,34 @@ KENNEY_THEME_PACKS = {
     'racing': ['racing-kit', 'car-kit'],
     'interior': ['furniture-kit', 'food-kit'],
     'furniture': ['furniture-kit'],
-    'tower-defense': ['tower-defense-kit'],
+    # === GAME MECHANICS ===
     'platformer': ['platformer-kit'],
+    'sidescroller': ['platformer-kit'],
+    'jumping': ['platformer-kit'],
+    'tower-defense': ['tower-defense-kit'],
+    'td': ['tower-defense-kit'],
+    'defense': ['tower-defense-kit'],
+    'strategy': ['tower-defense-kit', 'hexagon-kit'],
+    'hexagon': ['hexagon-kit'],
+    'hex': ['hexagon-kit'],
+    'board-game': ['hexagon-kit'],
+    'tactics': ['hexagon-kit'],
+    'turnbased': ['hexagon-kit'],
+    # === STYLE/UTILITY ===
+    'prototype': ['prototype-kit'],
+    'blockout': ['prototype-kit'],
+    'greybox': ['prototype-kit'],
+    'placeholder': ['prototype-kit'],
+    'minigolf': ['minigolf-kit'],
+    'golf': ['minigolf-kit'],
+    'coaster': ['coaster-kit'],
+    'rollercoaster': ['coaster-kit'],
+    'themepark': ['coaster-kit'],
+    'conveyor': ['conveyor-kit'],
+    'factory': ['conveyor-kit'],
+    'automation': ['conveyor-kit'],
+    'holiday': ['holiday-kit'],
+    'christmas': ['holiday-kit'],
 }
 
 class BlenderMCPServer:

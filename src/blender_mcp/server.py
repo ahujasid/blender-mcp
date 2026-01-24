@@ -1416,8 +1416,9 @@ def asset_creation_strategy() -> str:
             - Assets are low-poly and optimized for games
             - Packs are organized by THEME - recommend appropriate packs first
 
-            PACK SELECTION BY THEME:
-            Analyze the user's prompt and recommend packs from their installed collection:
+            PACK SELECTION - Three categories to consider:
+
+            1. THEME PACKS (visual style/setting):
             - Medieval/Fantasy (villages, castles, RPG): Fantasy Town Kit, Castle Kit
             - Nature/Outdoor (forests, landscapes): Nature Kit
             - Sci-Fi/Space (spaceports, futuristic): Space Kit, Space Station Kit
@@ -1427,9 +1428,26 @@ def asset_creation_strategy() -> str:
             - Vehicles: Car Kit, Racing Kit, Train Kit
             - Interior: Furniture Kit, Food Kit
 
-            ALWAYS check available packs with get_kenney_categories() first, then suggest
-            the best matching pack(s) for the user's request. If multiple packs fit,
-            mention the options and recommend the best match.
+            2. GAME MECHANIC PACKS (gameplay-specific assets):
+            - Platformer Kit: Platforms, obstacles, collectibles, jump pads - for side-scrollers
+            - Tower Defense Kit: Towers, paths, bases, enemies - for TD/strategy games
+            - Hexagon Kit: Hex tiles, terrain types - for turn-based strategy, board games, tactics
+            - Minigolf Kit: Holes, obstacles, ramps - for golf/minigolf games
+
+            3. STYLE/UTILITY PACKS (rapid prototyping):
+            - Prototype Kit: Simple colored blocks for greyboxing/blockout - use when
+              user wants quick placeholder geometry or "prototype" style
+            - Coaster Kit: Track pieces, supports, carts - for roller coasters, theme parks
+            - Conveyor Kit: Belts, machinery, containers - for factory/automation scenes
+            - Holiday Kit: Seasonal decorations, gifts - for festive scenes
+
+            PACK SELECTION STRATEGY:
+            - Check user's prompt for BOTH theme AND game mechanic keywords
+            - A "fantasy tower defense" prompt → Fantasy Town Kit + Tower Defense Kit
+            - A "prototype platformer level" → Prototype Kit + Platformer Kit
+            - An "island" with no game type → Theme packs only (Nature Kit, Fantasy Town Kit)
+            - ALWAYS check available packs with get_kenney_categories() first
+            - Suggest best matching pack(s) and offer alternatives if multiple fit
 
             MODULAR BUILDING APPROACH (Think LEGO blocks):
             Kenney assets are designed to snap together. Treat them as building blocks, not standalone objects.
