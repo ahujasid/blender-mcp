@@ -1471,21 +1471,78 @@ def asset_creation_strategy() -> str:
             6. Props: Scatter barrels, crates, signs for detail
 
             SPATIAL CONNECTIVITY:
-            - DEFAULT: Create connected, traversable environments via ground planes, paths, stairs, bridges
-            - OVERRIDE: If user explicitly requests floating/disconnected elements, respect that artistic intent
-            - Use architectural pieces (stairs, paths, slopes) for vertical transitions between tiers
-            - Align assets using world_bounding_box for precise placement
+            Distinguish between "floating IN space" vs "floating APART":
+
+            - FLOATING IN SPACE: A structure suspended in the sky (like a floating island)
+              but internally connected. The island floats, but its tiers/areas connect via
+              paths, stairs, bridges. This is the DEFAULT for environments/dioramas.
+
+            - FLOATING APART: Intentionally separate elements orbiting or drifting nearby.
+              Examples: "floating rock fragments", "drifting clouds", "orbiting debris"
+              These are SATELLITE ELEMENTS - separate from the main structure by design.
+
+            Rules:
+            - Main environment/landmass: Always connected (paths, stairs, bridges between areas)
+            - Satellite elements (rocks, clouds, debris): Separate, positioned around the main structure
+            - If ambiguous, ask: "Should the tiers be connected walkable areas, or separate floating pieces?"
+            - Use architectural pieces (stairs, paths, slopes) for vertical transitions within main structure
+
+            ZONE-BASED KIT SELECTION:
+            For scenes with distinct landscape areas, use DIFFERENT KITS per zone:
+
+            Example: "floating island with meadow, training grounds, and cliff tower"
+            - Bottom meadow zone: Nature Kit (grass, flowers, small rocks, peaceful plants)
+            - Middle training zone: Fantasy Town Kit (wooden posts, targets) + Nature Kit (terrain)
+            - Top cliff zone: Castle Kit (stone tower) + Nature Kit (cliff rocks)
+            - Satellite elements: Nature Kit (floating rocks), simple mesh (clouds)
+
+            When decomposing, identify distinct zones and assign appropriate kits to each.
 
             SCENE DECOMPOSITION EXAMPLE:
-            Request: "floating island with three connected tiers, fantasy style"
-            Pack selection: Fantasy Town Kit + Nature Kit (if available)
+            Request: "floating island, fantasy sky realm, three connected tiers with meadow,
+                      training grounds, cliff tower. Floating rocks and clouds nearby."
+
+            Analysis:
+            - Main structure: One floating island (internally connected) = FLOATING IN SPACE
+            - Satellite elements: Rocks + clouds around it = FLOATING APART
+
+            Pack selection by zone:
+            - Meadow (bottom): Nature Kit - grass, flowers, shrine stones, peaceful trees
+            - Training grounds (middle): Fantasy Town Kit - wooden posts, targets, fences
+            - Cliff/Tower (top): Castle Kit or Fantasy Town Kit - stone tower, battlements
+            - Floating rocks: Nature Kit - rock assets, scaled and rotated, scattered around
+            - Clouds: Simple mesh or particle system (no Kenney asset exists)
+
             Decomposition:
-            - Base tier: Large ground platform + edge rocks (Nature Kit)
-            - Middle tier: Medium platform + stairs connecting to base
-            - Top tier: Small platform + stairs from middle + structure (Fantasy Town Kit tower)
-            - Connections: Stairs between tiers, winding paths
-            - Nature: Trees on edges, plants scattered (Nature Kit)
-            - Props: Barrels, crates near structures (Fantasy Town Kit)
+            - Base tier: Large ground platform + Nature Kit meadow assets + stone circle shrine
+            - Middle tier: Medium platform + STAIRS to base + Fantasy Town Kit training posts
+            - Top tier: Small cliff platform + STAIRS from middle + Castle Kit tower + thermal vents
+            - Connections: Winding PATH between areas on each tier
+            - Satellite rocks: Nature Kit rocks placed AROUND (not connected to) main island
+            - Clouds: Create simple white meshes or skip if no suitable asset
+
+            MISSING ASSET STRATEGY:
+            When a requested element doesn't exist in available Kenney packs:
+
+            1. SUBSTITUTE: Find the closest Kenney asset and adapt it
+               - "shrine" → use stone/rock arrangements from Nature Kit
+               - "thermal vent" → use chimney from Fantasy Town Kit + particle effect
+
+            2. COMBINE: Merge multiple Kenney assets via Python code
+               - Complex structure → combine walls + roof + props programmatically
+
+            3. GENERATE (with caveats): Use Hyper3D/Hunyuan3D with style prompt
+               - Prompt: "low-poly, flat colors, simple geometry, game asset style"
+               - WARNING: May not perfectly match Kenney aesthetic (different poly count,
+                 shading, proportions). Inform user: "Generated asset may differ in style"
+               - Best for: Unique items that have no Kenney equivalent
+
+            4. PRIMITIVE FALLBACK: Create simple colored mesh via execute_code
+               - Matches Kenney's blocky aesthetic better than AI generation
+               - Good for: Simple shapes like platforms, ramps, basic props
+
+            5. SKIP & NOTE: If non-essential, note it for user to add later
+               - "Clouds not available in Kenney packs - consider adding manually or via particles"
 
             POST-BUILD ENHANCEMENTS (Selection/Interactivity - Phase 2):
             After the main scene is complete, add interactive highlighting if requested:
