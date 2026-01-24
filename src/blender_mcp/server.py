@@ -1170,6 +1170,9 @@ def browse_kenney_pack(
     - category: Optional category filter (e.g., 'walls', 'props', 'nature')
 
     Returns a list of assets organized by category, or filtered to a specific category.
+
+    Usage tip: Browse by category in build order - start with 'floors', then 'walls',
+    then 'roofs', then 'architectural', then 'nature' and 'props'.
     """
     try:
         blender = get_blender_connection()
@@ -1226,6 +1229,12 @@ def search_kenney_assets(
     - limit: Maximum results to return (default 20)
 
     Returns matching assets with relevance scores and file paths.
+
+    Search strategy for modular building:
+    - Search foundation pieces first: 'floor', 'ground', 'tile', 'platform'
+    - Search structural pieces: 'wall', 'roof', 'door', 'window', 'stairs'
+    - Search connectors: 'path', 'bridge', 'stairs', 'slope'
+    - Search decoration last: 'tree', 'rock', 'barrel', 'crate'
     """
     try:
         blender = get_blender_connection()
@@ -1283,6 +1292,13 @@ def import_kenney_asset(
     - name: Optional custom name for the imported object
 
     Returns information about the imported object including dimensions and bounding box.
+
+    Modular building tips:
+    - Use returned bounding box to calculate precise adjacent placement
+    - For walls: align along X or Y axis, offset by wall width to connect
+    - For floors: tile by offsetting X/Y by floor dimensions
+    - Check scale consistency across assets from same pack
+    - First import establishes scale baseline - match subsequent imports
     """
     try:
         blender = get_blender_connection()
@@ -1397,20 +1413,82 @@ def asset_creation_strategy() -> str:
             Use get_kenney_status() to verify its status
             If Kenney is enabled:
             - Kenney assets are LOCAL files - no API key or download needed
-            - Great for game prototyping with modular building pieces
-            - Available themes: medieval/fantasy, nature, vehicles, sci-fi, furniture
-            - Assets are typically low-poly and optimized for games
+            - Assets are low-poly and optimized for games
+            - Packs are organized by THEME - recommend appropriate packs first
+
+            PACK SELECTION BY THEME:
+            Analyze the user's prompt and recommend packs from their installed collection:
+            - Medieval/Fantasy (villages, castles, RPG): Fantasy Town Kit, Castle Kit
+            - Nature/Outdoor (forests, landscapes): Nature Kit
+            - Sci-Fi/Space (spaceports, futuristic): Space Kit, Space Station Kit
+            - Urban/Modern (cities, towns): City Kit variants, Modular Buildings
+            - Nautical/Pirate (ships, islands): Pirate Kit, Watercraft Pack
+            - Spooky (graveyards, halloween): Graveyard Kit
+            - Vehicles: Car Kit, Racing Kit, Train Kit
+            - Interior: Furniture Kit, Food Kit
+
+            ALWAYS check available packs with get_kenney_categories() first, then suggest
+            the best matching pack(s) for the user's request. If multiple packs fit,
+            mention the options and recommend the best match.
+
+            MODULAR BUILDING APPROACH (Think LEGO blocks):
+            Kenney assets are designed to snap together. Treat them as building blocks, not standalone objects.
+
+            Categories and their build roles:
+            - floors/ground: Foundation layer - place FIRST to establish build area
+            - walls/fences: Perimeter and room division - connect to floors
+            - roofs: Capping structures - place AFTER walls are positioned
+            - architectural (doors, windows, stairs, pillars): Connectors between elements
+            - structures (houses, towers, castles): Pre-built combinations
+            - nature (trees, rocks, plants): Environment decoration - add LAST for polish
+            - props (barrels, crates, signs): Scene detail - add LAST for interest
+            - water (fountains, wells): Feature elements - integrate with floors
+
+            BUILD ORDER:
+            1. Foundation: Import floor/ground tiles to establish base area
+            2. Structures: Place major buildings or wall layouts
+            3. Connectors: Add stairs, doors, archways to link areas
+            4. Roofs: Cap structures after walls are complete
+            5. Nature: Add trees, rocks, plants for environment
+            6. Props: Scatter barrels, crates, signs for detail
+
+            SPATIAL CONNECTIVITY:
+            - DEFAULT: Create connected, traversable environments via ground planes, paths, stairs, bridges
+            - OVERRIDE: If user explicitly requests floating/disconnected elements, respect that artistic intent
+            - Use architectural pieces (stairs, paths, slopes) for vertical transitions between tiers
+            - Align assets using world_bounding_box for precise placement
+
+            SCENE DECOMPOSITION EXAMPLE:
+            Request: "floating island with three connected tiers, fantasy style"
+            Pack selection: Fantasy Town Kit + Nature Kit (if available)
+            Decomposition:
+            - Base tier: Large ground platform + edge rocks (Nature Kit)
+            - Middle tier: Medium platform + stairs connecting to base
+            - Top tier: Small platform + stairs from middle + structure (Fantasy Town Kit tower)
+            - Connections: Stairs between tiers, winding paths
+            - Nature: Trees on edges, plants scattered (Nature Kit)
+            - Props: Barrels, crates near structures (Fantasy Town Kit)
+
+            POST-BUILD ENHANCEMENTS (Selection/Interactivity - Phase 2):
+            After the main scene is complete, add interactive highlighting if requested:
+            - Material changes: Modify object materials for hover/selected states
+            - Emission: Add glow effect via emission shader for highlights
+            - Outline meshes: Create slightly larger duplicate with inverted normals
+            - Point lights: Add colored lights near interactive objects
+            - Particles: Simple particle systems for magical/active effects
 
             Workflow:
-            1. Use get_kenney_categories() to see available packs
-            2. Use browse_kenney_pack() to explore assets in a specific pack
-            3. Use search_kenney_assets() to find specific assets by keyword
-            4. Use import_kenney_asset() to import assets into the scene
+            1. Use get_kenney_categories() to see available packs and match to user's theme
+            2. Suggest the best pack(s) for the request - let user confirm or choose alternatives
+            3. Use browse_kenney_pack() to explore assets by category within chosen pack
+            4. Use search_kenney_assets() to find specific assets by keyword
+            5. Use import_kenney_asset() with location to place assets precisely
 
             Tips:
-            - Kenney assets are modular - combine walls, floors, props to build scenes
-            - Assets may need scaling adjustment after import
-            - Perfect for quick game level prototyping
+            - Check asset dimensions after first import to calibrate scale
+            - Use bounding boxes to calculate precise placement offsets
+            - Duplicate imported assets via Python code rather than re-importing
+            - Mix packs when appropriate (e.g., Nature Kit trees + Fantasy Town Kit buildings)
 
     3. Always check the world_bounding_box for each item so that:
         - Ensure that all objects that should not be clipping are not clipping.

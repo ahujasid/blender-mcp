@@ -52,6 +52,34 @@ KENNEY_CATEGORY_PATTERNS = {
     'structures': [r'^windmill', r'^watermill', r'^tower', r'^castle', r'^house', r'^building'],
 }
 
+# Theme-to-pack mapping for curated recommendations
+KENNEY_THEME_PACKS = {
+    'medieval': ['fantasy-town-kit', 'castle-kit', 'retro-medieval-kit'],
+    'fantasy': ['fantasy-town-kit', 'castle-kit', 'nature-kit'],
+    'nature': ['nature-kit'],
+    'forest': ['nature-kit'],
+    'outdoor': ['nature-kit'],
+    'space': ['space-kit', 'space-station-kit'],
+    'scifi': ['space-kit', 'space-station-kit'],
+    'futuristic': ['space-kit', 'space-station-kit'],
+    'city': ['city-kit-suburban', 'city-kit-commercial', 'city-kit-industrial', 'modular-buildings'],
+    'urban': ['city-kit-suburban', 'city-kit-commercial', 'modular-buildings', 'retro-urban-kit'],
+    'town': ['fantasy-town-kit', 'city-kit-suburban'],
+    'pirate': ['pirate-kit', 'watercraft-pack', 'nature-kit'],
+    'nautical': ['pirate-kit', 'watercraft-pack'],
+    'ocean': ['pirate-kit', 'watercraft-pack', 'nature-kit'],
+    'graveyard': ['graveyard-kit'],
+    'spooky': ['graveyard-kit'],
+    'horror': ['graveyard-kit'],
+    'vehicles': ['car-kit', 'racing-kit', 'train-kit', 'watercraft-pack'],
+    'cars': ['car-kit', 'racing-kit', 'toy-car-kit'],
+    'racing': ['racing-kit', 'car-kit'],
+    'interior': ['furniture-kit', 'food-kit'],
+    'furniture': ['furniture-kit'],
+    'tower-defense': ['tower-defense-kit'],
+    'platformer': ['platformer-kit'],
+}
+
 class BlenderMCPServer:
     def __init__(self, host='localhost', port=9876):
         self.host = host
