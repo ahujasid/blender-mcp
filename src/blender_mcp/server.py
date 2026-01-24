@@ -1085,6 +1085,242 @@ def import_generated_asset_hunyuan(
         logger.error(f"Error generating Hunyuan3D task: {str(e)}")
         return f"Error generating Hunyuan3D task: {str(e)}"
 
+# =========================================================================
+# KENNEY INTEGRATION
+# =========================================================================
+
+@telemetry_tool("get_kenney_status")
+@mcp.tool()
+def get_kenney_status(ctx: Context) -> str:
+    """
+    Check if Kenney integration is enabled in Blender.
+    Returns a message indicating whether local Kenney assets are available.
+
+    Kenney.nl provides free game assets perfect for prototyping:
+    - Low-poly 3D models in various themes (medieval, sci-fi, nature, vehicles)
+    - Modular building pieces for quick scene construction
+    - No API key required - just point to your downloaded asset packs
+    """
+    try:
+        blender = get_blender_connection()
+        result = blender.send_command("get_kenney_status")
+        enabled = result.get("enabled", False)
+        message = result.get("message", "")
+        if enabled:
+            pack_count = result.get("pack_count", 0)
+            asset_count = result.get("asset_count", 0)
+            message += f"\nKenney is great for game prototyping with {pack_count} packs and {asset_count} assets available."
+        return message
+    except Exception as e:
+        logger.error(f"Error checking Kenney status: {str(e)}")
+        return f"Error checking Kenney status: {str(e)}"
+
+@telemetry_tool("get_kenney_categories")
+@mcp.tool()
+def get_kenney_categories(ctx: Context) -> str:
+    """
+    Get available Kenney asset packs and their categories.
+
+    Returns a list of all installed Kenney asset packs with:
+    - Pack name and ID
+    - Number of 3D assets in each pack
+    - Available file formats (glb, obj, fbx, etc.)
+    - Asset categories within each pack (walls, props, nature, etc.)
+
+    Use this to discover what assets are available before searching or importing.
+    """
+    try:
+        blender = get_blender_connection()
+        result = blender.send_command("get_kenney_categories")
+
+        if "error" in result:
+            return f"Error: {result['error']}"
+
+        packs = result.get("packs", [])
+        if not packs:
+            return "No Kenney asset packs found. Make sure your Kenney assets path is configured correctly."
+
+        formatted_output = f"Found {len(packs)} Kenney asset packs:\n\n"
+
+        for pack in packs:
+            formatted_output += f"- {pack['name']} (ID: {pack['id']})\n"
+            formatted_output += f"  Assets: {pack['asset_count']}, Formats: {', '.join(pack['formats'])}\n"
+            if pack.get('categories'):
+                cats = [f"{k}: {v}" for k, v in pack['categories'].items()]
+                formatted_output += f"  Categories: {', '.join(cats)}\n"
+            formatted_output += "\n"
+
+        return formatted_output
+    except Exception as e:
+        logger.error(f"Error getting Kenney categories: {str(e)}")
+        return f"Error getting Kenney categories: {str(e)}"
+
+@telemetry_tool("browse_kenney_pack")
+@mcp.tool()
+def browse_kenney_pack(
+    ctx: Context,
+    pack_id: str,
+    category: str = None
+) -> str:
+    """
+    Browse assets in a specific Kenney pack.
+
+    Parameters:
+    - pack_id: The ID of the pack to browse (e.g., 'fantasy-town-kit', 'nature-kit')
+    - category: Optional category filter (e.g., 'walls', 'props', 'nature')
+
+    Returns a list of assets organized by category, or filtered to a specific category.
+    """
+    try:
+        blender = get_blender_connection()
+        result = blender.send_command("browse_kenney_pack", {
+            "pack_id": pack_id,
+            "category": category
+        })
+
+        if "error" in result:
+            error_msg = f"Error: {result['error']}"
+            if "available_packs" in result:
+                error_msg += f"\nAvailable packs: {', '.join(result['available_packs'])}"
+            return error_msg
+
+        pack_name = result.get("pack_name", pack_id)
+
+        if category:
+            assets = result.get("assets", [])
+            return f"Pack '{pack_name}' - Category '{category}':\n\n" + "\n".join(f"- {a}" for a in assets)
+
+        formatted_output = f"Pack '{pack_name}' ({result.get('total_assets', 0)} assets):\n\n"
+
+        categories = result.get("categories", {})
+        for cat_name, assets in sorted(categories.items()):
+            formatted_output += f"**{cat_name.title()}** ({len(assets)} assets):\n"
+            # Show first 10 assets per category
+            for asset in assets[:10]:
+                formatted_output += f"  - {asset}\n"
+            if len(assets) > 10:
+                formatted_output += f"  ... and {len(assets) - 10} more\n"
+            formatted_output += "\n"
+
+        return formatted_output
+    except Exception as e:
+        logger.error(f"Error browsing Kenney pack: {str(e)}")
+        return f"Error browsing Kenney pack: {str(e)}"
+
+@telemetry_tool("search_kenney_assets")
+@mcp.tool()
+def search_kenney_assets(
+    ctx: Context,
+    query: str,
+    pack_id: str = None,
+    category: str = None,
+    limit: int = 20
+) -> str:
+    """
+    Search Kenney assets using natural language query.
+
+    Parameters:
+    - query: Search terms (e.g., 'tree', 'wall stone', 'medieval house')
+    - pack_id: Optional - limit search to a specific pack
+    - category: Optional - filter by category (walls, props, nature, etc.)
+    - limit: Maximum results to return (default 20)
+
+    Returns matching assets with relevance scores and file paths.
+    """
+    try:
+        blender = get_blender_connection()
+        result = blender.send_command("search_kenney_assets", {
+            "query": query,
+            "pack_id": pack_id,
+            "category": category,
+            "limit": limit
+        })
+
+        if "error" in result:
+            return f"Error: {result['error']}"
+
+        results = result.get("results", [])
+        total = result.get("total_results", 0)
+
+        if not results:
+            return f"No assets found matching '{query}'"
+
+        formatted_output = f"Found {total} assets matching '{query}'"
+        if total > len(results):
+            formatted_output += f" (showing top {len(results)})"
+        formatted_output += ":\n\n"
+
+        for item in results:
+            formatted_output += f"- {item['asset']} (Pack: {item['pack_name']})\n"
+            formatted_output += f"  Category: {item['category']}, Tags: {', '.join(item['tags'][:5])}\n"
+            formatted_output += f"  Relevance: {item['relevance']}\n\n"
+
+        return formatted_output
+    except Exception as e:
+        logger.error(f"Error searching Kenney assets: {str(e)}")
+        return f"Error searching Kenney assets: {str(e)}"
+
+@telemetry_tool("import_kenney_asset")
+@mcp.tool()
+def import_kenney_asset(
+    ctx: Context,
+    pack_id: str,
+    asset: str,
+    location: List[float] = None,
+    rotation: List[float] = None,
+    scale: float = 1.0,
+    name: str = None
+) -> str:
+    """
+    Import a Kenney asset into the Blender scene.
+
+    Parameters:
+    - pack_id: The ID of the pack containing the asset
+    - asset: The filename of the asset to import (e.g., 'wall.glb', 'tree_oak.glb')
+    - location: Optional [x, y, z] position (default [0, 0, 0])
+    - rotation: Optional [x, y, z] rotation in radians (default [0, 0, 0])
+    - scale: Uniform scale factor (default 1.0)
+    - name: Optional custom name for the imported object
+
+    Returns information about the imported object including dimensions and bounding box.
+    """
+    try:
+        blender = get_blender_connection()
+
+        params = {
+            "pack_id": pack_id,
+            "asset": asset,
+            "scale": scale
+        }
+        if location:
+            params["location"] = location
+        if rotation:
+            params["rotation"] = rotation
+        if name:
+            params["name"] = name
+
+        result = blender.send_command("import_kenney_asset", params)
+
+        if "error" in result:
+            return f"Error: {result['error']}"
+
+        if result.get("success"):
+            output = f"Successfully imported '{result.get('asset')}' from {result.get('pack')}.\n"
+            output += f"Object name: {result.get('object_name')}\n"
+            output += f"Location: {result.get('location')}\n"
+            output += f"Dimensions: {result.get('dimensions')}\n"
+
+            if result.get("world_bounding_box"):
+                bbox = result["world_bounding_box"]
+                output += f"Bounding box: min={bbox[0]}, max={bbox[1]}\n"
+
+            return output
+        else:
+            return f"Failed to import asset: {result.get('message', 'Unknown error')}"
+    except Exception as e:
+        logger.error(f"Error importing Kenney asset: {str(e)}")
+        return f"Error importing Kenney asset: {str(e)}"
+
 
 @mcp.prompt()
 def asset_creation_strategy() -> str:
@@ -1156,12 +1392,32 @@ def asset_creation_strategy() -> str:
                             - Use generate_hunyuan3d_model if image (local or urls)  or text prompt is given and import the asset
 
                 You can reuse assets previous generated by running python code to duplicate the object, without creating another generation task.
+        5. Kenney
+            Kenney.nl provides free, low-poly game assets perfect for rapid prototyping.
+            Use get_kenney_status() to verify its status
+            If Kenney is enabled:
+            - Kenney assets are LOCAL files - no API key or download needed
+            - Great for game prototyping with modular building pieces
+            - Available themes: medieval/fantasy, nature, vehicles, sci-fi, furniture
+            - Assets are typically low-poly and optimized for games
+
+            Workflow:
+            1. Use get_kenney_categories() to see available packs
+            2. Use browse_kenney_pack() to explore assets in a specific pack
+            3. Use search_kenney_assets() to find specific assets by keyword
+            4. Use import_kenney_asset() to import assets into the scene
+
+            Tips:
+            - Kenney assets are modular - combine walls, floors, props to build scenes
+            - Assets may need scaling adjustment after import
+            - Perfect for quick game level prototyping
 
     3. Always check the world_bounding_box for each item so that:
         - Ensure that all objects that should not be clipping are not clipping.
         - Items have right spatial relationship.
-    
+
     4. Recommended asset source priority:
+        - For game prototyping/modular building: First try Kenney (if available)
         - For specific existing objects: First try Sketchfab, then PolyHaven
         - For generic objects/furniture: First try PolyHaven, then Sketchfab
         - For custom or unique items not available in libraries: Use Hyper3D Rodin or Hunyuan3D
@@ -1169,7 +1425,7 @@ def asset_creation_strategy() -> str:
         - For materials/textures: Use PolyHaven textures
 
     Only fall back to scripting when:
-    - PolyHaven, Sketchfab, Hyper3D, and Hunyuan3D are all disabled
+    - PolyHaven, Sketchfab, Hyper3D, Hunyuan3D, and Kenney are all disabled
     - A simple primitive is explicitly requested
     - No suitable asset exists in any of the libraries
     - Hyper3D Rodin or Hunyuan3D failed to generate the desired asset

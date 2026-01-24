@@ -36,6 +36,22 @@ RODIN_FREE_TRIAL_KEY = "k9TcfFoEhNd9cCPP2guHAHHHkctZHIRhZDywZ1euGUXwihbYLpOjQhof
 REQ_HEADERS = requests.utils.default_headers()
 REQ_HEADERS.update({"User-Agent": "blender-mcp"})
 
+# Kenney asset configuration
+KENNEY_MODEL_EXTENSIONS = {'.glb', '.gltf', '.obj', '.fbx', '.dae'}
+
+KENNEY_CATEGORY_PATTERNS = {
+    'walls': [r'^wall', r'^fence'],
+    'roofs': [r'^roof'],
+    'floors': [r'^floor', r'^tile', r'^ground', r'^path', r'^road'],
+    'nature': [r'^tree', r'^rock', r'^plant', r'^grass', r'^bush', r'^hedge', r'^flower'],
+    'props': [r'^cart', r'^barrel', r'^crate', r'^lantern', r'^banner', r'^stall', r'^sign', r'^bench'],
+    'architectural': [r'^door', r'^window', r'^stairs', r'^pillar', r'^arch', r'^chimney'],
+    'characters': [r'^character', r'^knight', r'^king', r'^person', r'^npc'],
+    'vehicles': [r'^vehicle', r'^car', r'^truck', r'^boat', r'^ship'],
+    'water': [r'^water', r'^fountain', r'^well', r'^pond'],
+    'structures': [r'^windmill', r'^watermill', r'^tower', r'^castle', r'^house', r'^building'],
+}
+
 class BlenderMCPServer:
     def __init__(self, host='localhost', port=9876):
         self.host = host
@@ -43,6 +59,7 @@ class BlenderMCPServer:
         self.running = False
         self.socket = None
         self.server_thread = None
+        self.kenney_index = {}  # Cache for Kenney asset index
 
     def start(self):
         if self.running:
@@ -213,6 +230,7 @@ class BlenderMCPServer:
             "get_hyper3d_status": self.get_hyper3d_status,
             "get_sketchfab_status": self.get_sketchfab_status,
             "get_hunyuan3d_status": self.get_hunyuan3d_status,
+            "get_kenney_status": self.get_kenney_status,
         }
 
         # Add Polyhaven handlers only if enabled
@@ -251,6 +269,16 @@ class BlenderMCPServer:
                 "import_generated_asset_hunyuan": self.import_generated_asset_hunyuan
             }
             handlers.update(hunyuan_handlers)
+
+        # Add Kenney handlers only if enabled
+        if bpy.context.scene.blendermcp_use_kenney:
+            kenney_handlers = {
+                "get_kenney_categories": self.get_kenney_categories,
+                "browse_kenney_pack": self.browse_kenney_pack,
+                "search_kenney_assets": self.search_kenney_assets,
+                "import_kenney_asset": self.import_kenney_asset,
+            }
+            handlers.update(kenney_handlers)
 
         handler = handlers.get(cmd_type)
         if handler:
@@ -2320,6 +2348,371 @@ class BlenderMCPServer:
                 print(f"Failed to clean up temporary directory {temp_dir}: {e}")
     #endregion
 
+    # =========================================================================
+    # KENNEY INTEGRATION
+    # =========================================================================
+
+    def _kenney_categorize_asset(self, filename):
+        """Determine category from Kenney asset filename patterns."""
+        from collections import defaultdict
+        name_lower = os.path.splitext(filename)[0].lower()
+
+        for category, patterns in KENNEY_CATEGORY_PATTERNS.items():
+            for pattern in patterns:
+                if re.search(pattern, name_lower):
+                    return category
+        return 'other'
+
+    def _kenney_generate_tags(self, filename, category):
+        """Generate searchable tags from Kenney asset filename."""
+        name = os.path.splitext(filename)[0]
+
+        # Split camelCase and underscores
+        words = re.findall(r'[A-Z]?[a-z]+|[A-Z]+(?=[A-Z]|$)', name)
+        tags = [w.lower() for w in words]
+        tags.append(category)
+
+        return list(set(tags))
+
+    def _kenney_format_pack_name(self, pack_id):
+        """Convert pack_id to human-readable name."""
+        name = re.sub(r'[-_]v?\d+\.?\d*$', '', pack_id)
+        name = re.sub(r'[-_]', ' ', name)
+        name = re.sub(r'kenney\s*', '', name, flags=re.IGNORECASE)
+        return name.title().strip() or pack_id
+
+    def _kenney_build_index(self, force=False):
+        """Build or return cached index of Kenney assets."""
+        from collections import defaultdict
+        kenney_path = bpy.context.scene.blendermcp_kenney_path
+
+        if not kenney_path or not os.path.exists(kenney_path):
+            return None
+
+        # Return cached if available and not forced
+        if self.kenney_index and not force:
+            return self.kenney_index
+
+        index = {
+            'base_path': kenney_path,
+            'packs': {}
+        }
+
+        # Scan all subdirectories as packs
+        for pack_name in os.listdir(kenney_path):
+            pack_path = os.path.join(kenney_path, pack_name)
+            if not os.path.isdir(pack_path) or pack_name.startswith('.'):
+                continue
+
+            pack = {
+                'id': pack_name,
+                'name': self._kenney_format_pack_name(pack_name),
+                'path': pack_path,
+                'assets': {},
+                'categories': defaultdict(list),
+                'formats': set()
+            }
+
+            # Walk directory to find 3D models
+            for root, dirs, files in os.walk(pack_path):
+                for filename in files:
+                    ext = os.path.splitext(filename)[1].lower()
+                    if ext in KENNEY_MODEL_EXTENSIONS:
+                        filepath = os.path.join(root, filename)
+                        rel_path = os.path.relpath(filepath, pack_path)
+
+                        category = self._kenney_categorize_asset(filename)
+                        tags = self._kenney_generate_tags(filename, category)
+
+                        pack['assets'][filename] = {
+                            'filename': filename,
+                            'path': rel_path,
+                            'full_path': filepath,
+                            'category': category,
+                            'format': ext[1:],
+                            'tags': tags
+                        }
+                        pack['categories'][category].append(filename)
+                        pack['formats'].add(ext)
+
+            # Only add packs with assets
+            if pack['assets']:
+                pack['formats'] = list(pack['formats'])
+                pack['categories'] = dict(pack['categories'])
+                index['packs'][pack_name] = pack
+
+        self.kenney_index = index
+        return index
+
+    def get_kenney_status(self):
+        """Check if Kenney integration is enabled and configured."""
+        if not bpy.context.scene.blendermcp_use_kenney:
+            return {
+                "enabled": False,
+                "message": """Kenney integration is currently disabled. To enable it:
+1. In the 3D Viewport, find the BlenderMCP panel in the sidebar (press N if hidden)
+2. Check the 'Use local Kenney assets' checkbox
+3. Set the path to your Kenney assets folder
+4. Restart the connection to Claude"""
+            }
+
+        kenney_path = bpy.context.scene.blendermcp_kenney_path
+        if not kenney_path:
+            return {
+                "enabled": False,
+                "message": """Kenney integration is enabled but no path is set. Please:
+1. Set the 'Kenney Assets Path' to your folder containing Kenney asset packs
+2. The folder should contain subfolders like 'fantasy-town-kit-1.0', 'carkit_v1.4', etc."""
+            }
+
+        if not os.path.exists(kenney_path):
+            return {
+                "enabled": False,
+                "message": f"Kenney assets path does not exist: {kenney_path}"
+            }
+
+        # Build index and return status
+        index = self._kenney_build_index()
+        if not index or not index['packs']:
+            return {
+                "enabled": False,
+                "message": f"No Kenney asset packs found in: {kenney_path}"
+            }
+
+        total_assets = sum(len(p['assets']) for p in index['packs'].values())
+
+        return {
+            "enabled": True,
+            "message": f"Kenney integration is enabled with {len(index['packs'])} packs and {total_assets} 3D assets.",
+            "pack_count": len(index['packs']),
+            "asset_count": total_assets,
+            "path": kenney_path
+        }
+
+    def get_kenney_categories(self):
+        """Get available Kenney asset packs and their categories."""
+        if not bpy.context.scene.blendermcp_use_kenney:
+            return {"error": "Kenney integration is disabled. Enable it in the BlenderMCP panel."}
+
+        index = self._kenney_build_index()
+        if not index:
+            return {"error": "Kenney assets path not configured or invalid."}
+
+        result = {"packs": []}
+
+        for pack_id, pack in sorted(index['packs'].items(), key=lambda x: len(x[1]['assets']), reverse=True):
+            result['packs'].append({
+                'id': pack_id,
+                'name': pack['name'],
+                'asset_count': len(pack['assets']),
+                'formats': pack['formats'],
+                'categories': {k: len(v) for k, v in pack['categories'].items()}
+            })
+
+        return result
+
+    def browse_kenney_pack(self, pack_id, category=None):
+        """Browse assets in a specific Kenney pack."""
+        if not bpy.context.scene.blendermcp_use_kenney:
+            return {"error": "Kenney integration is disabled."}
+
+        index = self._kenney_build_index()
+        if not index:
+            return {"error": "Kenney assets path not configured."}
+
+        # Find pack (try exact match, then partial)
+        pack = index['packs'].get(pack_id)
+        if not pack:
+            for pid, p in index['packs'].items():
+                if pack_id.lower() in pid.lower():
+                    pack = p
+                    break
+
+        if not pack:
+            return {
+                "error": f"Pack not found: {pack_id}",
+                "available_packs": list(index['packs'].keys())
+            }
+
+        # Filter by category if specified
+        if category:
+            assets = pack['categories'].get(category, [])
+            return {
+                "pack_id": pack['id'],
+                "pack_name": pack['name'],
+                "category": category,
+                "assets": sorted(assets)
+            }
+
+        return {
+            "pack_id": pack['id'],
+            "pack_name": pack['name'],
+            "total_assets": len(pack['assets']),
+            "categories": {k: sorted(v) for k, v in pack['categories'].items()}
+        }
+
+    def search_kenney_assets(self, query, pack_id=None, category=None, limit=20):
+        """Search Kenney assets using natural language query."""
+        if not bpy.context.scene.blendermcp_use_kenney:
+            return {"error": "Kenney integration is disabled."}
+
+        index = self._kenney_build_index()
+        if not index:
+            return {"error": "Kenney assets path not configured."}
+
+        # Tokenize query
+        tokens = [t.lower() for t in re.findall(r'\w+', query)]
+
+        results = []
+
+        # Determine which packs to search
+        if pack_id:
+            pack = index['packs'].get(pack_id)
+            if not pack:
+                for pid, p in index['packs'].items():
+                    if pack_id.lower() in pid.lower():
+                        pack = p
+                        break
+            packs = [pack] if pack else []
+        else:
+            packs = index['packs'].values()
+
+        for pack in packs:
+            if not pack:
+                continue
+
+            for asset in pack['assets'].values():
+                # Skip if category filter doesn't match
+                if category and asset['category'] != category:
+                    continue
+
+                # Calculate relevance score
+                score = 0
+                name_lower = asset['filename'].lower()
+
+                for token in tokens:
+                    if token in name_lower:
+                        score += 10
+                    if token in asset['tags']:
+                        score += 5
+                    if token in asset['category']:
+                        score += 3
+                    for tag in asset['tags']:
+                        if token in tag or tag in token:
+                            score += 1
+
+                if score > 0:
+                    results.append({
+                        'asset': asset['filename'],
+                        'pack_id': pack['id'],
+                        'pack_name': pack['name'],
+                        'path': asset['full_path'],
+                        'category': asset['category'],
+                        'relevance': score,
+                        'tags': asset['tags']
+                    })
+
+        results.sort(key=lambda x: x['relevance'], reverse=True)
+
+        return {
+            "query": query,
+            "total_results": len(results),
+            "results": results[:limit]
+        }
+
+    def import_kenney_asset(self, pack_id, asset, location=None, rotation=None, scale=1.0, name=None):
+        """Import a Kenney asset into the scene."""
+        if not bpy.context.scene.blendermcp_use_kenney:
+            return {"error": "Kenney integration is disabled."}
+
+        if location is None:
+            location = [0, 0, 0]
+        if rotation is None:
+            rotation = [0, 0, 0]
+
+        index = self._kenney_build_index()
+        if not index:
+            return {"error": "Kenney assets path not configured."}
+
+        # Find the pack
+        pack = index['packs'].get(pack_id)
+        if not pack:
+            for pid, p in index['packs'].items():
+                if pack_id.lower() in pid.lower():
+                    pack = p
+                    break
+
+        if not pack:
+            return {"error": f"Pack not found: {pack_id}"}
+
+        # Find the asset
+        asset_info = pack['assets'].get(asset)
+        if not asset_info:
+            asset_lower = asset.lower()
+            for asset_name, a in pack['assets'].items():
+                if asset_lower in asset_name.lower():
+                    asset_info = a
+                    break
+
+        if not asset_info:
+            return {"error": f"Asset not found: {asset} in pack {pack_id}"}
+
+        filepath = asset_info['full_path']
+        ext = os.path.splitext(filepath)[1].lower()
+
+        try:
+            if ext in ['.glb', '.gltf']:
+                bpy.ops.import_scene.gltf(filepath=filepath)
+            elif ext == '.obj':
+                if bpy.app.version >= (4, 0, 0):
+                    bpy.ops.wm.obj_import(filepath=filepath)
+                else:
+                    bpy.ops.import_scene.obj(filepath=filepath)
+            elif ext == '.fbx':
+                bpy.ops.import_scene.fbx(filepath=filepath)
+            elif ext == '.dae':
+                bpy.ops.wm.collada_import(filepath=filepath)
+            else:
+                return {"error": f"Unsupported format: {ext}"}
+
+            imported = bpy.context.selected_objects
+            if not imported:
+                return {"error": "No objects were imported"}
+
+            obj = imported[0]
+            obj.location = tuple(location)
+            obj.rotation_euler = tuple(rotation)
+            if isinstance(scale, (int, float)):
+                obj.scale = (scale, scale, scale)
+            else:
+                obj.scale = tuple(scale)
+
+            if name:
+                obj.name = name
+            else:
+                obj.name = os.path.splitext(asset)[0]
+
+            bpy.ops.object.select_all(action='DESELECT')
+
+            result = {
+                "success": True,
+                "object_name": obj.name,
+                "location": list(obj.location),
+                "dimensions": list(obj.dimensions),
+                "pack": pack['name'],
+                "asset": asset
+            }
+
+            # Add bounding box if it's a mesh
+            if obj.type == 'MESH':
+                result["world_bounding_box"] = self._get_aabb(obj)
+
+            return result
+
+        except Exception as e:
+            traceback.print_exc()
+            return {"error": f"Failed to import asset: {str(e)}"}
+
 # Blender Addon Preferences
 class BLENDERMCP_AddonPreferences(bpy.types.AddonPreferences):
     bl_idname = __name__
@@ -2392,7 +2785,22 @@ class BLENDERMCP_PT_Panel(bpy.types.Panel):
                 layout.prop(scene, "blendermcp_hunyuan3d_num_inference_steps", text="Number of Inference Steps")
                 layout.prop(scene, "blendermcp_hunyuan3d_guidance_scale", text="Guidance Scale")
                 layout.prop(scene, "blendermcp_hunyuan3d_texture", text="Generate Texture")
-        
+
+        layout.separator()
+        layout.prop(scene, "blendermcp_use_kenney", text="Use local Kenney assets")
+        if scene.blendermcp_use_kenney:
+            layout.prop(scene, "blendermcp_kenney_path", text="Assets Path")
+            # Show pack count if path is valid
+            kenney_path = scene.blendermcp_kenney_path
+            if kenney_path and os.path.exists(kenney_path):
+                try:
+                    pack_count = len([d for d in os.listdir(kenney_path)
+                                     if os.path.isdir(os.path.join(kenney_path, d))
+                                     and not d.startswith('.')])
+                    layout.label(text=f"Found {pack_count} asset packs", icon='CHECKMARK')
+                except:
+                    pass
+
         if not scene.blendermcp_server_running:
             layout.operator("blendermcp.start_server", text="Connect to MCP server")
         else:
@@ -2587,6 +2995,20 @@ def register():
         default=""
     )
 
+    # Kenney properties
+    bpy.types.Scene.blendermcp_use_kenney = bpy.props.BoolProperty(
+        name="Use Kenney Assets",
+        description="Enable local Kenney.nl asset integration",
+        default=False
+    )
+
+    bpy.types.Scene.blendermcp_kenney_path = bpy.props.StringProperty(
+        name="Kenney Assets Path",
+        description="Path to folder containing Kenney asset packs",
+        default="",
+        subtype='DIR_PATH'
+    )
+
     # Register preferences class
     bpy.utils.register_class(BLENDERMCP_AddonPreferences)
 
@@ -2628,6 +3050,8 @@ def unregister():
     del bpy.types.Scene.blendermcp_hunyuan3d_num_inference_steps
     del bpy.types.Scene.blendermcp_hunyuan3d_guidance_scale
     del bpy.types.Scene.blendermcp_hunyuan3d_texture
+    del bpy.types.Scene.blendermcp_use_kenney
+    del bpy.types.Scene.blendermcp_kenney_path
 
     print("BlenderMCP addon unregistered")
 
