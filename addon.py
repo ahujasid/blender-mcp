@@ -52,6 +52,12 @@ KENNEY_CATEGORY_PATTERNS = {
     'structures': [r'^windmill', r'^watermill', r'^tower', r'^castle', r'^house', r'^building'],
 }
 
+# Pre-compiled regex patterns for faster categorization (compiled once at module load)
+KENNEY_CATEGORY_COMPILED = {
+    category: [re.compile(p) for p in patterns]
+    for category, patterns in KENNEY_CATEGORY_PATTERNS.items()
+}
+
 # Theme-to-pack mapping for curated recommendations
 KENNEY_THEME_PACKS = {
     # === THEMES ===
@@ -332,6 +338,7 @@ class BlenderMCPServer:
                 "browse_kenney_pack": self.browse_kenney_pack,
                 "search_kenney_assets": self.search_kenney_assets,
                 "import_kenney_asset": self.import_kenney_asset,
+                "batch_import_kenney_assets": self.batch_import_kenney_assets,
             }
             handlers.update(kenney_handlers)
 
@@ -2409,12 +2416,11 @@ class BlenderMCPServer:
 
     def _kenney_categorize_asset(self, filename):
         """Determine category from Kenney asset filename patterns."""
-        from collections import defaultdict
         name_lower = os.path.splitext(filename)[0].lower()
 
-        for category, patterns in KENNEY_CATEGORY_PATTERNS.items():
-            for pattern in patterns:
-                if re.search(pattern, name_lower):
+        for category, compiled_patterns in KENNEY_CATEGORY_COMPILED.items():
+            for pattern in compiled_patterns:
+                if pattern.search(name_lower):
                     return category
         return 'other'
 
@@ -2675,8 +2681,9 @@ class BlenderMCPServer:
             "results": results[:limit]
         }
 
-    def import_kenney_asset(self, pack_id, asset, location=None, rotation=None, scale=1.0, name=None):
-        """Import a Kenney asset into the scene."""
+    def import_kenney_asset(self, pack_id, asset, location=None, rotation=None, scale=1.0, name=None,
+                            snap_to_grid=False, grid_size=1.0):
+        """Import a Kenney asset into the scene with optional grid snapping."""
         if not bpy.context.scene.blendermcp_use_kenney:
             return {"error": "Kenney integration is disabled."}
 
@@ -2711,6 +2718,14 @@ class BlenderMCPServer:
 
         if not asset_info:
             return {"error": f"Asset not found: {asset} in pack {pack_id}"}
+
+        # Apply grid snapping if enabled
+        if snap_to_grid and grid_size > 0:
+            location = [
+                round(location[0] / grid_size) * grid_size,
+                round(location[1] / grid_size) * grid_size,
+                round(location[2] / grid_size) * grid_size
+            ]
 
         filepath = asset_info['full_path']
         ext = os.path.splitext(filepath)[1].lower()
@@ -2749,13 +2764,23 @@ class BlenderMCPServer:
 
             bpy.ops.object.select_all(action='DESELECT')
 
+            # Get dimensions for next_position calculation
+            dims = list(obj.dimensions)
+
             result = {
                 "success": True,
                 "object_name": obj.name,
                 "location": list(obj.location),
-                "dimensions": list(obj.dimensions),
+                "dimensions": dims,
                 "pack": pack['name'],
-                "asset": asset
+                "asset": asset,
+                "next_position": {
+                    "x+": obj.location.x + dims[0],
+                    "x-": obj.location.x - dims[0],
+                    "y+": obj.location.y + dims[1],
+                    "y-": obj.location.y - dims[1],
+                    "z+": obj.location.z + dims[2]
+                }
             }
 
             # Add bounding box if it's a mesh
@@ -2767,6 +2792,130 @@ class BlenderMCPServer:
         except Exception as e:
             traceback.print_exc()
             return {"error": f"Failed to import asset: {str(e)}"}
+
+    def batch_import_kenney_assets(self, imports):
+        """Import multiple Kenney assets in a single operation.
+
+        Args:
+            imports: List of dicts with keys: pack_id, asset, location, rotation, scale, name, snap_to_grid, grid_size
+
+        Returns:
+            Dict with imported list and any errors
+        """
+        if not bpy.context.scene.blendermcp_use_kenney:
+            return {"error": "Kenney integration is disabled."}
+
+        # Build index once for all imports
+        index = self._kenney_build_index()
+        if not index:
+            return {"error": "Kenney assets path not configured."}
+
+        results = []
+        errors = []
+
+        for i, spec in enumerate(imports):
+            pack_id = spec.get('pack_id')
+            asset = spec.get('asset')
+            location = spec.get('location', [0, 0, 0])
+            rotation = spec.get('rotation', [0, 0, 0])
+            scale = spec.get('scale', 1.0)
+            name = spec.get('name')
+            snap_to_grid = spec.get('snap_to_grid', False)
+            grid_size = spec.get('grid_size', 1.0)
+
+            if not pack_id or not asset:
+                errors.append({"index": i, "error": "Missing pack_id or asset"})
+                continue
+
+            # Find the pack
+            pack = index['packs'].get(pack_id)
+            if not pack:
+                for pid, p in index['packs'].items():
+                    if pack_id.lower() in pid.lower():
+                        pack = p
+                        break
+
+            if not pack:
+                errors.append({"index": i, "error": f"Pack not found: {pack_id}"})
+                continue
+
+            # Find the asset
+            asset_info = pack['assets'].get(asset)
+            if not asset_info:
+                asset_lower = asset.lower()
+                for asset_name, a in pack['assets'].items():
+                    if asset_lower in asset_name.lower():
+                        asset_info = a
+                        break
+
+            if not asset_info:
+                errors.append({"index": i, "error": f"Asset not found: {asset}"})
+                continue
+
+            # Apply grid snapping if enabled
+            if snap_to_grid and grid_size > 0:
+                location = [
+                    round(location[0] / grid_size) * grid_size,
+                    round(location[1] / grid_size) * grid_size,
+                    round(location[2] / grid_size) * grid_size
+                ]
+
+            filepath = asset_info['full_path']
+            ext = os.path.splitext(filepath)[1].lower()
+
+            try:
+                if ext in ['.glb', '.gltf']:
+                    bpy.ops.import_scene.gltf(filepath=filepath)
+                elif ext == '.obj':
+                    if bpy.app.version >= (4, 0, 0):
+                        bpy.ops.wm.obj_import(filepath=filepath)
+                    else:
+                        bpy.ops.import_scene.obj(filepath=filepath)
+                elif ext == '.fbx':
+                    bpy.ops.import_scene.fbx(filepath=filepath)
+                elif ext == '.dae':
+                    bpy.ops.wm.collada_import(filepath=filepath)
+                else:
+                    errors.append({"index": i, "error": f"Unsupported format: {ext}"})
+                    continue
+
+                imported = bpy.context.selected_objects
+                if not imported:
+                    errors.append({"index": i, "error": "No objects were imported"})
+                    continue
+
+                obj = imported[0]
+                obj.location = tuple(location)
+                obj.rotation_euler = tuple(rotation)
+                if isinstance(scale, (int, float)):
+                    obj.scale = (scale, scale, scale)
+                else:
+                    obj.scale = tuple(scale)
+
+                if name:
+                    obj.name = name
+                else:
+                    obj.name = os.path.splitext(asset)[0]
+
+                results.append({
+                    "index": i,
+                    "object_name": obj.name,
+                    "location": list(obj.location),
+                    "dimensions": list(obj.dimensions)
+                })
+
+            except Exception as e:
+                errors.append({"index": i, "error": str(e)})
+
+        bpy.ops.object.select_all(action='DESELECT')
+
+        return {
+            "success": True,
+            "imported_count": len(results),
+            "error_count": len(errors),
+            "imported": results,
+            "errors": errors if errors else None
+        }
 
 # Blender Addon Preferences
 class BLENDERMCP_AddonPreferences(bpy.types.AddonPreferences):

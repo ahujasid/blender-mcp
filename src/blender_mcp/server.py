@@ -36,9 +36,10 @@ class BlenderConnection:
         """Connect to the Blender addon socket server"""
         if self.sock:
             return True
-            
+
         try:
             self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            self.sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)  # Reduce latency
             self.sock.connect((self.host, self.port))
             logger.info(f"Connected to Blender at {self.host}:{self.port}")
             return True
@@ -256,7 +257,7 @@ def get_scene_info(ctx: Context) -> str:
         result = blender.send_command("get_scene_info")
 
         # Just return the JSON representation of what Blender sent us
-        return json.dumps(result, indent=2)
+        return json.dumps(result)
     except Exception as e:
         logger.error(f"Error getting scene info from Blender: {str(e)}")
         return f"Error getting scene info: {str(e)}"
@@ -275,7 +276,7 @@ def get_object_info(ctx: Context, object_name: str) -> str:
         result = blender.send_command("get_object_info", {"name": object_name})
         
         # Just return the JSON representation of what Blender sent us
-        return json.dumps(result, indent=2)
+        return json.dumps(result)
     except Exception as e:
         logger.error(f"Error getting object info from Blender: {str(e)}")
         return f"Error getting object info: {str(e)}"
@@ -1272,7 +1273,9 @@ def import_kenney_asset(
     location: List[float] = None,
     rotation: List[float] = None,
     scale: float = 1.0,
-    name: str = None
+    name: str = None,
+    snap_to_grid: bool = False,
+    grid_size: float = 1.0
 ) -> str:
     """
     Import a Kenney asset into the Blender scene.
@@ -1284,15 +1287,16 @@ def import_kenney_asset(
     - rotation: Optional [x, y, z] rotation in radians (default [0, 0, 0])
     - scale: Uniform scale factor (default 1.0)
     - name: Optional custom name for the imported object
+    - snap_to_grid: If true, snap location to grid (default false)
+    - grid_size: Grid cell size for snapping (default 1.0)
 
-    Returns information about the imported object including dimensions and bounding box.
+    Returns information about the imported object including dimensions, bounding box,
+    and next_position hints for chaining placements.
 
     Modular building tips:
-    - Use returned bounding box to calculate precise adjacent placement
-    - For walls: align along X or Y axis, offset by wall width to connect
-    - For floors: tile by offsetting X/Y by floor dimensions
-    - Check scale consistency across assets from same pack
-    - First import establishes scale baseline - match subsequent imports
+    - Use snap_to_grid=true for structural pieces (floors, walls, roofs)
+    - Use exact coordinates for detail pieces (props, nature)
+    - Use returned next_position to chain placements along axes
     """
     try:
         blender = get_blender_connection()
@@ -1300,7 +1304,9 @@ def import_kenney_asset(
         params = {
             "pack_id": pack_id,
             "asset": asset,
-            "scale": scale
+            "scale": scale,
+            "snap_to_grid": snap_to_grid,
+            "grid_size": grid_size
         }
         if location:
             params["location"] = location
@@ -1315,14 +1321,12 @@ def import_kenney_asset(
             return f"Error: {result['error']}"
 
         if result.get("success"):
-            output = f"Successfully imported '{result.get('asset')}' from {result.get('pack')}.\n"
-            output += f"Object name: {result.get('object_name')}\n"
-            output += f"Location: {result.get('location')}\n"
-            output += f"Dimensions: {result.get('dimensions')}\n"
+            output = f"Imported '{result.get('asset')}' from {result.get('pack')}.\n"
+            output += f"Object: {result.get('object_name')}, Location: {result.get('location')}, Dimensions: {result.get('dimensions')}\n"
 
-            if result.get("world_bounding_box"):
-                bbox = result["world_bounding_box"]
-                output += f"Bounding box: min={bbox[0]}, max={bbox[1]}\n"
+            if result.get("next_position"):
+                np = result["next_position"]
+                output += f"Next positions: x+={np['x+']:.2f}, y+={np['y+']:.2f}, z+={np['z+']:.2f}\n"
 
             return output
         else:
@@ -1330,6 +1334,59 @@ def import_kenney_asset(
     except Exception as e:
         logger.error(f"Error importing Kenney asset: {str(e)}")
         return f"Error importing Kenney asset: {str(e)}"
+
+
+@telemetry_tool("batch_import_kenney_assets")
+@mcp.tool()
+def batch_import_kenney_assets(ctx: Context, imports: List[dict]) -> str:
+    """
+    Import multiple Kenney assets in a single operation. MUCH faster than individual imports.
+
+    Parameters:
+    - imports: Array of import specifications, each with:
+        - pack_id: The pack containing the asset (required)
+        - asset: The asset filename (required)
+        - location: [x, y, z] position (default [0,0,0])
+        - rotation: [x, y, z] rotation in radians (default [0,0,0])
+        - scale: Uniform scale factor (default 1.0)
+        - name: Custom object name (optional)
+        - snap_to_grid: Snap to grid (default false)
+        - grid_size: Grid size for snapping (default 1.0)
+
+    Example:
+        batch_import_kenney_assets([
+            {"pack_id": "nature-kit", "asset": "ground_grass.glb", "location": [0,0,0]},
+            {"pack_id": "nature-kit", "asset": "ground_grass.glb", "location": [2,0,0]},
+            {"pack_id": "nature-kit", "asset": "tree_oak.glb", "location": [1,1,0]}
+        ])
+
+    Use this for building scenes with many pieces - imports 50 assets in one call
+    instead of 50 separate calls.
+    """
+    try:
+        blender = get_blender_connection()
+        result = blender.send_command("batch_import_kenney_assets", {"imports": imports})
+
+        if "error" in result:
+            return f"Error: {result['error']}"
+
+        output = f"Batch import complete: {result.get('imported_count', 0)} succeeded, {result.get('error_count', 0)} failed.\n"
+
+        if result.get("imported"):
+            for item in result["imported"][:5]:  # Show first 5
+                output += f"  - {item['object_name']} at {item['location']}\n"
+            if len(result["imported"]) > 5:
+                output += f"  ... and {len(result['imported']) - 5} more\n"
+
+        if result.get("errors"):
+            output += "Errors:\n"
+            for err in result["errors"][:3]:  # Show first 3 errors
+                output += f"  - Index {err['index']}: {err['error']}\n"
+
+        return output
+    except Exception as e:
+        logger.error(f"Error in batch import: {str(e)}")
+        return f"Error in batch import: {str(e)}"
 
 
 @mcp.prompt()
@@ -1560,11 +1617,25 @@ def asset_creation_strategy() -> str:
             2. Suggest the best pack(s) for the request - let user confirm or choose alternatives
             3. Use browse_kenney_pack() to explore assets by category within chosen pack
             4. Use search_kenney_assets() to find specific assets by keyword
-            5. Use import_kenney_asset() with location to place assets precisely
+            5. PLAN all placements first (collect pack_id, asset, location for each piece)
+            6. Use batch_import_kenney_assets() with the full list - MUCH faster than individual imports
+
+            PERFORMANCE - BATCH IMPORTS:
+            For scenes with multiple assets (which is most scenes), ALWAYS use batch_import_kenney_assets():
+            - Plan the full scene layout first (floor tiles, walls, props, etc.)
+            - Collect all placements as a list: [{pack_id, asset, location, rotation, scale}, ...]
+            - Import everything in ONE call with batch_import_kenney_assets(imports)
+            - This imports 50 assets in 1 operation instead of 50 separate calls
+
+            GRID SYSTEM:
+            - Structural pieces (floors, walls, roofs): Use snap_to_grid=true, grid_size based on tile dimensions
+            - Detail pieces (nature, props): Use exact coordinates (snap_to_grid=false)
+            - Use returned next_position to chain placements along X/Y/Z axes
+            - First import a floor tile to measure dimensions, then use those as grid_size
 
             Tips:
-            - Check asset dimensions after first import to calibrate scale
-            - Use bounding boxes to calculate precise placement offsets
+            - Check asset dimensions after first import to calibrate scale and grid_size
+            - Use next_position from import results to calculate adjacent placements
             - Duplicate imported assets via Python code rather than re-importing
             - Mix packs when appropriate (e.g., Nature Kit trees + Fantasy Town Kit buildings)
 
