@@ -286,42 +286,39 @@ def get_object_info(ctx: Context, object_name: str) -> str:
 
 @telemetry_tool("get_viewport_screenshot")
 @mcp.tool()
-def get_viewport_screenshot(ctx: Context, max_size: int = 800) -> Image:
+def get_viewport_screenshot(ctx: Context, max_size: int = 800, reserve: bool = False) -> Image:
     """
     Capture a screenshot of the current Blender 3D viewport.
     
     Parameters:
     - max_size: Maximum size in pixels for the largest dimension (default: 800)
+    - reserve: Whether to keep the temporary file after reading (default: False).
     
     Returns the screenshot as an Image.
     """
     try:
         blender = get_blender_connection()
         
-        # Create temp file path
-        temp_dir = tempfile.gettempdir()
-        temp_path = os.path.join(temp_dir, f"blender_screenshot_{os.getpid()}.png")
         
         result = blender.send_command("get_viewport_screenshot", {
             "max_size": max_size,
-            "filepath": temp_path,
+            "reserve": reserve,
             "format": "png"
         })
         
         if "error" in result:
             raise Exception(result["error"])
+                # Create temp file path
         
-        if not os.path.exists(temp_path):
-            raise Exception("Screenshot file was not created")
-        
-        # Read the file
-        with open(temp_path, 'rb') as f:
-            image_bytes = f.read()
-        
-        # Delete the temp file
-        os.remove(temp_path)
-        
-        return Image(data=image_bytes, format="png")
+        image_b64 = result.get("image_base64")
+        if image_b64:
+            try:
+                image_bytes = base64.b64decode(image_b64)
+            except Exception as e:
+                raise Exception(f"Invalid screenshot bytes payload: {e}")
+            return Image(data=image_bytes, format="png")
+        else:
+            raise Exception("Screenshot failed: no image_base64 field returned from server.")
         
     except Exception as e:
         logger.error(f"Error capturing screenshot: {str(e)}")

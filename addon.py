@@ -19,6 +19,7 @@ from datetime import datetime
 import hashlib, hmac, base64
 import os.path as osp
 from contextlib import redirect_stdout, suppress
+from pathlib import Path
 
 bl_info = {
     "name": "Blender MCP",
@@ -361,59 +362,259 @@ class BlenderMCPServer:
 
         return obj_info
 
-    def get_viewport_screenshot(self, max_size=800, filepath=None, format="png"):
+    def _reset_material_nodes_principled(self, material, output_location=(300, 0), bsdf_location=(0, 0)):
+        """Reset material nodes to a single active output and principled BSDF."""
+        material.use_nodes = True
+        node_tree = material.node_tree
+        nodes = node_tree.nodes
+        links = node_tree.links
+        # I replaced the iterative remove() calls with nodes.clear() because it performs a safe and atomic bulk deletion at the C level, avoiding potential iteration issues and improving both reliability and performance.
+        nodes.clear()
+
+        output = nodes.new(type='ShaderNodeOutputMaterial')
+        output.location = output_location
+        # I added output.is_active_output = True to explicitly designate this node as the active material output, ensuring Blender uses the correct shader output during rendering.
+        output.is_active_output = True
+
+        principled = nodes.new(type='ShaderNodeBsdfPrincipled')
+        principled.location = bsdf_location
+        # Switched to name-based socket linking to improve robustness and avoid potential issues caused by index order changes.
+        links.new(principled.outputs['BSDF'], output.inputs['Surface'])
+
+        return nodes, links, output, principled
+
+    def get_viewport_screenshot(self, max_size=800, reserve=False, format="png"):
         """
-        Capture a screenshot of the current 3D viewport and save it to the specified path.
+        Capture a screenshot of the current 3D viewport WINDOW region (no TOOL_HEADER),
+        temporarily hide Overlays/Gizmos/Toolbar/Sidebar during capture, crop/resize in Blender,
+        return base64 bytes, and clean up Blender image datablocks.
 
         Parameters:
-        - max_size: Maximum size in pixels for the largest dimension of the image
-        - filepath: Path where to save the screenshot file
-        - format: Image format (png, jpg, etc.)
+        - max_size: Maximum size in pixels for the largest dimension of the output image.
+        - reserve: Whether to keep the temporary output file after reading (default: False).
+        - format: Output image format (png, jpg, jpeg, tif, tiff, bmp, exr, tga, hdr, ...)
 
-        Returns success/error status
+        Returns:
+        - {"success": True, "width": int, "height": int, "filepath": str, "image_base64": str}
+        or {"error": str}
         """
-        try:
-            if not filepath:
-                return {"error": "No filepath provided"}
 
-            # Find the active 3D viewport
-            area = None
-            for a in bpy.context.screen.areas:
-                if a.type == 'VIEW_3D':
-                    area = a
+        try:
+            # ---------------------------
+            # Validate input
+            # ---------------------------
+            if max_size is None or int(max_size) <= 0:
+                return {"error": "max_size must be a positive integer"}
+            max_size = int(max_size)
+
+            fmt = (format or "png").strip().lower()
+
+            # Blender image file_format enums are not always identical to format.upper()
+            fmt_map = {
+                "png": "PNG",
+                "jpg": "JPEG",
+                "jpeg": "JPEG",
+                "tif": "TIFF",
+                "tiff": "TIFF",
+                "bmp": "BMP",
+                "exr": "OPEN_EXR",
+                "openexr": "OPEN_EXR",
+                "tga": "TARGA",
+                "hdr": "HDR",
+            }
+            blender_file_format = fmt_map.get(fmt, "PNG")
+
+            # ---------------------------
+            # Build temporary paths
+            # ---------------------------
+            temp_dir = Path(tempfile.gettempdir())
+            pid = os.getpid()
+
+            # Raw screenshot always written as PNG (stable for load/crop)
+            raw_path = temp_dir / f"blender_view3d_raw_{pid}.png"
+
+            # Final output path (used for returning bytes)
+            out_ext = f".{fmt}"
+            out_path = temp_dir / f"blender_view3d_out_{pid}{out_ext}"
+
+            # ---------------------------
+            # 1) Find a VIEW_3D area
+            # ---------------------------
+            window = bpy.context.window
+            screen = window.screen
+
+            view3d_areas = [a for a in screen.areas if a.type == "VIEW_3D"]
+            if not view3d_areas:
+                return {"error": "No VIEW_3D area found in the current screen"}
+
+            # Use the first VIEW_3D by default
+            area = view3d_areas[0]
+
+            # ---------------------------
+            # 2) Find WINDOW and TOOL_HEADER regions
+            # ---------------------------
+            region_window = next((r for r in area.regions if r.type == "WINDOW"), None)
+            region_tool_header = next((r for r in area.regions if r.type == "TOOL_HEADER"), None)
+            if region_window is None or region_tool_header is None:
+                return {"error": "VIEW_3D area is missing WINDOW or TOOL_HEADER region"}
+
+            # Active space must be VIEW_3D to control overlay/gizmo/regions
+            space = area.spaces.active
+            if space is None or space.type != "VIEW_3D":
+                return {"error": "Active space is not VIEW_3D; cannot control overlay/gizmo/regions"}
+
+            # ---------------------------
+            # 3) Record overlay/gizmo/toolbar/sidebar states, disable them for capture, then restore
+            # ---------------------------
+            # Overlays
+            has_overlay = hasattr(space, "overlay") and hasattr(space.overlay, "show_overlays")
+            old_show_overlays = space.overlay.show_overlays if has_overlay else None
+
+            # Gizmo flags differ by version; pick the first existing attribute
+            old_show_gizmo = None
+            gizmo_attr = None
+            for candidate in ("show_gizmo", "show_gizmo_context", "show_gizmo_navigate", "show_gizmo_tool"):
+                if hasattr(space, candidate):
+                    gizmo_attr = candidate
+                    old_show_gizmo = getattr(space, candidate)
                     break
 
-            if not area:
-                return {"error": "No 3D viewport found"}
+            # Toolbar (left) and Sidebar (right) region visibility
+            old_show_toolbar = getattr(space, "show_region_toolbar", None)
+            old_show_sidebar = getattr(space, "show_region_ui", None)
 
-            # Take screenshot with proper context override
-            with bpy.context.temp_override(area=area):
-                bpy.ops.screen.screenshot_area(filepath=filepath)
+            # Placeholders for Blender image datablocks (so we can remove them in finally)
+            src_img = None
+            crop_img = None
 
-            # Load and resize if needed
-            img = bpy.data.images.load(filepath)
-            width, height = img.size
+            try:
+                # Disable UI elements
+                if has_overlay:
+                    space.overlay.show_overlays = False
+                if gizmo_attr is not None:
+                    setattr(space, gizmo_attr, False)
+                if old_show_toolbar is not None:
+                    space.show_region_toolbar = False
+                if old_show_sidebar is not None:
+                    space.show_region_ui = False
 
-            if max(width, height) > max_size:
-                scale = max_size / max(width, height)
-                new_width = int(width * scale)
-                new_height = int(height * scale)
-                img.scale(new_width, new_height)
+                # Force UI redraw so changes take effect immediately
+                area.tag_redraw()
+                with bpy.context.temp_override(window=window, screen=screen, area=area, region=region_window):
+                    bpy.ops.wm.redraw_timer(type="DRAW_WIN_SWAP", iterations=1)
 
-                # Set format and save
-                img.file_format = format.upper()
-                img.save()
-                width, height = new_width, new_height
+                # ---------------------------
+                # 4.1) Capture screenshot (writes the entire area image)
+                # ---------------------------
+                with bpy.context.temp_override(window=window, screen=screen, area=area, region=region_window):
+                    ret = bpy.ops.screen.screenshot_area(filepath=str(raw_path), check_existing=False)
+                if "FINISHED" not in ret:
+                    return {"error": f"screenshot_area did not finish successfully: {ret}"}
 
-            # Cleanup Blender image data
-            bpy.data.images.remove(img)
+                # ---------------------------
+                # 4.2) Load screenshot into Blender for processing
+                # ---------------------------
+                src_img = bpy.data.images.load(str(raw_path))
+                src_w, src_h = src_img.size
+                src_pixels = list(src_img.pixels)  # RGBA flat list, origin at bottom-left
 
-            return {
-                "success": True,
-                "width": width,
-                "height": height,
-                "filepath": filepath
-            }
+                # ---------------------------
+                # 4.3) Crop: remove the TOOL_HEADER height from the TOP of the image
+                # Note: pixel origin is bottom-left, so "top" corresponds to high y values.
+                # Keeping rows y=[0 .. crop_h-1] effectively removes the top 'tool_h' rows.
+                # ---------------------------
+                tool_h = int(region_tool_header.height*2) if region_tool_header.height else 0
+                tool_h = max(0, min(tool_h, src_h))
+
+                crop_w = src_w
+                crop_h = src_h - tool_h
+                if crop_h <= 0:
+                    # Fallback: if tool_h is weird, do not crop
+                    crop_h = src_h
+                    tool_h = 0
+
+                cropped_pixels = [0.0] * (crop_w * crop_h * 4)
+                for y in range(crop_h):
+                    src_row_start = (y * src_w) * 4
+                    src_row_end = ((y + 1) * src_w) * 4
+                    dst_row_start = (y * crop_w) * 4
+                    cropped_pixels[dst_row_start:dst_row_start + crop_w * 4] = src_pixels[src_row_start:src_row_end]
+
+                crop_img = bpy.data.images.new(name="__view3d_crop_tmp__", width=crop_w, height=crop_h, alpha=True)
+                crop_img.pixels = cropped_pixels
+
+                # ---------------------------
+                # 4.4) Resize: enforce max(width, height) <= max_size (keep aspect ratio)
+                # ---------------------------
+                out_w, out_h = crop_w, crop_h
+                m = max(out_w, out_h)
+                if m > max_size:
+                    scale = max_size / float(m)
+                    out_w = max(1, int(round(out_w * scale)))
+                    out_h = max(1, int(round(out_h * scale)))
+                    crop_img.scale(out_w, out_h)
+
+                # ---------------------------
+                # 4.5) Save processed output to out_path in requested format
+                # ---------------------------
+                crop_img.filepath_raw = str(out_path)
+                crop_img.file_format = blender_file_format
+                crop_img.save()
+
+                # ---------------------------
+                # Read bytes for direct transfer
+                # ---------------------------
+                with open(out_path, "rb") as f:
+                    image_bytes = f.read()
+                image_base64 = base64.b64encode(image_bytes).decode("ascii")
+
+                return {
+                    "success": True,
+                    "width": out_w,
+                    "height": out_h,
+                    "filepath": str(out_path),
+                    "image_base64": image_base64
+                }
+
+            finally:
+                # Restore overlay/gizmo/toolbar/sidebar states
+                try:
+                    if has_overlay and old_show_overlays is not None:
+                        space.overlay.show_overlays = old_show_overlays
+                    if gizmo_attr is not None and old_show_gizmo is not None:
+                        setattr(space, gizmo_attr, old_show_gizmo)
+                    if old_show_toolbar is not None:
+                        space.show_region_toolbar = old_show_toolbar
+                    if old_show_sidebar is not None:
+                        space.show_region_ui = old_show_sidebar
+
+                    # Force redraw again to reflect restored state
+                    area.tag_redraw()
+                    with bpy.context.temp_override(window=window, screen=screen, area=area, region=region_window):
+                        bpy.ops.wm.redraw_timer(type="DRAW_WIN_SWAP", iterations=1)
+                except Exception:
+                    pass
+
+                # 5) Clear Blender image datablocks (cache)
+                for img_obj in (src_img, crop_img):
+                    if img_obj is not None:
+                        try:
+                            bpy.data.images.remove(img_obj)
+                        except Exception:
+                            pass
+
+                # Delete temporary files unless reservation is requested
+                if not reserve:
+                    try:
+                        if raw_path.exists():
+                            raw_path.unlink()
+                    except Exception:
+                        pass
+                    try:
+                        if out_path.exists():
+                            out_path.unlink()
+                    except Exception:
+                        pass
 
         except Exception as e:
             return {"error": str(e)}
@@ -636,24 +837,13 @@ class BlenderMCPServer:
                     if not downloaded_maps:
                         return {"error": f"No texture maps found for the requested resolution and format"}
 
-                    # Create a new material with the downloaded textures
+                    # Create a new material with a normalized node setup
                     mat = bpy.data.materials.new(name=asset_id)
-                    mat.use_nodes = True
-                    nodes = mat.node_tree.nodes
-                    links = mat.node_tree.links
-
-                    # Clear default nodes
-                    for node in nodes:
-                        nodes.remove(node)
-
-                    # Create output node
-                    output = nodes.new(type='ShaderNodeOutputMaterial')
-                    output.location = (300, 0)
-
-                    # Create principled BSDF node
-                    principled = nodes.new(type='ShaderNodeBsdfPrincipled')
-                    principled.location = (0, 0)
-                    links.new(principled.outputs[0], output.inputs[0])
+                    nodes, links, output, principled = self._reset_material_nodes_principled(
+                        mat,
+                        output_location=(300, 0),
+                        bsdf_location=(0, 0),
+                    )
 
                     # Add texture nodes based on available maps
                     tex_coord = nodes.new(type='ShaderNodeTexCoord')
@@ -864,23 +1054,13 @@ class BlenderMCPServer:
                 bpy.data.materials.remove(existing_mat)
 
             new_mat = bpy.data.materials.new(name=new_mat_name)
-            new_mat.use_nodes = True
 
-            # Set up the material nodes
-            nodes = new_mat.node_tree.nodes
-            links = new_mat.node_tree.links
-
-            # Clear default nodes
-            nodes.clear()
-
-            # Create output node
-            output = nodes.new(type='ShaderNodeOutputMaterial')
-            output.location = (600, 0)
-
-            # Create principled BSDF node
-            principled = nodes.new(type='ShaderNodeBsdfPrincipled')
-            principled.location = (300, 0)
-            links.new(principled.outputs[0], output.inputs[0])
+            # Set up the material nodes with a single active output and principled BSDF
+            nodes, links, output, principled = self._reset_material_nodes_principled(
+                new_mat,
+                output_location=(600, 0),
+                bsdf_location=(300, 0),
+            )
 
             # Add texture nodes based on available maps
             tex_coord = nodes.new(type='ShaderNodeTexCoord')
