@@ -219,6 +219,14 @@ Here are some examples of what you can ask Claude to do:
 - "Make the lighting like a studio"
 - "Point the camera at the scene, and make it isometric"
 
+### Hunyuan3D Gradio Remote Testing
+
+For contributors validating Hunyuan3D behavior through a remote Gradio endpoint, see:
+
+- `examples/hunyuan3d_gradio/README.md`
+
+This path is often more cost-effective for iterative testing than paid API credits.
+
 ## Hyper3D integration
 
 Hyper3D's free trial key allows you to generate a limited number of models per day. If the daily limit is reached, you can wait for the next day's reset or obtain your own key from hyper3d.ai and fal.ai.
