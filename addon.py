@@ -1188,7 +1188,7 @@ class BlenderMCPServer:
                 images = []
             """Call Rodin API, get the job uuid and subscription key"""
             files = [
-                *[("images", (f"{i:04d}{img_suffix}", img)) for i, (img_suffix, img) in enumerate(images)],
+                *[("images", (f"{i:04d}{img_suffix}", base64.b64decode(img) if isinstance(img, str) else img)) for i, (img_suffix, img) in enumerate(images)],
                 ("tier", (None, "Sketch")),
                 ("mesh_mode", (None, "Raw")),
             ]
