@@ -10,4 +10,4 @@ ENV DISABLE_TELEMETRY=true
 
 USER appuser
 
-ENTRYPOINT ["uvx", "blender-mcp"]
+ENTRYPOINT ["uvx", "blender-mcp==1.5.5"]
