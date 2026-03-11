@@ -18,7 +18,52 @@ import io
 from datetime import datetime
 import hashlib, hmac, base64
 import os.path as osp
+import ipaddress
+from urllib.parse import urlparse
 from contextlib import redirect_stdout, suppress
+
+# Allowed image file extensions for local path validation
+ALLOWED_IMAGE_EXTENSIONS = {
+    '.png', '.jpg', '.jpeg', '.gif', '.bmp', '.tiff', '.tif',
+    '.webp', '.svg', '.ico', '.heic', '.heif',
+}
+
+
+def validate_image_path(path: str) -> str | None:
+    """Validate that a local file path points to an image file.
+
+    Returns None if the path is valid, or an error message string otherwise.
+    """
+    resolved = os.path.realpath(path)
+    ext = os.path.splitext(resolved)[1].lower()
+    if ext not in ALLOWED_IMAGE_EXTENSIONS:
+        return (
+            f"Invalid image file type '{ext}'. "
+            f"Allowed types: {', '.join(sorted(ALLOWED_IMAGE_EXTENSIONS))}"
+        )
+    if not os.path.isfile(resolved):
+        return f"File not found: {resolved}"
+    return None
+
+
+def validate_url_not_internal(url: str) -> str | None:
+    """Check that a URL does not target private/loopback/link-local addresses.
+
+    Returns None if the URL is safe, or an error message string otherwise.
+    """
+    parsed = urlparse(url)
+    hostname = parsed.hostname
+    if not hostname:
+        return "URL has no hostname"
+    try:
+        addr_infos = socket.getaddrinfo(hostname, parsed.port or 443)
+    except socket.gaierror:
+        return f"Could not resolve hostname: {hostname}"
+    for family, _, _, _, sockaddr in addr_infos:
+        ip = ipaddress.ip_address(sockaddr[0])
+        if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved:
+            return f"URL resolves to a non-public address ({ip}), request blocked"
+    return None
 
 bl_info = {
     "name": "Blender MCP",
@@ -2091,14 +2136,17 @@ class BlenderMCPServer:
                 if re.match(r'^https?://', image, re.IGNORECASE) is not None:
                     data["ImageUrl"] = image
                 else:
+                    err = validate_image_path(image)
+                    if err:
+                        return {"error": err}
                     try:
                         # Convert to Base64 format
-                        with open(image, "rb") as f:
+                        with open(os.path.realpath(image), "rb") as f:
                             image_base64 = base64.b64encode(f.read()).decode("ascii")
                         data["ImageBase64"] = image_base64
                     except Exception as e:
                         return {"error": f"Image encoding failed: {str(e)}"}
-            
+
             # Get signed headers
             headers, endpoint = self.get_tencent_cloud_sign_headers("POST", "/", headParams, data, service, region, secret_id, secret_key)
 
@@ -2154,11 +2202,14 @@ class BlenderMCPServer:
                         image_base64 = base64.b64encode(resImg.content).decode("ascii")
                         data["image"] = image_base64
                     except Exception as e:
-                        return {"error": f"Failed to download or encode image: {str(e)}"} 
+                        return {"error": f"Failed to download or encode image: {str(e)}"}
                 else:
+                    err = validate_image_path(image)
+                    if err:
+                        return {"error": err}
                     try:
                         # Convert to Base64 format
-                        with open(image, "rb") as f:
+                        with open(os.path.realpath(image), "rb") as f:
                             image_base64 = base64.b64encode(f.read()).decode("ascii")
                         data["image"] = image_base64
                     except Exception as e:
@@ -2249,11 +2300,16 @@ class BlenderMCPServer:
     def import_generated_asset_hunyuan_ai(self, name: str , zip_file_url: str):
         if not zip_file_url:
             return {"error": "Zip file not found"}
-        
+
         # Validate URL
         if not re.match(r'^https?://', zip_file_url, re.IGNORECASE):
             return {"error": "Invalid URL format. Must start with http:// or https://"}
-        
+
+        # Block requests to private/internal networks (SSRF protection)
+        ssrf_err = validate_url_not_internal(zip_file_url)
+        if ssrf_err:
+            return {"error": ssrf_err}
+
         # Create a temporary directory
         temp_dir = tempfile.mkdtemp(prefix="tencent_obj_")
         zip_file_path = osp.join(temp_dir, "model.zip")
