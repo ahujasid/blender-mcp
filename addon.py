@@ -28,6 +28,9 @@ ALLOWED_IMAGE_EXTENSIONS = {
     '.webp', '.svg', '.ico', '.heic', '.heif',
 }
 
+# Maximum local image file size (10 MB)
+MAX_LOCAL_IMAGE_BYTES = 10 * 1024 * 1024
+
 
 def validate_image_path(path: str) -> str | None:
     """Validate that a local file path points to an image file.
@@ -43,27 +46,41 @@ def validate_image_path(path: str) -> str | None:
         )
     if not os.path.isfile(resolved):
         return f"File not found: {resolved}"
+    try:
+        size = os.path.getsize(resolved)
+    except OSError as e:
+        return f"Cannot read file size: {e}"
+    if size > MAX_LOCAL_IMAGE_BYTES:
+        return (
+            f"Image file too large ({size} bytes). "
+            f"Maximum allowed size is {MAX_LOCAL_IMAGE_BYTES} bytes"
+        )
     return None
 
 
-def validate_url_not_internal(url: str) -> str | None:
+def validate_url_not_internal(url: str) -> tuple[None, list[str]] | tuple[str, None]:
     """Check that a URL does not target private/loopback/link-local addresses.
 
-    Returns None if the URL is safe, or an error message string otherwise.
+    Returns (None, validated_ips) if the URL is safe, where validated_ips are
+    the resolved IP strings that should be pinned for the actual request to
+    prevent DNS rebinding (TOCTOU) attacks.
+    Returns (error_message, None) otherwise.
     """
     parsed = urlparse(url)
     hostname = parsed.hostname
     if not hostname:
-        return "URL has no hostname"
+        return ("URL has no hostname", None)
     try:
         addr_infos = socket.getaddrinfo(hostname, parsed.port or 443)
     except socket.gaierror:
-        return f"Could not resolve hostname: {hostname}"
+        return (f"Could not resolve hostname: {hostname}", None)
+    validated_ips = []
     for family, _, _, _, sockaddr in addr_infos:
         ip = ipaddress.ip_address(sockaddr[0])
         if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved:
-            return f"URL resolves to a non-public address ({ip}), request blocked"
-    return None
+            return (f"URL resolves to a non-public address ({ip}), request blocked", None)
+        validated_ips.append(sockaddr[0])
+    return (None, validated_ips)
 
 bl_info = {
     "name": "Blender MCP",
@@ -2134,6 +2151,9 @@ class BlenderMCPServer:
             # Handling image
             if image:
                 if re.match(r'^https?://', image, re.IGNORECASE) is not None:
+                    ssrf_err, _validated_ips = validate_url_not_internal(image)
+                    if ssrf_err:
+                        return {"error": ssrf_err}
                     data["ImageUrl"] = image
                 else:
                     err = validate_image_path(image)
@@ -2196,8 +2216,22 @@ class BlenderMCPServer:
             # Handling image
             if image:
                 if re.match(r'^https?://', image, re.IGNORECASE) is not None:
+                    # Validate URL is not targeting internal networks
+                    ssrf_err, validated_ips = validate_url_not_internal(image)
+                    if ssrf_err:
+                        return {"error": ssrf_err}
+                    # Pin to validated IP to prevent DNS rebinding
+                    parsed_img = urlparse(image)
+                    pinned_img_url = image.replace(
+                        f"{parsed_img.scheme}://{parsed_img.hostname}",
+                        f"{parsed_img.scheme}://{validated_ips[0]}",
+                        1,
+                    )
                     try:
-                        resImg = requests.get(image)
+                        resImg = requests.get(
+                            pinned_img_url,
+                            headers={"Host": parsed_img.hostname},
+                        )
                         resImg.raise_for_status()
                         image_base64 = base64.b64encode(resImg.content).decode("ascii")
                         data["image"] = image_base64
@@ -2306,9 +2340,18 @@ class BlenderMCPServer:
             return {"error": "Invalid URL format. Must start with http:// or https://"}
 
         # Block requests to private/internal networks (SSRF protection)
-        ssrf_err = validate_url_not_internal(zip_file_url)
+        ssrf_err, validated_ips = validate_url_not_internal(zip_file_url)
         if ssrf_err:
             return {"error": ssrf_err}
+
+        # Pin the download to a validated IP to prevent DNS rebinding
+        parsed = urlparse(zip_file_url)
+        pinned_url = zip_file_url.replace(
+            f"{parsed.scheme}://{parsed.hostname}",
+            f"{parsed.scheme}://{validated_ips[0]}",
+            1,
+        )
+        pin_headers = {"Host": parsed.hostname}
 
         # Create a temporary directory
         temp_dir = tempfile.mkdtemp(prefix="tencent_obj_")
@@ -2317,8 +2360,8 @@ class BlenderMCPServer:
         mtl_file_path = osp.join(temp_dir, "model.mtl")
 
         try:
-            # Download ZIP file
-            zip_response = requests.get(zip_file_url, stream=True)
+            # Download ZIP file using pinned IP
+            zip_response = requests.get(pinned_url, headers=pin_headers, stream=True)
             zip_response.raise_for_status()
             with open(zip_file_path, "wb") as f:
                 for chunk in zip_response.iter_content(chunk_size=8192):
