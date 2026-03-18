@@ -213,6 +213,7 @@ class BlenderMCPServer:
             "get_hyper3d_status": self.get_hyper3d_status,
             "get_sketchfab_status": self.get_sketchfab_status,
             "get_hunyuan3d_status": self.get_hunyuan3d_status,
+            "get_meshy_status": self.get_meshy_status,
         }
 
         # Add Polyhaven handlers only if enabled
@@ -251,6 +252,22 @@ class BlenderMCPServer:
                 "import_generated_asset_hunyuan": self.import_generated_asset_hunyuan
             }
             handlers.update(hunyuan_handlers)
+
+        # Add Meshy handlers only if enabled
+        if bpy.context.scene.blendermcp_use_meshy:
+            meshy_handlers = {
+                "create_meshy_job": self.create_meshy_job,
+                "create_meshy_refine_job": self.create_meshy_refine_job,
+                "poll_meshy_job_status": self.poll_meshy_job_status,
+                "import_generated_asset_meshy": self.import_generated_asset_meshy,
+                "create_meshy_remesh_job": self.create_meshy_remesh_job,
+                "poll_meshy_remesh_status": self.poll_meshy_remesh_status,
+                "import_meshy_remeshed_asset": self.import_meshy_remeshed_asset,
+                "create_meshy_rig_job": self.create_meshy_rig_job,
+                "poll_meshy_rig_status": self.poll_meshy_rig_status,
+                "import_meshy_rigged_asset": self.import_meshy_rigged_asset,
+            }
+            handlers.update(meshy_handlers)
 
         handler = handlers.get(cmd_type)
         if handler:
@@ -2320,6 +2337,416 @@ class BlenderMCPServer:
                 print(f"Failed to clean up temporary directory {temp_dir}: {e}")
     #endregion
 
+    #region Meshy
+    def get_meshy_status(self):
+        """Get the current status of Meshy.ai integration"""
+        enabled = bpy.context.scene.blendermcp_use_meshy
+        if enabled:
+            if not bpy.context.scene.blendermcp_meshy_api_key:
+                return {
+                    "enabled": False,
+                    "message": """Meshy.ai integration is currently enabled, but API key is not given. To enable it:
+                                1. In the 3D Viewport, find the BlenderMCP panel in the sidebar (press N if hidden)
+                                2. Keep the 'Use Meshy.ai 3D model generation' checkbox checked
+                                3. Fill in the API Key (get one at https://www.meshy.ai/)
+                                4. Restart the connection to Claude"""
+                }
+            return {
+                "enabled": True,
+                "message": "Meshy.ai integration is enabled and ready to use."
+            }
+        return {
+            "enabled": False,
+            "message": """Meshy.ai integration is currently disabled. To enable it:
+                        1. In the 3D Viewport, find the BlenderMCP panel in the sidebar (press N if hidden)
+                        2. Check the 'Use Meshy.ai 3D model generation' checkbox
+                        3. Restart the connection to Claude"""
+        }
+
+    def create_meshy_job(self, image_url=None, text_prompt=None, enable_pbr=False):
+        """Create a Meshy.ai generation task (Image to 3D or Text to 3D preview)"""
+        try:
+            api_key = bpy.context.scene.blendermcp_meshy_api_key
+            if not api_key:
+                return {"error": "API key is not given"}
+
+            if not image_url and not text_prompt:
+                return {"error": "Either image_url or text_prompt is required"}
+
+            headers = {
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+            }
+
+            if image_url:
+                data = {
+                    "image_url": image_url,
+                    "enable_pbr": enable_pbr,
+                    "should_remesh": False,
+                    "should_texture": True,
+                    "target_formats": ["glb"],
+                }
+                response = requests.post(
+                    "https://api.meshy.ai/openapi/v1/image-to-3d",
+                    headers=headers,
+                    json=data,
+                )
+                task_type = "image-to-3d"
+            else:
+                data = {
+                    "mode": "preview",
+                    "prompt": text_prompt,
+                    "should_remesh": False,
+                    "target_formats": ["glb"],
+                }
+                response = requests.post(
+                    "https://api.meshy.ai/openapi/v2/text-to-3d",
+                    headers=headers,
+                    json=data,
+                )
+                task_type = "text-to-3d"
+
+            if response.status_code in (200, 201, 202):
+                result = response.json()
+                task_id = result.get("result", "")
+                return {"task_id": task_id, "task_type": task_type}
+            return {"error": f"API request failed with status {response.status_code}: {response.text}"}
+        except Exception as e:
+            return {"error": str(e)}
+
+    def create_meshy_refine_job(self, preview_task_id, enable_pbr=True):
+        """Create a Meshy.ai Text to 3D refine task from a completed preview"""
+        try:
+            api_key = bpy.context.scene.blendermcp_meshy_api_key
+            if not api_key:
+                return {"error": "API key is not given"}
+            if not preview_task_id:
+                return {"error": "preview_task_id is required"}
+
+            headers = {
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+            }
+            data = {
+                "mode": "refine",
+                "preview_task_id": preview_task_id,
+                "enable_pbr": enable_pbr,
+                "target_formats": ["glb"],
+            }
+            response = requests.post(
+                "https://api.meshy.ai/openapi/v2/text-to-3d",
+                headers=headers,
+                json=data,
+            )
+            if response.status_code in (200, 201, 202):
+                result = response.json()
+                task_id = result.get("result", "")
+                return {"task_id": task_id, "task_type": "text-to-3d"}
+            return {"error": f"API request failed with status {response.status_code}: {response.text}"}
+        except Exception as e:
+            return {"error": str(e)}
+
+    def poll_meshy_job_status(self, task_id, task_type="image-to-3d"):
+        """Poll the status of a Meshy.ai generation task"""
+        try:
+            api_key = bpy.context.scene.blendermcp_meshy_api_key
+            if not api_key:
+                return {"error": "API key is not given"}
+            if not task_id:
+                return {"error": "task_id is required"}
+
+            if task_type == "text-to-3d":
+                url = f"https://api.meshy.ai/openapi/v2/text-to-3d/{task_id}"
+            else:
+                url = f"https://api.meshy.ai/openapi/v1/image-to-3d/{task_id}"
+
+            headers = {
+                "Authorization": f"Bearer {api_key}",
+            }
+            response = requests.get(url, headers=headers)
+
+            if response.status_code == 200:
+                data = response.json()
+                result = {
+                    "status": data.get("status", "UNKNOWN"),
+                    "progress": data.get("progress", 0),
+                }
+                if data.get("status") == "SUCCEEDED":
+                    model_urls = data.get("model_urls", {})
+                    result["model_urls"] = model_urls
+                if data.get("task_error", {}).get("message"):
+                    result["error_message"] = data["task_error"]["message"]
+                return result
+            return {"error": f"API request failed with status {response.status_code}: {response.text}"}
+        except Exception as e:
+            return {"error": str(e)}
+
+    def import_generated_asset_meshy(self, name, glb_url):
+        """Download and import a Meshy.ai generated GLB model"""
+        if not glb_url:
+            return {"succeed": False, "error": "GLB URL not provided"}
+
+        temp_file = tempfile.NamedTemporaryFile(
+            delete=False,
+            prefix="meshy_",
+            suffix=".glb",
+        )
+        try:
+            response = requests.get(glb_url, stream=True)
+            response.raise_for_status()
+            for chunk in response.iter_content(chunk_size=8192):
+                temp_file.write(chunk)
+            temp_file.close()
+        except Exception as e:
+            temp_file.close()
+            os.unlink(temp_file.name)
+            return {"succeed": False, "error": f"Failed to download model: {str(e)}"}
+
+        try:
+            obj = self._clean_imported_glb(
+                filepath=temp_file.name,
+                mesh_name=name,
+            )
+            result = {
+                "name": obj.name,
+                "type": obj.type,
+                "location": [obj.location.x, obj.location.y, obj.location.z],
+                "rotation": [obj.rotation_euler.x, obj.rotation_euler.y, obj.rotation_euler.z],
+                "scale": [obj.scale.x, obj.scale.y, obj.scale.z],
+            }
+            if obj.type == "MESH":
+                bounding_box = self._get_aabb(obj)
+                result["world_bounding_box"] = bounding_box
+            return {"succeed": True, **result}
+        except Exception as e:
+            return {"succeed": False, "error": str(e)}
+
+    def create_meshy_remesh_job(self, input_task_id=None, model_url=None,
+                                 topology="triangle", target_polycount=30000,
+                                 target_formats=None, resize_height=0, origin_at=""):
+        """Create a Meshy.ai remesh task"""
+        try:
+            api_key = bpy.context.scene.blendermcp_meshy_api_key
+            if not api_key:
+                return {"error": "API key is not given"}
+            if not input_task_id and not model_url:
+                return {"error": "Either input_task_id or model_url is required"}
+
+            headers = {
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+            }
+            data = {
+                "topology": topology,
+                "target_polycount": target_polycount,
+                "target_formats": target_formats or ["glb"],
+            }
+            if input_task_id:
+                data["input_task_id"] = input_task_id
+            else:
+                data["model_url"] = model_url
+            if resize_height and resize_height > 0:
+                data["resize_height"] = resize_height
+            if origin_at:
+                data["origin_at"] = origin_at
+
+            response = requests.post(
+                "https://api.meshy.ai/openapi/v1/remesh",
+                headers=headers,
+                json=data,
+            )
+            if response.status_code in (200, 201, 202):
+                result = response.json()
+                return {"task_id": result.get("result", ""), "task_type": "remesh"}
+            return {"error": f"API request failed with status {response.status_code}: {response.text}"}
+        except Exception as e:
+            return {"error": str(e)}
+
+    def poll_meshy_remesh_status(self, task_id):
+        """Poll the status of a Meshy.ai remesh task"""
+        try:
+            api_key = bpy.context.scene.blendermcp_meshy_api_key
+            if not api_key:
+                return {"error": "API key is not given"}
+            if not task_id:
+                return {"error": "task_id is required"}
+
+            headers = {"Authorization": f"Bearer {api_key}"}
+            response = requests.get(
+                f"https://api.meshy.ai/openapi/v1/remesh/{task_id}",
+                headers=headers,
+            )
+            if response.status_code == 200:
+                data = response.json()
+                result = {
+                    "status": data.get("status", "UNKNOWN"),
+                    "progress": data.get("progress", 0),
+                }
+                if data.get("status") == "SUCCEEDED":
+                    result["model_urls"] = data.get("model_urls", {})
+                if data.get("task_error") and data["task_error"].get("message"):
+                    result["error_message"] = data["task_error"]["message"]
+                return result
+            return {"error": f"API request failed with status {response.status_code}: {response.text}"}
+        except Exception as e:
+            return {"error": str(e)}
+
+    def import_meshy_remeshed_asset(self, name, glb_url):
+        """Download and import a Meshy.ai remeshed GLB model"""
+        if not glb_url:
+            return {"succeed": False, "error": "GLB URL not provided"}
+
+        temp_file = tempfile.NamedTemporaryFile(delete=False, prefix="meshy_remesh_", suffix=".glb")
+        try:
+            response = requests.get(glb_url, stream=True)
+            response.raise_for_status()
+            for chunk in response.iter_content(chunk_size=8192):
+                temp_file.write(chunk)
+            temp_file.close()
+        except Exception as e:
+            temp_file.close()
+            os.unlink(temp_file.name)
+            return {"succeed": False, "error": f"Failed to download model: {str(e)}"}
+
+        try:
+            obj = self._clean_imported_glb(filepath=temp_file.name, mesh_name=name)
+            result = {
+                "name": obj.name,
+                "type": obj.type,
+                "location": [obj.location.x, obj.location.y, obj.location.z],
+                "rotation": [obj.rotation_euler.x, obj.rotation_euler.y, obj.rotation_euler.z],
+                "scale": [obj.scale.x, obj.scale.y, obj.scale.z],
+            }
+            if obj.type == "MESH":
+                result["world_bounding_box"] = self._get_aabb(obj)
+            return {"succeed": True, **result}
+        except Exception as e:
+            return {"succeed": False, "error": str(e)}
+
+    def create_meshy_rig_job(self, input_task_id=None, model_url=None, height_meters=1.7):
+        """Create a Meshy.ai auto-rigging task for humanoid models"""
+        try:
+            api_key = bpy.context.scene.blendermcp_meshy_api_key
+            if not api_key:
+                return {"error": "API key is not given"}
+            if not input_task_id and not model_url:
+                return {"error": "Either input_task_id or model_url is required"}
+
+            headers = {
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+            }
+            data = {"height_meters": height_meters}
+            if input_task_id:
+                data["input_task_id"] = input_task_id
+            else:
+                data["model_url"] = model_url
+
+            response = requests.post(
+                "https://api.meshy.ai/openapi/v1/rigging",
+                headers=headers,
+                json=data,
+            )
+            if response.status_code in (200, 201, 202):
+                result = response.json()
+                return {"task_id": result.get("result", ""), "task_type": "rigging"}
+            return {"error": f"API request failed with status {response.status_code}: {response.text}"}
+        except Exception as e:
+            return {"error": str(e)}
+
+    def poll_meshy_rig_status(self, task_id):
+        """Poll the status of a Meshy.ai rigging task"""
+        try:
+            api_key = bpy.context.scene.blendermcp_meshy_api_key
+            if not api_key:
+                return {"error": "API key is not given"}
+            if not task_id:
+                return {"error": "task_id is required"}
+
+            headers = {"Authorization": f"Bearer {api_key}"}
+            response = requests.get(
+                f"https://api.meshy.ai/openapi/v1/rigging/{task_id}",
+                headers=headers,
+            )
+            if response.status_code == 200:
+                data = response.json()
+                result = {
+                    "status": data.get("status", "UNKNOWN"),
+                    "progress": data.get("progress", 0),
+                }
+                if data.get("status") == "SUCCEEDED" and data.get("result"):
+                    rig_result = data["result"]
+                    result["rigged_character_glb_url"] = rig_result.get("rigged_character_glb_url", "")
+                    result["rigged_character_fbx_url"] = rig_result.get("rigged_character_fbx_url", "")
+                    animations = rig_result.get("basic_animations", {})
+                    if animations:
+                        result["basic_animations"] = animations
+                if data.get("task_error") and data["task_error"].get("message"):
+                    result["error_message"] = data["task_error"]["message"]
+                return result
+            return {"error": f"API request failed with status {response.status_code}: {response.text}"}
+        except Exception as e:
+            return {"error": str(e)}
+
+    def import_meshy_rigged_asset(self, name, glb_url):
+        """Download and import a Meshy.ai rigged GLB model (with armature)"""
+        if not glb_url:
+            return {"succeed": False, "error": "GLB URL not provided"}
+
+        temp_file = tempfile.NamedTemporaryFile(delete=False, prefix="meshy_rig_", suffix=".glb")
+        try:
+            response = requests.get(glb_url, stream=True)
+            response.raise_for_status()
+            for chunk in response.iter_content(chunk_size=8192):
+                temp_file.write(chunk)
+            temp_file.close()
+        except Exception as e:
+            temp_file.close()
+            os.unlink(temp_file.name)
+            return {"succeed": False, "error": f"Failed to download model: {str(e)}"}
+
+        try:
+            existing_objects = set(bpy.data.objects)
+            bpy.ops.import_scene.gltf(filepath=temp_file.name)
+            bpy.context.view_layer.update()
+
+            imported_objects = list(set(bpy.data.objects) - existing_objects)
+            if not imported_objects:
+                return {"succeed": False, "error": "No objects were imported"}
+
+            armature_obj = None
+            mesh_objs = []
+            for obj in imported_objects:
+                if obj.type == 'ARMATURE':
+                    armature_obj = obj
+                elif obj.type == 'MESH':
+                    mesh_objs.append(obj)
+
+            if armature_obj and name:
+                armature_obj.name = name
+                if armature_obj.data and armature_obj.data.name:
+                    armature_obj.data.name = f"{name}_Armature"
+
+            result = {
+                "imported_objects": [obj.name for obj in imported_objects],
+                "armature": armature_obj.name if armature_obj else None,
+                "meshes": [obj.name for obj in mesh_objs],
+            }
+            primary = armature_obj or (mesh_objs[0] if mesh_objs else imported_objects[0])
+            result["location"] = [primary.location.x, primary.location.y, primary.location.z]
+            result["rotation"] = [primary.rotation_euler.x, primary.rotation_euler.y, primary.rotation_euler.z]
+            result["scale"] = [primary.scale.x, primary.scale.y, primary.scale.z]
+
+            for obj in mesh_objs:
+                if obj.type == "MESH":
+                    result["world_bounding_box"] = self._get_aabb(obj)
+                    break
+
+            return {"succeed": True, **result}
+        except Exception as e:
+            return {"succeed": False, "error": str(e)}
+    #endregion
+
 # Blender Addon Preferences
 class BLENDERMCP_AddonPreferences(bpy.types.AddonPreferences):
     bl_idname = __name__
@@ -2392,7 +2819,11 @@ class BLENDERMCP_PT_Panel(bpy.types.Panel):
                 layout.prop(scene, "blendermcp_hunyuan3d_num_inference_steps", text="Number of Inference Steps")
                 layout.prop(scene, "blendermcp_hunyuan3d_guidance_scale", text="Guidance Scale")
                 layout.prop(scene, "blendermcp_hunyuan3d_texture", text="Generate Texture")
-        
+
+        layout.prop(scene, "blendermcp_use_meshy", text="Use Meshy.ai 3D model generation")
+        if scene.blendermcp_use_meshy:
+            layout.prop(scene, "blendermcp_meshy_api_key", text="API Key")
+
         if not scene.blendermcp_server_running:
             layout.operator("blendermcp.start_server", text="Connect to MCP server")
         else:
@@ -2587,6 +3018,19 @@ def register():
         default=""
     )
 
+    bpy.types.Scene.blendermcp_use_meshy = bpy.props.BoolProperty(
+        name="Use Meshy.ai",
+        description="Enable Meshy.ai 3D model generation integration",
+        default=False
+    )
+
+    bpy.types.Scene.blendermcp_meshy_api_key = bpy.props.StringProperty(
+        name="Meshy API Key",
+        subtype="PASSWORD",
+        description="API Key provided by Meshy.ai",
+        default=""
+    )
+
     # Register preferences class
     bpy.utils.register_class(BLENDERMCP_AddonPreferences)
 
@@ -2628,6 +3072,8 @@ def unregister():
     del bpy.types.Scene.blendermcp_hunyuan3d_num_inference_steps
     del bpy.types.Scene.blendermcp_hunyuan3d_guidance_scale
     del bpy.types.Scene.blendermcp_hunyuan3d_texture
+    del bpy.types.Scene.blendermcp_use_meshy
+    del bpy.types.Scene.blendermcp_meshy_api_key
 
     print("BlenderMCP addon unregistered")
 
