@@ -2377,7 +2377,12 @@ class BlenderMCPServer:
                         3. Restart the connection to Claude"""
         }
 
-    def create_meshy_job(self, image_url=None, text_prompt=None, enable_pbr=False):
+    def create_meshy_job(self, image_url=None, text_prompt=None, enable_pbr=False,
+                         ai_model="meshy-6", should_remesh=False, target_polycount=30000,
+                         topology="triangle", symmetry_mode="auto", pose_mode="",
+                         model_type="standard", should_texture=True,
+                         save_pre_remeshed_model=False, texture_prompt="",
+                         image_enhancement=True, remove_lighting=True):
         """Create a Meshy.ai generation task (Image to 3D or Text to 3D preview)"""
         try:
             api_key = bpy.context.scene.blendermcp_meshy_api_key
@@ -2396,10 +2401,23 @@ class BlenderMCPServer:
                 data = {
                     "image_url": image_url,
                     "enable_pbr": enable_pbr,
-                    "should_remesh": False,
-                    "should_texture": True,
+                    "ai_model": ai_model,
+                    "should_remesh": should_remesh,
+                    "topology": topology,
+                    "symmetry_mode": symmetry_mode,
+                    "model_type": model_type,
+                    "should_texture": should_texture,
+                    "image_enhancement": image_enhancement,
+                    "remove_lighting": remove_lighting,
                     "target_formats": ["glb"],
                 }
+                if should_remesh:
+                    data["target_polycount"] = target_polycount
+                    data["save_pre_remeshed_model"] = save_pre_remeshed_model
+                if pose_mode:
+                    data["pose_mode"] = pose_mode
+                if texture_prompt:
+                    data["texture_prompt"] = texture_prompt
                 response = requests.post(
                     "https://api.meshy.ai/openapi/v1/image-to-3d",
                     headers=headers,
@@ -2410,9 +2428,16 @@ class BlenderMCPServer:
                 data = {
                     "mode": "preview",
                     "prompt": text_prompt,
-                    "should_remesh": False,
+                    "ai_model": ai_model,
+                    "should_remesh": should_remesh,
+                    "topology": topology,
+                    "symmetry_mode": symmetry_mode,
                     "target_formats": ["glb"],
                 }
+                if should_remesh:
+                    data["target_polycount"] = target_polycount
+                if pose_mode:
+                    data["pose_mode"] = pose_mode
                 response = requests.post(
                     "https://api.meshy.ai/openapi/v2/text-to-3d",
                     headers=headers,
