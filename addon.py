@@ -13,6 +13,7 @@ import traceback
 import os
 import shutil
 import zipfile
+from bpy.app.handlers import persistent
 from bpy.props import IntProperty, BoolProperty
 import io
 from datetime import datetime
@@ -1205,7 +1206,7 @@ class BlenderMCPServer:
                 images = []
             """Call Rodin API, get the job uuid and subscription key"""
             files = [
-                *[("images", (f"{i:04d}{img_suffix}", img)) for i, (img_suffix, img) in enumerate(images)],
+                *[("images", (f"{i:04d}{img_suffix}", base64.b64decode(img))) for i, (img_suffix, img) in enumerate(images)],
                 ("tier", (None, "Sketch")),
                 ("mesh_mode", (None, "Raw")),
             ]
@@ -1214,7 +1215,7 @@ class BlenderMCPServer:
             if bbox_condition:
                 files.append(("bbox_condition", (None, json.dumps(bbox_condition))))
             response = requests.post(
-                "https://hyperhuman.deemos.com/api/v2/rodin",
+                "https://api.hyper3d.com/api/v2/rodin",
                 headers={
                     "Authorization": f"Bearer {bpy.context.scene.blendermcp_hyper3d_api_key}",
                 },
@@ -1266,7 +1267,7 @@ class BlenderMCPServer:
     def poll_rodin_job_status_main_site(self, subscription_key: str):
         """Call the job status API to get the job status"""
         response = requests.post(
-            "https://hyperhuman.deemos.com/api/v2/status",
+            "https://api.hyper3d.com/api/v2/status",
             headers={
                 "Authorization": f"Bearer {bpy.context.scene.blendermcp_hyper3d_api_key}",
             },
@@ -1369,7 +1370,7 @@ class BlenderMCPServer:
     def import_generated_asset_main_site(self, task_uuid: str, name: str):
         """Fetch the generated asset, import into blender"""
         response = requests.post(
-            "https://hyperhuman.deemos.com/api/v2/download",
+            "https://api.hyper3d.com/api/v2/download",
             headers={
                 "Authorization": f"Bearer {bpy.context.scene.blendermcp_hyper3d_api_key}",
             },
@@ -2081,9 +2082,9 @@ class BlenderMCPServer:
             if text_prompt and image:
                 return {"error": "Prompt and Image cannot be provided simultaneously"}
             # Fixed parameter configuration
-            service = "hunyuan"
-            action = "SubmitHunyuanTo3DJob"
-            version = "2023-09-01"
+            service = "ai3d"
+            action = "SubmitHunyuanTo3DProJob"
+            version = "2025-05-13"
             region = "ap-guangzhou"
 
             headParams={
@@ -2093,14 +2094,12 @@ class BlenderMCPServer:
             }
 
             # Constructing request parameters
-            data = {
-                "Num": 1  # The current API limit is only 1
-            }
+            data = {}
 
             # Handling text prompts
             if text_prompt:
-                if len(text_prompt) > 200:
-                    return {"error": "Prompt exceeds 200 characters limit"}
+                if len(text_prompt) > 1024:
+                    return {"error": "Prompt exceeds 1024 characters limit"}
                 data["Prompt"] = text_prompt
 
             # Handling image
@@ -2228,9 +2227,9 @@ class BlenderMCPServer:
             if not job_id:
                 return {"error": "JobId is required"}
             
-            service = "hunyuan"
-            action = "QueryHunyuanTo3DJob"
-            version = "2023-09-01"
+            service = "ai3d"
+            action = "QueryHunyuanTo3DProJob"
+            version = "2025-05-13"
             region = "ap-guangzhou"
 
             headParams={
@@ -2263,45 +2262,64 @@ class BlenderMCPServer:
     def import_generated_asset_hunyuan(self, *args, **kwargs):
         return self.import_generated_asset_hunyuan_ai(*args, **kwargs)
             
-    def import_generated_asset_hunyuan_ai(self, name: str , zip_file_url: str):
-        if not zip_file_url:
-            return {"error": "Zip file not found"}
+    def import_generated_asset_hunyuan_ai(self, name: str, file_url: str = None, zip_file_url: str = None):
+        url = file_url or zip_file_url
+        if not url:
+            return {"error": "File URL not provided"}
         
-        # Validate URL
-        if not re.match(r'^https?://', zip_file_url, re.IGNORECASE):
+        if not re.match(r'^https?://', url, re.IGNORECASE):
             return {"error": "Invalid URL format. Must start with http:// or https://"}
         
-        # Create a temporary directory
         temp_dir = tempfile.mkdtemp(prefix="tencent_obj_")
-        zip_file_path = osp.join(temp_dir, "model.zip")
-        obj_file_path = osp.join(temp_dir, "model.obj")
-        mtl_file_path = osp.join(temp_dir, "model.mtl")
 
         try:
-            # Download ZIP file
-            zip_response = requests.get(zip_file_url, stream=True)
-            zip_response.raise_for_status()
-            with open(zip_file_path, "wb") as f:
-                for chunk in zip_response.iter_content(chunk_size=8192):
-                    f.write(chunk)
+            response = requests.get(url, stream=True)
+            response.raise_for_status()
 
-            # Unzip the ZIP
-            with zipfile.ZipFile(zip_file_path, "r") as zip_ref:
-                zip_ref.extractall(temp_dir)
-
-            # Find the .obj file (there may be multiple, assuming the main file is model.obj)
-            for file in os.listdir(temp_dir):
-                if file.endswith(".obj"):
-                    obj_file_path = osp.join(temp_dir, file)
-
-            if not osp.exists(obj_file_path):
-                return {"succeed": False, "error": "OBJ file not found after extraction"}
-
-            # Import obj file
-            if bpy.app.version>=(4, 0, 0):
-                bpy.ops.wm.obj_import(filepath=obj_file_path)
+            url_lower = url.lower().split('?')[0]
+            
+            if url_lower.endswith('.glb') or url_lower.endswith('.gltf'):
+                filepath = osp.join(temp_dir, "model.glb")
+                with open(filepath, "wb") as f:
+                    for chunk in response.iter_content(chunk_size=8192):
+                        f.write(chunk)
+                bpy.ops.import_scene.gltf(filepath=filepath)
+            elif url_lower.endswith('.fbx'):
+                filepath = osp.join(temp_dir, "model.fbx")
+                with open(filepath, "wb") as f:
+                    for chunk in response.iter_content(chunk_size=8192):
+                        f.write(chunk)
+                bpy.ops.import_scene.fbx(filepath=filepath)
             else:
-                bpy.ops.import_scene.obj(filepath=obj_file_path)
+                downloaded_path = osp.join(temp_dir, "model_download")
+                with open(downloaded_path, "wb") as f:
+                    for chunk in response.iter_content(chunk_size=8192):
+                        f.write(chunk)
+
+                is_zip = False
+                try:
+                    with zipfile.ZipFile(downloaded_path, "r") as zip_ref:
+                        zip_ref.extractall(temp_dir)
+                    is_zip = True
+                except zipfile.BadZipFile:
+                    pass
+
+                if is_zip:
+                    obj_file_path = None
+                    for file in os.listdir(temp_dir):
+                        if file.endswith(".obj"):
+                            obj_file_path = osp.join(temp_dir, file)
+                            break
+                    if not obj_file_path:
+                        return {"succeed": False, "error": "OBJ file not found after ZIP extraction"}
+                else:
+                    obj_file_path = osp.join(temp_dir, "model.obj")
+                    os.rename(downloaded_path, obj_file_path)
+
+                if bpy.app.version >= (4, 0, 0):
+                    bpy.ops.wm.obj_import(filepath=obj_file_path)
+                else:
+                    bpy.ops.import_scene.obj(filepath=obj_file_path)
 
             imported_objs = [obj for obj in bpy.context.selected_objects if obj.type == 'MESH']
             if not imported_objs:
@@ -2327,12 +2345,8 @@ class BlenderMCPServer:
         except Exception as e:
             return {"succeed": False, "error": str(e)}
         finally:
-            #  Clean up temporary zip and obj, save texture and mtl
             try:
-                if os.path.exists(zip_file_path):
-                    os.remove(zip_file_path) 
-                if os.path.exists(obj_file_path):
-                    os.remove(obj_file_path)
+                shutil.rmtree(temp_dir, ignore_errors=True)
             except Exception as e:
                 print(f"Failed to clean up temporary directory {temp_dir}: {e}")
     #endregion
@@ -2824,6 +2838,10 @@ class BLENDERMCP_PT_Panel(bpy.types.Panel):
         if scene.blendermcp_use_meshy:
             layout.prop(scene, "blendermcp_meshy_api_key", text="API Key")
 
+        server_exists = hasattr(bpy.types, "blendermcp_server") and bpy.types.blendermcp_server is not None
+        if scene.blendermcp_server_running and not server_exists:
+            scene.blendermcp_server_running = False
+
         if not scene.blendermcp_server_running:
             layout.operator("blendermcp.start_server", text="Connect to MCP server")
         else:
@@ -2895,6 +2913,12 @@ class BLENDERMCP_OT_OpenTerms(bpy.types.Operator):
             self.report({'ERROR'}, f"Could not open Terms and Conditions: {str(e)}")
         
         return {'FINISHED'}
+
+@persistent
+def _reset_server_state(_):
+    """Reset server running state on file load since the server doesn't survive restart."""
+    for scene in bpy.data.scenes:
+        scene.blendermcp_server_running = False
 
 # Registration functions
 def register():
@@ -3040,6 +3064,8 @@ def register():
     bpy.utils.register_class(BLENDERMCP_OT_StopServer)
     bpy.utils.register_class(BLENDERMCP_OT_OpenTerms)
 
+    bpy.app.handlers.load_post.append(_reset_server_state)
+
     print("BlenderMCP addon registered")
 
 def unregister():
@@ -3074,6 +3100,9 @@ def unregister():
     del bpy.types.Scene.blendermcp_hunyuan3d_texture
     del bpy.types.Scene.blendermcp_use_meshy
     del bpy.types.Scene.blendermcp_meshy_api_key
+
+    if _reset_server_state in bpy.app.handlers.load_post:
+        bpy.app.handlers.load_post.remove(_reset_server_state)
 
     print("BlenderMCP addon unregistered")
 
