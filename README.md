@@ -6,7 +6,7 @@ BlenderMCP connects Blender to Claude AI through the Model Context Protocol (MCP
 
 **We have no official website. Any website you see online is unofficial and has no affiliation with this project. Use them at your own risk.**
 
-[Full tutorial](https://www.youtube.com/watch?v=lCyQ717DuzQ)
+<a href="https://www.youtube.com/watch?v=lCyQ717DuzQ" target="_blank">Full tutorial</a>
 
 ### Join the Community
 
@@ -93,7 +93,7 @@ export BLENDER_PORT=9876
 
 ### Claude for Desktop Integration
 
-[Watch the setup instruction video](https://www.youtube.com/watch?v=neoK_WMq92g) (Assuming you have already installed uv)
+<a href="https://www.youtube.com/watch?v=neoK_WMq92g" target="_blank">Watch the setup instruction video</a> (Assuming you have already installed uv)
 
 Go to Claude > Settings > Developer > Edit Config > claude_desktop_config.json to include the following:
 
@@ -159,7 +159,7 @@ For Windows users, go to Settings > MCP > Add Server, add a new server with the 
 }
 ```
 
-[Cursor setup video](https://www.youtube.com/watch?v=wgWsJshecac)
+<a href="https://www.youtube.com/watch?v=wgWsJshecac" target="_blank">Cursor setup video</a>
 
 **⚠️ Only run one instance of the MCP server (either on Cursor or Claude Desktop), not both**
 
@@ -209,11 +209,11 @@ Once the config file has been set on Claude, and the addon is running on Blender
 
 Here are some examples of what you can ask Claude to do:
 
-- "Create a low poly scene in a dungeon, with a dragon guarding a pot of gold" [Demo](https://www.youtube.com/watch?v=DqgKuLYUv00)
-- "Create a beach vibe using HDRIs, textures, and models like rocks and vegetation from Poly Haven" [Demo](https://www.youtube.com/watch?v=I29rn92gkC4)
-- Give a reference image, and create a Blender scene out of it [Demo](https://www.youtube.com/watch?v=FDRb03XPiRo)
+- "Create a low poly scene in a dungeon, with a dragon guarding a pot of gold" <a href="https://www.youtube.com/watch?v=DqgKuLYUv00" target="_blank">Demo</a>
+- "Create a beach vibe using HDRIs, textures, and models like rocks and vegetation from Poly Haven" <a href="https://www.youtube.com/watch?v=I29rn92gkC4" target="_blank">Demo</a>
+- Give a reference image, and create a Blender scene out of it <a href="https://www.youtube.com/watch?v=FDRb03XPiRo" target="_blank">Demo</a>
 - "Generate a 3D model of a garden gnome through Hyper3D"
-- "Get information about the current scene, and make a threejs sketch from it" [Demo](https://www.youtube.com/watch?v=jxbNI5L7AH8)
+- "Get information about the current scene, and make a threejs sketch from it" <a href="https://www.youtube.com/watch?v=jxbNI5L7AH8" target="_blank">Demo</a>
 - "Make this car red and metallic" 
 - "Create a sphere and place it above the cube"
 - "Make the lighting like a studio"

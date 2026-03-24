@@ -5,6 +5,7 @@ import json
 import asyncio
 import logging
 import tempfile
+import time
 from dataclasses import dataclass
 from contextlib import asynccontextmanager
 from typing import AsyncIterator, Dict, Any, List
@@ -31,6 +32,7 @@ class BlenderConnection:
     host: str
     port: int
     sock: socket.socket = None  # Changed from 'socket' to 'sock' to avoid naming conflict
+    _last_verified: float = 0
     
     def connect(self) -> bool:
         """Connect to the Blender addon socket server"""
@@ -41,6 +43,7 @@ class BlenderConnection:
             self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             self.sock.connect((self.host, self.port))
             logger.info(f"Connected to Blender at {self.host}:{self.port}")
+            self._last_verified = time.time()
             return True
         except Exception as e:
             logger.error(f"Failed to connect to Blender: {str(e)}")
@@ -56,62 +59,47 @@ class BlenderConnection:
                 logger.error(f"Error disconnecting from Blender: {str(e)}")
             finally:
                 self.sock = None
+                self._last_verified = 0
 
     def receive_full_response(self, sock, buffer_size=8192):
-        """Receive the complete response, potentially in multiple chunks"""
+        """Memory-efficient JSON response receiver for large Blender payloads"""
         chunks = []
-        # Use a consistent timeout value that matches the addon's timeout
-        sock.settimeout(180.0)  # Match the addon's timeout
+        sock.settimeout(180.0)
+        decoder = json.JSONDecoder()
         
         try:
             while True:
-                try:
-                    chunk = sock.recv(buffer_size)
-                    if not chunk:
-                        # If we get an empty chunk, the connection might be closed
-                        if not chunks:  # If we haven't received anything yet, this is an error
-                            raise Exception("Connection closed before receiving any data")
-                        break
-                    
-                    chunks.append(chunk)
-                    
-                    # Check if we've received a complete JSON object
+                chunk = sock.recv(buffer_size)
+                if not chunk:
+                    if not chunks:
+                        raise Exception("Connection closed before receiving data")
+                    break
+                
+                chunks.append(chunk)
+                
+                # Only attempt decode if the chunk looks like a possible JSON end to avoid N^2 overhead
+                if chunk.rstrip().endswith(b'}'):
                     try:
                         data = b''.join(chunks)
-                        json.loads(data.decode('utf-8'))
-                        # If we get here, it parsed successfully
-                        logger.info(f"Received complete response ({len(data)} bytes)")
-                        return data
-                    except json.JSONDecodeError:
-                        # Incomplete JSON, continue receiving
+                        decoded = data.decode('utf-8')
+                        try:
+                            # raw_decode returns the object and the index where it ended
+                            obj, index = decoder.raw_decode(decoded)
+                            # We return only the part that belongs to this JSON object
+                            return decoded[:index].encode('utf-8')
+                        except json.JSONDecodeError:
+                            # Incomplete JSON, continue receiving
+                            continue
+                    except UnicodeDecodeError:
+                        # Partial UTF-8 sequence, continue receiving
                         continue
-                except socket.timeout:
-                    # If we hit a timeout during receiving, break the loop and try to use what we have
-                    logger.warning("Socket timeout during chunked receive")
-                    break
-                except (ConnectionError, BrokenPipeError, ConnectionResetError) as e:
-                    logger.error(f"Socket connection error during receive: {str(e)}")
-                    raise  # Re-raise to be handled by the caller
-        except socket.timeout:
-            logger.warning("Socket timeout during chunked receive")
+                    
+            if chunks:
+                return b''.join(chunks)
+            raise Exception("No data received from Blender")
         except Exception as e:
-            logger.error(f"Error during receive: {str(e)}")
+            logger.error(f"Error receiving data from Blender: {str(e)}")
             raise
-            
-        # If we get here, we either timed out or broke out of the loop
-        # Try to use what we have
-        if chunks:
-            data = b''.join(chunks)
-            logger.info(f"Returning data after receive completion ({len(data)} bytes)")
-            try:
-                # Try to parse what we have
-                json.loads(data.decode('utf-8'))
-                return data
-            except json.JSONDecodeError:
-                # If we can't parse it, it's incomplete
-                raise Exception("Incomplete JSON response received")
-        else:
-            raise Exception("No data received")
 
     def send_command(self, command_type: str, params: Dict[str, Any] = None) -> Dict[str, Any]:
         """Send a command to Blender and return the response"""
@@ -124,47 +112,37 @@ class BlenderConnection:
         }
         
         try:
-            # Log the command being sent
-            logger.info(f"Sending command: {command_type} with params: {params}")
-            
             # Send the command
             self.sock.sendall(json.dumps(command).encode('utf-8'))
-            logger.info(f"Command sent, waiting for response...")
+            logger.info(f"Command sent: {command_type}")
             
-            # Set a timeout for receiving - use the same timeout as in receive_full_response
-            self.sock.settimeout(180.0)  # Match the addon's timeout
-            
-            # Receive the response using the improved receive_full_response method
+            # Receive the response
             response_data = self.receive_full_response(self.sock)
-            logger.info(f"Received {len(response_data)} bytes of data")
             
-            response = json.loads(response_data.decode('utf-8'))
-            logger.info(f"Response parsed, status: {response.get('status', 'unknown')}")
+            # Parse the response
+            try:
+                response = json.loads(response_data.decode('utf-8'))
+                self._last_verified = time.time()
+            except json.JSONDecodeError as e:
+                logger.error(f"Failed to parse response: {response_data}")
+                raise Exception(f"Invalid JSON response from Blender: {str(e)}")
             
             if response.get("status") == "error":
                 logger.error(f"Blender error: {response.get('message')}")
                 raise Exception(response.get("message", "Unknown error from Blender"))
-            
+                
             return response.get("result", {})
+            
         except socket.timeout:
             logger.error("Socket timeout while waiting for response from Blender")
-            # Don't try to reconnect here - let the get_blender_connection handle reconnection
-            # Just invalidate the current socket so it will be recreated next time
             self.sock = None
-            raise Exception("Timeout waiting for Blender response - try simplifying your request")
+            raise Exception("Timeout waiting for Blender response")
         except (ConnectionError, BrokenPipeError, ConnectionResetError) as e:
             logger.error(f"Socket connection error: {str(e)}")
             self.sock = None
             raise Exception(f"Connection to Blender lost: {str(e)}")
-        except json.JSONDecodeError as e:
-            logger.error(f"Invalid JSON response from Blender: {str(e)}")
-            # Try to log what was received
-            if 'response_data' in locals() and response_data:
-                logger.error(f"Raw response (first 200 bytes): {response_data[:200]}")
-            raise Exception(f"Invalid response from Blender: {str(e)}")
         except Exception as e:
             logger.error(f"Error communicating with Blender: {str(e)}")
-            # Don't try to reconnect here - let the get_blender_connection handle reconnection
             self.sock = None
             raise Exception(f"Communication error with Blender: {str(e)}")
 
@@ -218,18 +196,22 @@ _polyhaven_enabled = False  # Add this global variable
 
 def get_blender_connection():
     """Get or create a persistent Blender connection"""
-    global _blender_connection, _polyhaven_enabled  # Add _polyhaven_enabled to globals
+    global _blender_connection, _polyhaven_enabled
+    
+    now = time.time()
     
     # If we have an existing connection, check if it's still valid
-    if _blender_connection is not None:
+    if _blender_connection is not None and _blender_connection.sock:
+        # If verified recently (within 30 seconds), just return it
+        if (now - _blender_connection._last_verified) < 30:
+            return _blender_connection
+            
         try:
-            # First check if PolyHaven is enabled by sending a ping command
+            # Re-verify by checking PolyHaven status
             result = _blender_connection.send_command("get_polyhaven_status")
-            # Store the PolyHaven status globally
             _polyhaven_enabled = result.get("enabled", False)
             return _blender_connection
         except Exception as e:
-            # Connection is dead, close it and create a new one
             logger.warning(f"Existing connection is no longer valid: {str(e)}")
             try:
                 _blender_connection.disconnect()
@@ -243,27 +225,43 @@ def get_blender_connection():
         port = int(os.getenv("BLENDER_PORT", DEFAULT_PORT))
         _blender_connection = BlenderConnection(host=host, port=port)
         if not _blender_connection.connect():
-            logger.error("Failed to connect to Blender")
             _blender_connection = None
             raise Exception("Could not connect to Blender. Make sure the Blender addon is running.")
-        logger.info("Created new persistent connection to Blender")
-    
+        
+        # Initial verification and status check
+        try:
+            result = _blender_connection.send_command("get_polyhaven_status")
+            _polyhaven_enabled = result.get("enabled", False)
+        except:
+            logger.warning("Could not get initial PolyHaven status")
+            
     return _blender_connection
 
 
 @telemetry_tool("get_scene_info")
 @mcp.tool()
 def get_scene_info(ctx: Context) -> str:
-    """Get detailed information about the current Blender scene"""
+    """Get detailed information about the current Blender scene with selection awareness.
+    Includes active object, selected objects, object count, and cursor location."""
     try:
         blender = get_blender_connection()
         result = blender.send_command("get_scene_info")
-
-        # Just return the JSON representation of what Blender sent us
         return json.dumps(result, indent=2)
     except Exception as e:
         logger.error(f"Error getting scene info from Blender: {str(e)}")
-        return f"Error getting scene info: {str(e)}"
+        return f"Error: {str(e)}. Make sure Blender is open and the addon is running."
+
+@mcp.tool()
+def is_ready(ctx: Context) -> str:
+    """Check if the Blender connection is active and ready for commands."""
+    try:
+        blender = get_blender_connection()
+        # Ping blender with a simple command
+        blender.send_command("get_scene_info")
+        return "SUCCESS: Blender is connected and ready."
+    except Exception as e:
+        return f"FAILED: {str(e)}. Please click 'Connect to Claude' in the Blender Sidebar."
+
 
 @telemetry_tool("get_object_info")
 @mcp.tool()
@@ -295,6 +293,7 @@ def get_viewport_screenshot(ctx: Context, max_size: int = 800) -> Image:
     
     Returns the screenshot as an Image.
     """
+    temp_path = None
     try:
         blender = get_blender_connection()
         
@@ -318,14 +317,18 @@ def get_viewport_screenshot(ctx: Context, max_size: int = 800) -> Image:
         with open(temp_path, 'rb') as f:
             image_bytes = f.read()
         
-        # Delete the temp file
-        os.remove(temp_path)
-        
         return Image(data=image_bytes, format="png")
         
     except Exception as e:
         logger.error(f"Error capturing screenshot: {str(e)}")
         raise Exception(f"Screenshot failed: {str(e)}")
+    finally:
+        # CRITICAL: Always clean up the temp file
+        if temp_path and os.path.exists(temp_path):
+            try:
+                os.remove(temp_path)
+            except:
+                pass
 
 
 @telemetry_tool("execute_blender_code")
@@ -341,7 +344,10 @@ def execute_blender_code(ctx: Context, code: str) -> str:
         # Get the global connection
         blender = get_blender_connection()
         result = blender.send_command("execute_code", {"code": code})
-        return f"Code executed successfully: {result.get('result', '')}"
+        if result.get("executed"):
+            return f"Code executed successfully: {result.get('result', '')}"
+        else:
+            return f"Code execution failed: {result.get('error', 'Unknown error')}"
     except Exception as e:
         logger.error(f"Error executing code: {str(e)}")
         return f"Error executing code: {str(e)}"
@@ -677,7 +683,7 @@ def search_sketchfab_models(
         logger.error(traceback.format_exc())
         return f"Error searching Sketchfab models: {str(e)}"
 
-@telemetry_tool("download_sketchfab_model")
+@telemetry_tool("get_sketchfab_model_preview")
 @mcp.tool()
 def get_sketchfab_model_preview(
     ctx: Context,

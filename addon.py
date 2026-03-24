@@ -102,6 +102,12 @@ class BlenderMCPServer:
                     client, address = self.socket.accept()
                     print(f"Connected to client: {address}")
 
+                    # Notify UI of connection
+                    def notify_connect():
+                        bpy.ops.blendermcp.report_info(message=f"Connected to Claude: {address[0]}")
+                        return None
+                    bpy.app.timers.register(notify_connect)
+
                     # Handle client in a separate thread
                     client_thread = threading.Thread(
                         target=self._handle_client,
@@ -128,6 +134,49 @@ class BlenderMCPServer:
         print("Client handler started")
         client.settimeout(None)  # No timeout
         buffer = b''
+        decoder = json.JSONDecoder()
+        
+        # Queue for sequential command processing
+        command_queue = []
+        is_processing = [False] # Use a list to make it mutable in the closure
+        queue_lock = threading.Lock()
+
+        def process_next_command():
+            with queue_lock:
+                if not command_queue:
+                    is_processing[0] = False
+                    return None
+                
+                is_processing[0] = True
+                cmd = command_queue.pop(0)
+            
+            try:
+                # Execute command in Blender's main thread
+                response = self.execute_command(cmd)
+                response_json = json.dumps(response)
+                try:
+                    client.sendall(response_json.encode('utf-8'))
+                except:
+                    print("Failed to send response - client disconnected")
+            except Exception as e:
+                print(f"Error executing command: {str(e)}")
+                traceback.print_exc()
+                try:
+                    error_response = {
+                        "status": "error",
+                        "message": str(e)
+                    }
+                    client.sendall(json.dumps(error_response).encode('utf-8'))
+                except:
+                    pass
+            
+            with queue_lock:
+                # Schedule next command processing
+                if command_queue:
+                    return 0.0
+                else:
+                    is_processing[0] = False
+                    return None
 
         try:
             while self.running:
@@ -139,38 +188,68 @@ class BlenderMCPServer:
                         break
 
                     buffer += data
-                    try:
-                        # Try to parse command
-                        command = json.loads(buffer.decode('utf-8'))
-                        buffer = b''
+                    
+                    while buffer:
+                        decoded = None
+                        try:
+                            # Try to parse one JSON object
+                            decoded = buffer.decode('utf-8')
+                            command, index = decoder.raw_decode(decoded)
+                            
+                            # Success! Prepare remaining buffer for next iteration
+                            buffer = decoded[index:].encode('utf-8').lstrip()
 
-                        # Execute command in Blender's main thread
-                        def execute_wrapper():
-                            try:
-                                response = self.execute_command(command)
-                                response_json = json.dumps(response)
+                            should_start = False
+                            with queue_lock:
+                                # Add to queue and trigger processing if not already running
+                                command_queue.append(command)
+                                if not is_processing[0]:
+                                    is_processing[0] = True
+                                    should_start = True
+                            
+                            if should_start:
+                                bpy.app.timers.register(process_next_command, first_interval=0.0)
+                            
+                        except json.JSONDecodeError as exc:
+                            # Differentiate between incomplete frames and malformed input
+                            if decoded is not None:
+                                # Heuristic to determine if JSON is incomplete or just malformed
+                                # "Expecting value" at the very end usually means more data is needed
+                                is_incomplete = (
+                                    exc.pos == len(decoded)
+                                    or exc.msg.startswith("Unterminated string")
+                                    or (exc.msg.startswith("Expecting value") and exc.pos >= len(decoded.rstrip()))
+                                )
+                                
+                                if is_incomplete:
+                                    # Incomplete JSON, wait for more data
+                                    break
+                                
+                                # Malformed JSON - send error to client and reset
+                                print(f"Malformed JSON received: {str(exc)}")
                                 try:
-                                    client.sendall(response_json.encode('utf-8'))
-                                except:
-                                    print("Failed to send response - client disconnected")
-                            except Exception as e:
-                                print(f"Error executing command: {str(e)}")
-                                traceback.print_exc()
-                                try:
-                                    error_response = {
-                                        "status": "error",
-                                        "message": str(e)
-                                    }
+                                    error_response = {"status": "error", "message": f"Invalid JSON command: {exc.msg}"}
                                     client.sendall(json.dumps(error_response).encode('utf-8'))
-                                except:
-                                    pass
-                            return None
-
-                        # Schedule execution in main thread
-                        bpy.app.timers.register(execute_wrapper, first_interval=0.0)
-                    except json.JSONDecodeError:
-                        # Incomplete data, wait for more
-                        pass
+                                except socket.error as se:
+                                    print(f"Failed to send JSON error response: {str(se)}")
+                                
+                                # Clear buffer to recover
+                                buffer = b''
+                                return
+                            break
+                        except UnicodeDecodeError as exc:
+                            if exc.reason == "unexpected end of data":
+                                # Partial UTF-8 sequence at the buffer end, wait for more
+                                break
+                            
+                            print(f"Invalid UTF-8 in command stream: {str(exc)}")
+                            try:
+                                error_response = {"status": "error", "message": "Invalid UTF-8 in command stream"}
+                                client.sendall(json.dumps(error_response).encode('utf-8'))
+                            except socket.error as se:
+                                print(f"Failed to send UTF8 error response: {str(se)}")
+                            return
+                            
                 except Exception as e:
                     print(f"Error receiving data: {str(e)}")
                     break
@@ -182,6 +261,12 @@ class BlenderMCPServer:
             except:
                 pass
             print("Client handler stopped")
+            
+            # Notify UI of disconnection
+            def notify_disconnect():
+                bpy.ops.blendermcp.report_info(message="Claude disconnected")
+                return None
+            bpy.app.timers.register(notify_disconnect)
 
     def execute_command(self, command):
         """Execute a command in the main Blender thread"""
@@ -269,37 +354,39 @@ class BlenderMCPServer:
 
 
     def get_scene_info(self):
-        """Get information about the current Blender scene"""
+        """Get information about the current Blender scene with selection awareness"""
         try:
             print("Getting scene info...")
-            # Simplify the scene info to reduce data size
             scene_info = {
                 "name": bpy.context.scene.name,
+                "active_object": bpy.context.active_object.name if bpy.context.active_object else None,
+                "selected_objects": [obj.name for obj in bpy.context.selected_objects],
                 "object_count": len(bpy.context.scene.objects),
                 "objects": [],
                 "materials_count": len(bpy.data.materials),
+                "cursor_location": [bpy.context.scene.cursor.location.x, 
+                                   bpy.context.scene.cursor.location.y, 
+                                   bpy.context.scene.cursor.location.z],
             }
 
-            # Collect minimal object information (limit to first 10 objects)
+            # Collect minimal object information (limit to first 15 objects)
             for i, obj in enumerate(bpy.context.scene.objects):
-                if i >= 10:  # Reduced from 20 to 10
+                if i >= 15:
                     break
 
                 obj_info = {
                     "name": obj.name,
                     "type": obj.type,
-                    # Only include basic location data
+                    "is_selected": obj.select_get(),
                     "location": [round(float(obj.location.x), 2),
                                 round(float(obj.location.y), 2),
                                 round(float(obj.location.z), 2)],
                 }
                 scene_info["objects"].append(obj_info)
 
-            print(f"Scene info collected: {len(scene_info['objects'])} objects")
             return scene_info
         except Exception as e:
             print(f"Error in get_scene_info: {str(e)}")
-            traceback.print_exc()
             return {"error": str(e)}
 
     @staticmethod
@@ -391,7 +478,10 @@ class BlenderMCPServer:
                 bpy.ops.screen.screenshot_area(filepath=filepath)
 
             # Load and resize if needed
+            # Use a unique name to avoid conflicts with existing images in Blender
+            img_name = f"mcp_screenshot_{int(time.time())}"
             img = bpy.data.images.load(filepath)
+            img.name = img_name
             width, height = img.size
 
             if max(width, height) > max_size:
@@ -419,21 +509,44 @@ class BlenderMCPServer:
             return {"error": str(e)}
 
     def execute_code(self, code):
-        """Execute arbitrary Blender Python code"""
-        # This is powerful but potentially dangerous - use with caution
+        """Execute arbitrary Blender Python code with context safety and output capture"""
         try:
-            # Create a local namespace for execution
-            namespace = {"bpy": bpy}
+            # Prepare namespace with common utilities
+            namespace = {
+                "bpy": bpy, 
+                "mathutils": mathutils,
+                "context": bpy.context
+            }
 
-            # Capture stdout during execution, and return it as result
+            # Capture stdout during execution
             capture_buffer = io.StringIO()
             with redirect_stdout(capture_buffer):
-                exec(code, namespace)
+                # Ensure we are in a valid state for common operators
+                if bpy.context.screen:
+                    exec(code, namespace)
+                else:
+                    # Fallback for background execution
+                    exec(code, namespace)
 
             captured_output = capture_buffer.getvalue()
+            
+            # Ensure UI updates if we modified the scene
+            if bpy.context.screen:
+                for area in bpy.context.screen.areas:
+                    area.tag_redraw()
+            
             return {"executed": True, "result": captured_output}
         except Exception as e:
-            raise Exception(f"Code execution error: {str(e)}")
+            # Context-safe error handling
+            error_msg = str(e)
+            print(f"Blender Execution Error: {error_msg}")
+            # If we're stuck in a sub-mode, try to return to OBJECT mode
+            try:
+                if bpy.context.object and bpy.context.object.mode != 'OBJECT':
+                    bpy.ops.object.mode_set(mode='OBJECT')
+            except:
+                pass
+            return {"executed": False, "error": error_msg}
 
 
 
@@ -443,7 +556,7 @@ class BlenderMCPServer:
             if asset_type not in ["hdris", "textures", "models", "all"]:
                 return {"error": f"Invalid asset type: {asset_type}. Must be one of: hdris, textures, models, all"}
 
-            response = requests.get(f"https://api.polyhaven.com/categories/{asset_type}", headers=REQ_HEADERS)
+            response = requests.get(f"https://api.polyhaven.com/categories/{asset_type}", headers=REQ_HEADERS, timeout=30)
             if response.status_code == 200:
                 return {"categories": response.json()}
             else:
@@ -465,7 +578,7 @@ class BlenderMCPServer:
             if categories:
                 params["categories"] = categories
 
-            response = requests.get(url, params=params, headers=REQ_HEADERS)
+            response = requests.get(url, params=params, headers=REQ_HEADERS, timeout=30)
             if response.status_code == 200:
                 # Limit the response size to avoid overwhelming Blender
                 assets = response.json()
@@ -485,7 +598,7 @@ class BlenderMCPServer:
     def download_polyhaven_asset(self, asset_id, asset_type, resolution="1k", file_format=None):
         try:
             # First get the files information
-            files_response = requests.get(f"https://api.polyhaven.com/files/{asset_id}", headers=REQ_HEADERS)
+            files_response = requests.get(f"https://api.polyhaven.com/files/{asset_id}", headers=REQ_HEADERS, timeout=30)
             if files_response.status_code != 200:
                 return {"error": f"Failed to get asset files: {files_response.status_code}"}
 
@@ -505,7 +618,7 @@ class BlenderMCPServer:
                     # since Blender can't properly load HDR data directly from memory
                     with tempfile.NamedTemporaryFile(suffix=f".{file_format}", delete=False) as tmp_file:
                         # Download the file
-                        response = requests.get(file_url, headers=REQ_HEADERS)
+                        response = requests.get(file_url, headers=REQ_HEADERS, timeout=30)
                         if response.status_code != 200:
                             return {"error": f"Failed to download HDRI: {response.status_code}"}
 
@@ -533,9 +646,12 @@ class BlenderMCPServer:
                         mapping.location = (-600, 0)
 
                         # Load the image from the temporary file
+                        env_image = bpy.data.images.load(tmp_path)
+                        env_image.pack() # CRITICAL: Pack image so it's not lost when temp file is deleted
+                        
                         env_tex = node_tree.nodes.new(type='ShaderNodeTexEnvironment')
                         env_tex.location = (-400, 0)
-                        env_tex.image = bpy.data.images.load(tmp_path)
+                        env_tex.image = env_image
 
                         # Use a color space that exists in all Blender versions
                         if file_format.lower() == 'exr':
@@ -569,16 +685,16 @@ class BlenderMCPServer:
                         # Set as active world
                         bpy.context.scene.world = world
 
-                        # Clean up temporary file
+                        # Clean up temporary file safely
                         try:
-                            tempfile._cleanup()  # This will clean up all temporary files
+                            os.unlink(tmp_path)
                         except:
                             pass
 
                         return {
                             "success": True,
-                            "message": f"HDRI {asset_id} imported successfully",
-                            "image_name": env_tex.image.name
+                            "message": f"HDRI {asset_id} imported and packed successfully",
+                            "image_name": env_image.name
                         }
                     except Exception as e:
                         return {"error": f"Failed to set up HDRI in Blender: {str(e)}"}
@@ -590,6 +706,7 @@ class BlenderMCPServer:
                     file_format = "jpg"  # Default format for textures
 
                 downloaded_maps = {}
+                temp_files = []
 
                 try:
                     for map_type in files_data:
@@ -601,10 +718,11 @@ class BlenderMCPServer:
                                 # Use NamedTemporaryFile like we do for HDRIs
                                 with tempfile.NamedTemporaryFile(suffix=f".{file_format}", delete=False) as tmp_file:
                                     # Download the file
-                                    response = requests.get(file_url, headers=REQ_HEADERS)
+                                    response = requests.get(file_url, headers=REQ_HEADERS, timeout=30)
                                     if response.status_code == 200:
                                         tmp_file.write(response.content)
                                         tmp_path = tmp_file.name
+                                        temp_files.append(tmp_path)
 
                                         # Load image from temporary file
                                         image = bpy.data.images.load(tmp_path)
@@ -626,12 +744,6 @@ class BlenderMCPServer:
                                                 pass
 
                                         downloaded_maps[map_type] = image
-
-                                        # Clean up temporary file
-                                        try:
-                                            os.unlink(tmp_path)
-                                        except:
-                                            pass
 
                     if not downloaded_maps:
                         return {"error": f"No texture maps found for the requested resolution and format"}
@@ -661,7 +773,7 @@ class BlenderMCPServer:
 
                     mapping = nodes.new(type='ShaderNodeMapping')
                     mapping.location = (-600, 0)
-                    mapping.vector_type = 'TEXTURE'  # Changed from default 'POINT' to 'TEXTURE'
+                    mapping.vector_type = 'TEXTURE'
                     links.new(tex_coord.outputs['UV'], mapping.inputs['Vector'])
 
                     # Position offset for texture nodes
@@ -679,12 +791,12 @@ class BlenderMCPServer:
                             try:
                                 tex_node.image.colorspace_settings.name = 'sRGB'
                             except:
-                                pass  # Use default if sRGB not available
+                                pass
                         else:
                             try:
                                 tex_node.image.colorspace_settings.name = 'Non-Color'
                             except:
-                                pass  # Use default if Non-Color not available
+                                pass
 
                         links.new(mapping.outputs['Vector'], tex_node.inputs['Vector'])
 
@@ -719,6 +831,11 @@ class BlenderMCPServer:
 
                 except Exception as e:
                     return {"error": f"Failed to process textures: {str(e)}"}
+                finally:
+                    # Clean up all temporary files created during download
+                    for tmp_path in temp_files:
+                        with suppress(Exception):
+                            os.unlink(tmp_path)
 
             elif asset_type == "models":
                 # For models, prefer glTF format if available
@@ -738,7 +855,7 @@ class BlenderMCPServer:
                         main_file_name = file_url.split("/")[-1]
                         main_file_path = os.path.join(temp_dir, main_file_name)
 
-                        response = requests.get(file_url, headers=REQ_HEADERS)
+                        response = requests.get(file_url, headers=REQ_HEADERS, timeout=30)
                         if response.status_code != 200:
                             return {"error": f"Failed to download model: {response.status_code}"}
 
@@ -756,7 +873,7 @@ class BlenderMCPServer:
                                 os.makedirs(os.path.dirname(include_file_path), exist_ok=True)
 
                                 # Download the included file
-                                include_response = requests.get(include_url, headers=REQ_HEADERS)
+                                include_response = requests.get(include_url, headers=REQ_HEADERS, timeout=30)
                                 if include_response.status_code == 200:
                                     with open(include_file_path, "wb") as f:
                                         f.write(include_response.content)
@@ -1201,7 +1318,8 @@ class BlenderMCPServer:
                 headers={
                     "Authorization": f"Bearer {bpy.context.scene.blendermcp_hyper3d_api_key}",
                 },
-                files=files
+                files=files,
+                timeout=30
             )
             data = response.json()
             return data
@@ -1230,7 +1348,8 @@ class BlenderMCPServer:
                     "Authorization": f"Key {bpy.context.scene.blendermcp_hyper3d_api_key}",
                     "Content-Type": "application/json",
                 },
-                json=req_data
+                json=req_data,
+                timeout=30
             )
             data = response.json()
             return data
@@ -1256,6 +1375,7 @@ class BlenderMCPServer:
             json={
                 "subscription_key": subscription_key,
             },
+            timeout=30
         )
         data = response.json()
         return {
@@ -1269,6 +1389,7 @@ class BlenderMCPServer:
             headers={
                 "Authorization": f"KEY {bpy.context.scene.blendermcp_hyper3d_api_key}",
             },
+            timeout=30
         )
         data = response.json()
         return data
@@ -1279,64 +1400,55 @@ class BlenderMCPServer:
         existing_objects = set(bpy.data.objects)
 
         # Import the GLB file
-        bpy.ops.import_scene.gltf(filepath=filepath)
+        try:
+            bpy.ops.import_scene.gltf(filepath=filepath)
+        except Exception as e:
+            print(f"GLTF Import Error: {str(e)}")
+            return None
 
         # Ensure the context is updated
         bpy.context.view_layer.update()
 
         # Get all imported objects
-        imported_objects = list(set(bpy.data.objects) - existing_objects)
-        # imported_objects = [obj for obj in bpy.context.view_layer.objects if obj.select_get()]
+        imported_objects = [obj for obj in bpy.data.objects if obj not in existing_objects]
 
         if not imported_objects:
             print("Error: No objects were imported.")
-            return
+            return None
 
-        # Identify the mesh object
-        mesh_obj = None
-
-        if len(imported_objects) == 1 and imported_objects[0].type == 'MESH':
+        # Robust Mesh Identification: Find the largest mesh or the first mesh
+        mesh_objs = [obj for obj in imported_objects if obj.type == 'MESH']
+        
+        if not mesh_objs:
+            # Fallback: if no mesh, just take the first object (might be an empty)
             mesh_obj = imported_objects[0]
-            print("Single mesh imported, no cleanup needed.")
         else:
-            if len(imported_objects) == 2:
-                empty_objs = [i for i in imported_objects if i.type == "EMPTY"]
-                if len(empty_objs) != 1:
-                    print("Error: Expected an empty node with one mesh child or a single mesh object.")
-                    return
-                parent_obj = empty_objs.pop()
-                if len(parent_obj.children) == 1:
-                    potential_mesh = parent_obj.children[0]
-                    if potential_mesh.type == 'MESH':
-                        print("GLB structure confirmed: Empty node with one mesh child.")
+            # Pick the mesh with the most vertices (usually the main object)
+            mesh_obj = max(mesh_objs, key=lambda o: len(o.data.vertices))
 
-                        # Unparent the mesh from the empty node
-                        potential_mesh.parent = None
-
-                        # Remove the empty node
-                        bpy.data.objects.remove(parent_obj)
-                        print("Removed empty node, keeping only the mesh.")
-
-                        mesh_obj = potential_mesh
-                    else:
-                        print("Error: Child is not a mesh object.")
-                        return
-                else:
-                    print("Error: Expected an empty node with one mesh child or a single mesh object.")
-                    return
-            else:
-                print("Error: Expected an empty node with one mesh child or a single mesh object.")
-                return
+        # Cleanup: Remove all other imported objects that are not the main mesh
+        # and are not children of the main mesh
+        for obj in imported_objects:
+            if obj != mesh_obj and obj.type == 'EMPTY':
+                # Move children to scene root before deleting parent empty
+                for child in obj.children:
+                    if child in imported_objects:
+                        child.parent = None
+                
+                try:
+                    bpy.data.objects.remove(obj, do_unlink=True)
+                except:
+                    pass
 
         # Rename the mesh if needed
         try:
-            if mesh_obj and mesh_obj.name is not None and mesh_name:
+            if mesh_obj and mesh_name:
                 mesh_obj.name = mesh_name
-                if mesh_obj.data.name is not None:
+                if mesh_obj.type == 'MESH' and mesh_obj.data:
                     mesh_obj.data.name = mesh_name
-                print(f"Mesh renamed to: {mesh_name}")
+                print(f"Imported asset processed and named: {mesh_name}")
         except Exception as e:
-            print("Having issue with renaming, give up renaming.")
+            print(f"Renaming issue: {str(e)}")
 
         return mesh_obj
 
@@ -1358,7 +1470,8 @@ class BlenderMCPServer:
             },
             json={
                 'task_uuid': task_uuid
-            }
+            },
+            timeout=30
         )
         data_ = response.json()
         temp_file = None
@@ -1372,7 +1485,7 @@ class BlenderMCPServer:
 
                 try:
                     # Download the content
-                    response = requests.get(i["url"], stream=True)
+                    response = requests.get(i["url"], stream=True, timeout=30)
                     response.raise_for_status()  # Raise an exception for HTTP errors
 
                     # Write the content to the temporary file
@@ -1421,7 +1534,8 @@ class BlenderMCPServer:
             f"https://queue.fal.run/fal-ai/hyper3d/requests/{request_id}",
             headers={
                 "Authorization": f"Key {bpy.context.scene.blendermcp_hyper3d_api_key}",
-            }
+            },
+            timeout=30
         )
         data_ = response.json()
         temp_file = None
@@ -1434,7 +1548,7 @@ class BlenderMCPServer:
 
         try:
             # Download the content
-            response = requests.get(data_["model_mesh"]["url"], stream=True)
+            response = requests.get(data_["model_mesh"]["url"], stream=True, timeout=30)
             response.raise_for_status()  # Raise an exception for HTTP errors
 
             # Write the content to the temporary file
@@ -1486,11 +1600,10 @@ class BlenderMCPServer:
                 headers = {
                     "Authorization": f"Token {api_key}"
                 }
-
                 response = requests.get(
                     "https://api.sketchfab.com/v3/me",
                     headers=headers,
-                    timeout=30  # Add timeout of 30 seconds
+                    timeout=30
                 )
 
                 if response.status_code == 200:
@@ -2105,7 +2218,8 @@ class BlenderMCPServer:
             response = requests.post(
                 endpoint,
                 headers = headers,
-                data = json.dumps(data)
+                data = json.dumps(data),
+                timeout=30
             )
 
             if response.status_code == 200:
@@ -2145,51 +2259,68 @@ class BlenderMCPServer:
             if text_prompt:
                 data["text"] = text_prompt
 
-            # Handling image
-            if image:
-                if re.match(r'^https?://', image, re.IGNORECASE) is not None:
-                    try:
-                        resImg = requests.get(image)
-                        resImg.raise_for_status()
-                        image_base64 = base64.b64encode(resImg.content).decode("ascii")
-                        data["image"] = image_base64
-                    except Exception as e:
-                        return {"error": f"Failed to download or encode image: {str(e)}"} 
-                else:
-                    try:
-                        # Convert to Base64 format
-                        with open(image, "rb") as f:
-                            image_base64 = base64.b64encode(f.read()).decode("ascii")
-                        data["image"] = image_base64
-                    except Exception as e:
-                        return {"error": f"Image encoding failed: {str(e)}"}
+            # Background task to avoid freezing Blender
+            def background_task():
+                try:
+                    # Handling image
+                    image_data = None
+                    if image:
+                        if re.match(r'^https?://', image, re.IGNORECASE) is not None:
+                            try:
+                                resImg = requests.get(image, timeout=30)
+                                resImg.raise_for_status()
+                                image_data = base64.b64encode(resImg.content).decode("ascii")
+                            except Exception as e:
+                                print(f"Failed to download image: {str(e)}")
+                                return
+                        else:
+                            try:
+                                with open(image, "rb") as f:
+                                    image_data = base64.b64encode(f.read()).decode("ascii")
+                            except Exception as e:
+                                print(f"Image encoding failed: {str(e)}")
+                                return
+                    
+                    if image_data:
+                        data["image"] = image_data
 
-            response = requests.post(
-                f"{base_url}/generate",
-                json = data,
-            )
+                    # Call generation API
+                    print(f"Starting Hunyuan3D generation at {base_url}...")
+                    response = requests.post(
+                        f"{base_url}/generate",
+                        json = data,
+                        timeout=600  # Longer timeout for generation
+                    )
 
-            if response.status_code != 200:
-                return {
-                    "error": f"Generation failed: {response.text}"
-                }
-        
-            # Decode base64 and save to temporary file
-            with tempfile.NamedTemporaryFile(delete=False, suffix=".glb") as temp_file:
-                temp_file.write(response.content)
-                temp_file_name = temp_file.name
+                    if response.status_code != 200:
+                        print(f"Generation failed: {response.text}")
+                        return
+                
+                    # Decode base64 and save to temporary file
+                    with tempfile.NamedTemporaryFile(delete=False, suffix=".glb") as temp_file:
+                        temp_file.write(response.content)
+                        temp_file_name = temp_file.name
 
-            # Import the GLB file in the main thread
-            def import_handler():
-                bpy.ops.import_scene.gltf(filepath=temp_file_name)
-                os.unlink(temp_file.name)
-                return None
-            
-            bpy.app.timers.register(import_handler)
+                    # Import the GLB file in the main thread
+                    def import_handler():
+                        try:
+                            bpy.ops.import_scene.gltf(filepath=temp_file_name)
+                            print("Hunyuan3D model imported successfully")
+                        finally:
+                            if os.path.exists(temp_file_name):
+                                os.unlink(temp_file_name)
+                        return None
+                    
+                    bpy.app.timers.register(import_handler)
+                except Exception as e:
+                    print(f"Error in Hunyuan3D background task: {str(e)}")
+
+            # Start the background thread
+            threading.Thread(target=background_task, daemon=True).start()
 
             return {
-                "status": "DONE",
-                "message": "Generation and Import glb succeeded"
+                "status": "QUEUED",
+                "message": "Hunyuan3D generation started in background. The model will appear in the scene once finished."
             }
         except Exception as e:
             print(f"An error occurred: {e}")
@@ -2232,7 +2363,8 @@ class BlenderMCPServer:
             response = requests.post(
                 endpoint,
                 headers=headers,
-                data=json.dumps(data)
+                data=json.dumps(data),
+                timeout=30
             )
 
             if response.status_code == 200:
@@ -2262,7 +2394,7 @@ class BlenderMCPServer:
 
         try:
             # Download ZIP file
-            zip_response = requests.get(zip_file_url, stream=True)
+            zip_response = requests.get(zip_file_url, stream=True, timeout=30)
             zip_response.raise_for_status()
             with open(zip_file_path, "wb") as f:
                 for chunk in zip_response.iter_content(chunk_size=8192):
@@ -2465,6 +2597,104 @@ class BLENDERMCP_OT_OpenTerms(bpy.types.Operator):
         
         return {'FINISHED'}
 
+class BLENDERMCP_OT_ReportInfo(bpy.types.Operator):
+    bl_idname = "blendermcp.report_info"
+    bl_label = "Report Info"
+    bl_options = {'INTERNAL'}
+    message: bpy.props.StringProperty()
+
+    def execute(self, context):
+        self.report({'INFO'}, self.message)
+        return {'FINISHED'}
+
+class BLENDERMCP_OT_ReportError(bpy.types.Operator):
+    bl_idname = "blendermcp.report_error"
+    bl_label = "Report Error"
+    bl_options = {'INTERNAL'}
+    message: bpy.props.StringProperty()
+
+    def execute(self, context):
+        self.report({'ERROR'}, self.message)
+        return {'FINISHED'}
+
+class BLENDERMCP_PT_SetupPanel(bpy.types.Panel):
+    bl_label = "Setup Assistant"
+    bl_idname = "BLENDERMCP_PT_SetupPanel"
+    bl_space_type = 'VIEW_3D'
+    bl_region_type = 'UI'
+    bl_category = 'BlenderMCP'
+    bl_options = {'DEFAULT_CLOSED'}
+
+    def draw(self, context):
+        layout = self.layout
+        scene = context.scene
+        
+        box = layout.box()
+        box.label(text="Step 1: Prerequisites", icon='CHECKMARK')
+        
+        # Check for requests module
+        try:
+            import requests
+            box.label(text="Python: 'requests' installed", icon='CHECKBOX_HLT')
+        except ImportError:
+            box.label(text="Python: 'requests' MISSING", icon='CHECKBOX_DEHLT')
+            box.operator("wm.url_open", text="How to fix").url = "https://github.com/ahujasid/blender-mcp#troubleshooting"
+
+        box.separator()
+        box.label(text="Step 2: Start Connection", icon='CHECKMARK')
+        if not scene.blendermcp_server_running:
+            box.operator("blendermcp.start_server", text="Connect to Claude", icon='PLAY')
+        else:
+            box.label(text="Addon Server: Running", icon='CHECKBOX_HLT')
+            
+        box.separator()
+        box.label(text="Step 3: App Config", icon='CHECKMARK')
+        
+        # OS-specific config help
+        import platform
+        os_type = platform.system()
+        
+        col = box.column(align=True)
+        col.label(text=f"Detected OS: {os_type}")
+        
+        if os_type == "Windows":
+            col.label(text="Claude Config Path:")
+            col.label(text="%APPDATA%\\Claude\\claude_desktop_config.json", icon='FILE_FOLDER')
+        else:
+            col.label(text="Claude Config Path:")
+            col.label(text="~/Library/Application Support/Claude/claude_desktop_config.json", icon='FILE_FOLDER')
+
+        box.separator()
+        box.operator("blendermcp.copy_config", text="Copy Config to Clipboard", icon='COPY_ID')
+
+class BLENDERMCP_OT_CopyConfig(bpy.types.Operator):
+    bl_idname = "blendermcp.copy_config"
+    bl_label = "Copy Config"
+    
+    def execute(self, context):
+        import platform
+        path = os.path.abspath(os.path.dirname(__file__))
+        # Escape backslashes for JSON
+        path_escaped = path.replace("\\", "\\\\")
+        
+        config_template = {
+            "mcpServers": {
+                "blender": {
+                    "command": "uv",
+                    "args": [
+                        "--directory",
+                        path_escaped,
+                        "run",
+                        "blender-mcp"
+                    ]
+                }
+            }
+        }
+        
+        context.window_manager.clipboard = json.dumps(config_template, indent=2)
+        self.report({'INFO'}, "Config copied! Paste it into your Claude Desktop config file.")
+        return {'FINISHED'}
+
 # Registration functions
 def register():
     bpy.types.Scene.blendermcp_port = IntProperty(
@@ -2591,10 +2821,14 @@ def register():
     bpy.utils.register_class(BLENDERMCP_AddonPreferences)
 
     bpy.utils.register_class(BLENDERMCP_PT_Panel)
+    bpy.utils.register_class(BLENDERMCP_PT_SetupPanel)
     bpy.utils.register_class(BLENDERMCP_OT_SetFreeTrialHyper3DAPIKey)
     bpy.utils.register_class(BLENDERMCP_OT_StartServer)
     bpy.utils.register_class(BLENDERMCP_OT_StopServer)
     bpy.utils.register_class(BLENDERMCP_OT_OpenTerms)
+    bpy.utils.register_class(BLENDERMCP_OT_ReportInfo)
+    bpy.utils.register_class(BLENDERMCP_OT_ReportError)
+    bpy.utils.register_class(BLENDERMCP_OT_CopyConfig)
 
     print("BlenderMCP addon registered")
 
@@ -2605,10 +2839,14 @@ def unregister():
         del bpy.types.blendermcp_server
 
     bpy.utils.unregister_class(BLENDERMCP_PT_Panel)
+    bpy.utils.unregister_class(BLENDERMCP_PT_SetupPanel)
     bpy.utils.unregister_class(BLENDERMCP_OT_SetFreeTrialHyper3DAPIKey)
     bpy.utils.unregister_class(BLENDERMCP_OT_StartServer)
     bpy.utils.unregister_class(BLENDERMCP_OT_StopServer)
     bpy.utils.unregister_class(BLENDERMCP_OT_OpenTerms)
+    bpy.utils.unregister_class(BLENDERMCP_OT_ReportInfo)
+    bpy.utils.unregister_class(BLENDERMCP_OT_ReportError)
+    bpy.utils.unregister_class(BLENDERMCP_OT_CopyConfig)
     bpy.utils.unregister_class(BLENDERMCP_AddonPreferences)
 
     del bpy.types.Scene.blendermcp_port

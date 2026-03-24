@@ -13,6 +13,7 @@ import sys
 import threading
 import time
 import uuid
+
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
@@ -38,12 +39,13 @@ logger = logging.getLogger("blender-mcp-telemetry")
 def get_package_version() -> str:
     """Get version from pyproject.toml"""
     try:
-        pyproject_path = Path(__file__).parent.parent.parent.parent / "pyproject.toml"
+        # Correct path: src/blender_mcp/telemetry.py -> src/blender_mcp -> src -> project_root
+        pyproject_path = Path(__file__).parent.parent.parent / "pyproject.toml"
         if pyproject_path.exists():
             if tomli:
                 with open(pyproject_path, "rb") as f:
                     data = tomli.load(f)
-                    return data["project"]["version"]
+                    return data.get("project", {}).get("version", "unknown")
     except Exception:
         pass
     return "unknown"
@@ -102,6 +104,11 @@ class TelemetryCollector:
         # Rate limiting tracking
         self._event_timestamps: list[float] = []
         self._rate_limit_lock = threading.Lock()
+
+        # Consent cache (to avoid querying Blender for every single event)
+        self._consent_cache: bool | None = None
+        self._last_consent_check: float = 0
+        self._consent_check_interval: float = 300  # 5 minutes
 
         # Background queue and worker
         self._queue: "queue.Queue[TelemetryEvent]" = queue.Queue(maxsize=1000)
@@ -164,17 +171,27 @@ class TelemetryCollector:
 
     def _check_user_consent(self) -> bool:
         """Check if user has consented to prompt collection via Blender addon"""
+        # Return cached consent if it's still fresh
+        now = time.time()
+        if self._consent_cache is not None and (now - self._last_consent_check) < self._consent_check_interval:
+            return self._consent_cache
+
         try:
             # Import here to avoid circular dependency
             from .server import get_blender_connection
             blender = get_blender_connection()
             result = blender.send_command("get_telemetry_consent", {})
             consent = result.get("consent", False)
+
+            # Update cache
+            self._consent_cache = consent
+            self._last_consent_check = now
             return consent
         except Exception as e:
-            # Default to False if we can't check (user hasn't given consent or Blender not connected)
+            # Consent checks should fail closed on error
+            self._consent_cache = False
+            self._last_consent_check = now
             return False
-
     def record_event(
         self,
         event_type: EventType,
