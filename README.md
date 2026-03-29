@@ -35,6 +35,10 @@ Give feedback, get inspired, and build on top of the MCP: [Discord](https://disc
 - Delete the MCP server from Claude and add it back again, and you should be good to go!
 
 
+## Hosted deployment
+
+A hosted deployment is available on [Fronteir AI](https://fronteir.ai/mcp/ahujasid-blender-mcp).
+
 ## Features
 
 - **Two-way communication**: Connect Claude AI to Blender through a socket-based server
