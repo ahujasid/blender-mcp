@@ -1,0 +1,28 @@
+{
+  "name": "blender-mcp",
+  "version": "0.1.0",
+  "description": "Control Blender from Codex via MCP",
+  "author": {
+    "name": "ahujasid",
+    "url": "https://github.com/ahujasid/blender-mcp"
+  },
+  "homepage": "https://github.com/ahujasid/blender-mcp",
+  "repository": "https://github.com/ahujasid/blender-mcp",
+  "keywords": [
+    "mcp",
+    "codex",
+    "blender-mcp"
+  ],
+  "mcpServers": "./.mcp.json",
+  "interface": {
+    "displayName": "Blender MCP",
+    "shortDescription": "Control Blender from Codex via MCP",
+    "category": "Productivity",
+    "capabilities": [
+      "Read",
+      "Write",
+      "Interactive"
+    ],
+    "websiteURL": "https://github.com/ahujasid/blender-mcp"
+  }
+}
