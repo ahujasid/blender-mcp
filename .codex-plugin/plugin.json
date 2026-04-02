@@ -18,11 +18,6 @@
     "displayName": "Blender MCP",
     "shortDescription": "Control Blender from Codex via MCP",
     "category": "Productivity",
-    "capabilities": [
-      "Read",
-      "Write",
-      "Interactive"
-    ],
     "websiteURL": "https://github.com/ahujasid/blender-mcp"
   }
 }
