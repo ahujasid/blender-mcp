@@ -19,5 +19,6 @@
     "shortDescription": "Control Blender from Codex via MCP",
     "category": "Productivity",
     "websiteURL": "https://github.com/ahujasid/blender-mcp"
-  }
+  },
+  "skills": "./skills/"
 }
