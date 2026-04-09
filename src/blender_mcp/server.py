@@ -799,6 +799,7 @@ def download_sketchfab_model(
         return f"Error downloading Sketchfab model: {str(e)}"
 
 def _process_bbox(original_bbox: list[float] | list[int] | None) -> list[int] | None:
+    """Normalize bbox ratios to integer percentages for the Hyper3D API."""
     if original_bbox is None:
         return None
     if all(isinstance(i, int) for i in original_bbox):
