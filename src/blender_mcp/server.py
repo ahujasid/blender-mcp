@@ -26,6 +26,11 @@ logger = logging.getLogger("BlenderMCPServer")
 DEFAULT_HOST = "localhost"
 DEFAULT_PORT = 9876
 
+def _is_valid_http_url(value: str) -> bool:
+    """Return True when value is an absolute HTTP(S) URL with a host."""
+    parsed = urlparse(value)
+    return parsed.scheme in {"http", "https"} and bool(parsed.netloc)
+
 @dataclass
 class BlenderConnection:
     host: str
@@ -794,6 +799,7 @@ def download_sketchfab_model(
         return f"Error downloading Sketchfab model: {str(e)}"
 
 def _process_bbox(original_bbox: list[float] | list[int] | None) -> list[int] | None:
+    """Normalize bbox ratios to integer percentages for the Hyper3D API."""
     if original_bbox is None:
         return None
     if all(isinstance(i, int) for i in original_bbox):
@@ -874,7 +880,7 @@ def generate_hyper3d_model_via_images(
                     (Path(path).suffix, base64.b64encode(f.read()).decode("ascii"))
                 )
     elif input_image_urls is not None:
-        if not all(urlparse(i) for i in input_image_paths):
+        if not all(_is_valid_http_url(i) for i in input_image_urls):
             return "Error: not all image URLs are valid!"
         images = input_image_urls.copy()
     try:
