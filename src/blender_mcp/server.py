@@ -27,6 +27,7 @@ DEFAULT_HOST = "localhost"
 DEFAULT_PORT = 9876
 
 def _is_valid_http_url(value: str) -> bool:
+    """Return True when value is an absolute HTTP(S) URL with a host."""
     parsed = urlparse(value)
     return parsed.scheme in {"http", "https"} and bool(parsed.netloc)
 
