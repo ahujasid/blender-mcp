@@ -254,7 +254,14 @@ def get_blender_connection():
 @telemetry_tool("get_scene_info")
 @mcp.tool()
 def get_scene_info(ctx: Context) -> str:
-    """Get detailed information about the current Blender scene"""
+    """Get detailed information about the current Blender scene.
+
+    The response includes `blender_version` (e.g. [5, 1, 0]) and
+    `blender_version_string` (e.g. "5.1.0 Release"). Inspect these
+    before emitting code that touches version-sensitive surface:
+    shader/modifier enums, operator arguments, compositor node types,
+    and renamed APIs all drift between major versions.
+    """
     try:
         blender = get_blender_connection()
         result = blender.send_command("get_scene_info")
