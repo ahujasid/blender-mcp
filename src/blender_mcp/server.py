@@ -286,28 +286,59 @@ def get_object_info(ctx: Context, object_name: str) -> str:
 
 @telemetry_tool("get_viewport_screenshot")
 @mcp.tool()
-def get_viewport_screenshot(ctx: Context, max_size: int = 800) -> Image:
+def get_viewport_screenshot(
+    ctx: Context,
+    max_size: int = 800,
+    target_object: str = None,
+    view: str = "front",
+    distance_factor: float = 2.5,
+    ortho_padding: float = 1.25,
+) -> Image:
     """
-    Capture a screenshot of the current Blender 3D viewport.
-    
+    Capture a screenshot of the current Blender 3D viewport OR a clean
+    orthographic diagnostic render of a specific object.
+
+    Default behavior (target_object=None): screenshots the active viewport
+    as the user sees it, including overlays and the user's camera.
+
+    If `target_object` is provided: creates a temporary orthographic camera
+    framed on that object from the named `view` direction and renders a
+    clean image. Use this to verify visual claims — grounding, alignment,
+    material changes — without relying on position math that lies after
+    asymmetric mesh edits or Displace modifiers.
+
     Parameters:
-    - max_size: Maximum size in pixels for the largest dimension (default: 800)
-    
-    Returns the screenshot as an Image.
+    - max_size: Maximum pixels for the longest dimension (default 800).
+    - target_object: If set, render an orthographic view of this object instead
+      of a viewport screenshot.
+    - view: Axis direction for the diagnostic view. One of:
+      front, back, left, right, top, bottom. Default 'front'.
+    - distance_factor: Camera distance as a multiple of the object's largest
+      world-bbox dimension (default 2.5).
+    - ortho_padding: Ortho scale multiplier (default 1.25, >1 leaves margin).
+
+    Returns the screenshot/render as an Image.
     """
     try:
         blender = get_blender_connection()
-        
+
         # Create temp file path
         temp_dir = tempfile.gettempdir()
         temp_path = os.path.join(temp_dir, f"blender_screenshot_{os.getpid()}.png")
-        
-        result = blender.send_command("get_viewport_screenshot", {
+
+        params = {
             "max_size": max_size,
             "filepath": temp_path,
-            "format": "png"
-        })
-        
+            "format": "png",
+        }
+        if target_object is not None:
+            params["target_object"] = target_object
+            params["view"] = view
+            params["distance_factor"] = distance_factor
+            params["ortho_padding"] = ortho_padding
+
+        result = blender.send_command("get_viewport_screenshot", params)
+
         if "error" in result:
             raise Exception(result["error"])
         
@@ -326,6 +357,51 @@ def get_viewport_screenshot(ctx: Context, max_size: int = 800) -> Image:
     except Exception as e:
         logger.error(f"Error capturing screenshot: {str(e)}")
         raise Exception(f"Screenshot failed: {str(e)}")
+
+
+@telemetry_tool("verify_object_grounded")
+@mcp.tool()
+def verify_object_grounded(
+    ctx: Context,
+    object_name: str,
+    ground_name: str,
+    slice_height: float = 1.0,
+    max_samples: int = 500,
+) -> str:
+    """
+    Measure the vertical gap between an object's base and a ground mesh.
+
+    Samples vertices from the object's lower slice (world z within
+    `slice_height` of the object's lowest vertex) and raycasts straight down
+    onto the ground's evaluated mesh. Returns a JSON summary with min, max,
+    median, and mean gap in meters. Positive = above ground, negative =
+    intersecting. Uses evaluated geometry, so Displace modifiers on the
+    ground and armature/shape-key deformation on the object are honored.
+
+    Use this to verify grounding instead of relying on `object.location.z`
+    or `object.dimensions`, both of which lie after asymmetric mesh edits
+    (e.g., bottom-half deletion of a sphere to make a hemisphere).
+
+    Parameters:
+    - object_name: The object whose base should rest on the ground.
+    - ground_name: The mesh that serves as the ground plane.
+    - slice_height: Meters above the object's bottom to sample from
+      (default 1.0). Keep small for trees / canopy-heavy meshes so the
+      sample is actually the trunk/base, not lower branches.
+    - max_samples: Cap on raycasts (default 500).
+    """
+    try:
+        blender = get_blender_connection()
+        result = blender.send_command("verify_object_grounded", {
+            "object_name": object_name,
+            "ground_name": ground_name,
+            "slice_height": slice_height,
+            "max_samples": max_samples,
+        })
+        return json.dumps(result, indent=2)
+    except Exception as e:
+        logger.error(f"Error verifying grounding: {str(e)}")
+        return f"Error verifying grounding: {str(e)}"
 
 
 @telemetry_tool("execute_blender_code")

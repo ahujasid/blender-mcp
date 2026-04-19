@@ -207,6 +207,7 @@ class BlenderMCPServer:
             "get_scene_info": self.get_scene_info,
             "get_object_info": self.get_object_info,
             "get_viewport_screenshot": self.get_viewport_screenshot,
+            "verify_object_grounded": self.verify_object_grounded,
             "execute_code": self.execute_code,
             "get_telemetry_consent": self.get_telemetry_consent,
             "get_polyhaven_status": self.get_polyhaven_status,
@@ -361,20 +362,40 @@ class BlenderMCPServer:
 
         return obj_info
 
-    def get_viewport_screenshot(self, max_size=800, filepath=None, format="png"):
+    def get_viewport_screenshot(self, max_size=800, filepath=None, format="png",
+                                target_object=None, view="front",
+                                distance_factor=2.5, ortho_padding=1.25):
         """
-        Capture a screenshot of the current 3D viewport and save it to the specified path.
+        Capture a screenshot of the current 3D viewport OR a clean orthographic
+        diagnostic render of a specific object.
+
+        Default path (target_object=None) screenshots the active 3D viewport,
+        preserving overlays and the user's view. If target_object is provided,
+        creates a temporary orthographic camera framed on that object from
+        the named view and renders a clean image — useful for verifying
+        grounding, alignment, and material claims that position math alone
+        cannot confirm (asymmetric mesh edits, Displace modifiers, etc.).
 
         Parameters:
         - max_size: Maximum size in pixels for the largest dimension of the image
         - filepath: Path where to save the screenshot file
         - format: Image format (png, jpg, etc.)
+        - target_object: If set, render an orthographic view of this object
+        - view: Camera direction (front, back, left, right, top, bottom)
+        - distance_factor: Camera distance as multiple of object's largest dimension
+        - ortho_padding: Ortho scale multiplier (>1 leaves margin around the object)
 
         Returns success/error status
         """
         try:
             if not filepath:
                 return {"error": "No filepath provided"}
+
+            if target_object is not None:
+                return self._render_ortho_diag(
+                    target_object, filepath, max_size, format,
+                    view, distance_factor, ortho_padding,
+                )
 
             # Find the active 3D viewport
             area = None
@@ -417,6 +438,190 @@ class BlenderMCPServer:
 
         except Exception as e:
             return {"error": str(e)}
+
+    def _render_ortho_diag(self, target_name, filepath, max_size, format,
+                           view, distance_factor, ortho_padding):
+        """Render a clean orthographic view of target_name from `view`."""
+        import math
+
+        scene = bpy.context.scene
+        obj = scene.objects.get(target_name)
+        if obj is None:
+            return {"error": f"Object '{target_name}' not found in scene"}
+
+        depsgraph = bpy.context.evaluated_depsgraph_get()
+        eval_obj = obj.evaluated_get(depsgraph)
+        mw = eval_obj.matrix_world
+        corners = [mw @ mathutils.Vector(c) for c in eval_obj.bound_box]
+        xs = [c.x for c in corners]
+        ys = [c.y for c in corners]
+        zs = [c.z for c in corners]
+        center = mathutils.Vector((
+            (min(xs) + max(xs)) / 2,
+            (min(ys) + max(ys)) / 2,
+            (min(zs) + max(zs)) / 2,
+        ))
+        size_x = max(xs) - min(xs)
+        size_y = max(ys) - min(ys)
+        size_z = max(zs) - min(zs)
+        max_dim = max(size_x, size_y, size_z, 0.01)
+
+        # (offset_direction_from_center, camera_euler_rotation)
+        view_configs = {
+            "front":  (mathutils.Vector((0, -1, 0)), (math.pi / 2, 0, 0)),
+            "back":   (mathutils.Vector((0, 1, 0)),  (math.pi / 2, 0, math.pi)),
+            "right":  (mathutils.Vector((1, 0, 0)),  (math.pi / 2, 0, math.pi / 2)),
+            "left":   (mathutils.Vector((-1, 0, 0)), (math.pi / 2, 0, -math.pi / 2)),
+            "top":    (mathutils.Vector((0, 0, 1)),  (0, 0, 0)),
+            "bottom": (mathutils.Vector((0, 0, -1)), (math.pi, 0, 0)),
+        }
+        if view not in view_configs:
+            return {"error": f"Unknown view '{view}'. Choose from: {sorted(view_configs)}"}
+
+        offset_dir, rotation_euler = view_configs[view]
+        cam_distance = max_dim * distance_factor
+        cam_pos = center + offset_dir * cam_distance
+
+        cam_data = bpy.data.cameras.new("_MCPDiagCam")
+        cam_data.type = 'ORTHO'
+        cam_data.ortho_scale = max_dim * ortho_padding
+        cam_data.clip_start = 0.01
+        cam_data.clip_end = cam_distance * 4 + max_dim * 4
+        cam_obj = bpy.data.objects.new("_MCPDiagCam", cam_data)
+        cam_obj.location = cam_pos
+        cam_obj.rotation_euler = rotation_euler
+        scene.collection.objects.link(cam_obj)
+
+        # Save render state, render, restore
+        prev_camera = scene.camera
+        prev_res_x = scene.render.resolution_x
+        prev_res_y = scene.render.resolution_y
+        prev_filepath = scene.render.filepath
+        prev_file_format = scene.render.image_settings.file_format
+        width = height = 0
+        render_error = None
+        try:
+            scene.camera = cam_obj
+            scene.render.resolution_x = max_size
+            scene.render.resolution_y = max_size
+            scene.render.filepath = filepath
+            scene.render.image_settings.file_format = format.upper()
+            bpy.ops.render.render(write_still=True)
+
+            if os.path.exists(filepath):
+                img = bpy.data.images.load(filepath)
+                width, height = img.size
+                bpy.data.images.remove(img)
+            else:
+                render_error = "Render file was not created"
+        except Exception as e:
+            render_error = str(e)
+        finally:
+            scene.camera = prev_camera
+            scene.render.resolution_x = prev_res_x
+            scene.render.resolution_y = prev_res_y
+            scene.render.filepath = prev_filepath
+            scene.render.image_settings.file_format = prev_file_format
+            bpy.data.objects.remove(cam_obj, do_unlink=True)
+            bpy.data.cameras.remove(cam_data, do_unlink=True)
+
+        if render_error:
+            return {"error": render_error}
+
+        return {
+            "success": True,
+            "width": width,
+            "height": height,
+            "filepath": filepath,
+            "target": target_name,
+            "view": view,
+        }
+
+    def verify_object_grounded(self, object_name, ground_name,
+                               slice_height=1.0, max_samples=500):
+        """Measure the vertical gap between an object's base and a ground mesh.
+
+        Samples vertices from the object's lower slice (z <= zmin + slice_height)
+        in world space and raycasts straight down onto the ground's evaluated
+        mesh. Returns min/max/median/mean gaps (positive = floating above,
+        negative = intersecting). Uses evaluated geometry so Displace modifiers
+        on the ground and shape keys / armatures on the object are honored.
+        """
+        from mathutils.bvhtree import BVHTree
+
+        scene = bpy.context.scene
+        obj = scene.objects.get(object_name)
+        ground = scene.objects.get(ground_name)
+        if obj is None:
+            return {"error": f"Object '{object_name}' not found"}
+        if ground is None:
+            return {"error": f"Ground object '{ground_name}' not found"}
+        if obj.type != 'MESH':
+            return {"error": f"Object '{object_name}' is not a mesh (type={obj.type})"}
+        if ground.type != 'MESH':
+            return {"error": f"Ground '{ground_name}' is not a mesh (type={ground.type})"}
+
+        depsgraph = bpy.context.evaluated_depsgraph_get()
+        obj_eval = obj.evaluated_get(depsgraph)
+        ground_eval = ground.evaluated_get(depsgraph)
+        bvh = BVHTree.FromObject(ground_eval, depsgraph)
+
+        obj_mw = obj_eval.matrix_world
+        world_verts = [obj_mw @ v.co for v in obj_eval.data.vertices]
+        if not world_verts:
+            return {"error": f"Object '{object_name}' has no vertices"}
+
+        zmin = min(v.z for v in world_verts)
+        slice_verts = [v for v in world_verts if v.z <= zmin + slice_height]
+        if len(slice_verts) > max_samples:
+            step = max(1, len(slice_verts) // max_samples)
+            slice_verts = slice_verts[::step]
+
+        gaps = []
+        missed = 0
+        for v in slice_verts:
+            origin = mathutils.Vector((v.x, v.y, v.z + 1000.0))
+            direction = mathutils.Vector((0, 0, -1))
+            hit_loc, hit_normal, hit_idx, hit_dist = bvh.ray_cast(origin, direction)
+            if hit_loc is None:
+                missed += 1
+                continue
+            gaps.append(v.z - hit_loc.z)
+
+        if not gaps:
+            return {
+                "error": "No ground samples hit — object may be outside ground bounds or ground mesh is empty",
+                "samples_tested": len(slice_verts),
+                "samples_missed": missed,
+            }
+
+        gaps_sorted = sorted(gaps)
+        median_gap = gaps_sorted[len(gaps_sorted) // 2]
+        min_gap = min(gaps)
+        max_gap = max(gaps)
+
+        if min_gap < -0.01 and max_gap > 0.01:
+            hint = "mixed: tilted or uneven ground; base partly above and partly below"
+        elif max_gap < 0.01:
+            hint = "grounded or intersecting (no samples above ground)"
+        elif min_gap > 0.05:
+            hint = f"floating: closest sample is {min_gap:.3f}m above ground"
+        else:
+            hint = "close to ground"
+
+        return {
+            "object_name": object_name,
+            "ground_name": ground_name,
+            "samples_tested": len(slice_verts),
+            "samples_hit": len(gaps),
+            "samples_missed": missed,
+            "min_gap": round(min_gap, 4),
+            "max_gap": round(max_gap, 4),
+            "median_gap": round(median_gap, 4),
+            "mean_gap": round(sum(gaps) / len(gaps), 4),
+            "slice_height": slice_height,
+            "hint": hint,
+        }
 
     def execute_code(self, code):
         """Execute arbitrary Blender Python code"""
