@@ -278,6 +278,11 @@ class BlenderMCPServer:
                 "object_count": len(bpy.context.scene.objects),
                 "objects": [],
                 "materials_count": len(bpy.data.materials),
+                # Blender version is exposed so callers can branch on
+                # version-sensitive API surface (enum values, operator args,
+                # removed/renamed nodes) rather than guessing.
+                "blender_version": list(bpy.app.version),
+                "blender_version_string": bpy.app.version_string,
             }
 
             # Collect minimal object information (limit to first 10 objects)
