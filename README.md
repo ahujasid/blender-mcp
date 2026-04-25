@@ -2,7 +2,7 @@
 
 # BlenderMCP - Blender Model Context Protocol Integration
 
-BlenderMCP connects Blender to Claude AI through the Model Context Protocol (MCP), allowing Claude to directly interact with and control Blender. This integration enables prompt assisted 3D modeling, scene creation, and manipulation.
+BlenderMCP connects Blender to MCP-compatible clients such as Codex, Claude, Cursor, and VS Code through the Model Context Protocol (MCP). This integration enables prompt-assisted 3D modeling, scene creation, and manipulation.
 
 **We have no official website. Any website you see online is unofficial and has no affiliation with this project. Use them at your own risk.**
 
@@ -32,16 +32,16 @@ Give feedback, get inspired, and build on top of the MCP: [Discord](https://disc
 ### Installating a new version (existing users)
 - For newcomers, you can go straight to Installation. For existing users, see the points below
 - Download the latest addon.py file and replace the older one, then add it to Blender
-- Delete the MCP server from Claude and add it back again, and you should be good to go!
+- Delete the MCP server from your client and add it back again, and you should be good to go!
 
 
 ## Features
 
-- **Two-way communication**: Connect Claude AI to Blender through a socket-based server
+- **Two-way communication**: Connect MCP-compatible clients to Blender through a socket-based server
 - **Object manipulation**: Create, modify, and delete 3D objects in Blender
 - **Material control**: Apply and modify materials and colors
 - **Scene inspection**: Get detailed information about the current Blender scene
-- **Code execution**: Run arbitrary Python code in Blender from Claude
+- **Code execution**: Run arbitrary Python code in Blender from your MCP client
 
 ## Components
 
@@ -67,7 +67,7 @@ brew install uv
 ```powershell
 powershell -c "irm https://astral.sh/uv/install.ps1 | iex" 
 ```
-and then add uv to the user path in Windows (you may need to restart Claude Desktop after):
+and then add uv to the user path in Windows (you may need to restart your MCP client after):
 ```powershell
 $localBin = "$env:USERPROFILE\.local\bin"
 $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
@@ -90,6 +90,20 @@ Example:
 export BLENDER_HOST='host.docker.internal'
 export BLENDER_PORT=9876
 ```
+
+### Codex Integration
+
+Add the following MCP server to your Codex config (`~/.codex/config.toml`):
+
+```toml
+[mcp_servers.blender]
+type = "stdio"
+command = "uvx"
+args = ["blender-mcp"]
+enabled = true
+```
+
+If `uvx` is not yet available on your `PATH` on Windows, point `command` to the full `uvx.exe` path instead.
 
 ### Claude for Desktop Integration
 
@@ -161,7 +175,7 @@ For Windows users, go to Settings > MCP > Add Server, add a new server with the 
 
 [Cursor setup video](https://www.youtube.com/watch?v=wgWsJshecac)
 
-**⚠️ Only run one instance of the MCP server (either on Cursor or Claude Desktop), not both**
+**⚠️ Only run one instance of the MCP server at a time (for example on Codex, Cursor, or Claude Desktop), not multiple clients simultaneously**
 
 ### Visual Studio Code Integration
 
@@ -186,12 +200,12 @@ _Prerequisites_: Make sure you have [Visual Studio Code](https://code.visualstud
 1. In Blender, go to the 3D View sidebar (press N if not visible)
 2. Find the "BlenderMCP" tab
 3. Turn on the Poly Haven checkbox if you want assets from their API (optional)
-4. Click "Connect to Claude"
+4. Click "Connect to MCP server"
 5. Make sure the MCP server is running in your terminal
 
-### Using with Claude
+### Using with MCP Clients
 
-Once the config file has been set on Claude, and the addon is running on Blender, you will see a hammer icon with tools for the Blender MCP.
+Once the config file has been set on your MCP client and the addon is running in Blender, you will see Blender MCP tools in the client.
 
 ![BlenderMCP in the sidebar](assets/hammer-icon.png)
 
@@ -207,7 +221,7 @@ Once the config file has been set on Claude, and the addon is running on Blender
 
 ### Example Commands
 
-Here are some examples of what you can ask Claude to do:
+Here are some examples of what you can ask your MCP client to do:
 
 - "Create a low poly scene in a dungeon, with a dragon guarding a pot of gold" [Demo](https://www.youtube.com/watch?v=DqgKuLYUv00)
 - "Create a beach vibe using HDRIs, textures, and models like rocks and vegetation from Poly Haven" [Demo](https://www.youtube.com/watch?v=I29rn92gkC4)
@@ -225,10 +239,10 @@ Hyper3D's free trial key allows you to generate a limited number of models per d
 
 ## Troubleshooting
 
-- **Connection issues**: Make sure the Blender addon server is running, and the MCP server is configured on Claude, DO NOT run the uvx command in the terminal. Sometimes, the first command won't go through but after that it starts working.
+- **Connection issues**: Make sure the Blender addon server is running, and the MCP server is configured in your client. DO NOT run the `uvx blender-mcp` command manually in the terminal. Sometimes, the first command won't go through but after that it starts working.
 - **Timeout errors**: Try simplifying your requests or breaking them into smaller steps
-- **Poly Haven integration**: Claude is sometimes erratic with its behaviour
-- **Have you tried turning it off and on again?**: If you're still having connection errors, try restarting both Claude and the Blender server
+- **Poly Haven integration**: MCP clients can sometimes be erratic with tool sequencing
+- **Have you tried turning it off and on again?**: If you're still having connection errors, try restarting both your MCP client and the Blender server
 
 
 ## Technical Details
