@@ -2394,9 +2394,9 @@ class BLENDERMCP_PT_Panel(bpy.types.Panel):
                 layout.prop(scene, "blendermcp_hunyuan3d_texture", text="Generate Texture")
         
         if not scene.blendermcp_server_running:
-            layout.operator("blendermcp.start_server", text="Connect to MCP server")
+            layout.operator("blendermcp.start_server")
         else:
-            layout.operator("blendermcp.stop_server", text="Disconnect from MCP server")
+            layout.operator("blendermcp.stop_server")
             layout.label(text=f"Running on port {scene.blendermcp_port}")
 
 # Operator to set Hyper3D API Key

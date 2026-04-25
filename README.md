@@ -205,7 +205,7 @@ _Prerequisites_: Make sure you have [Visual Studio Code](https://code.visualstud
 
 ### Using with MCP Clients
 
-Once the config file has been set on your MCP client and the addon is running in Blender, you will see Blender MCP tools in the client.
+Once the config file has been set in your MCP client and the add-on is running in Blender, you will see Blender MCP tools in the client.
 
 ![BlenderMCP in the sidebar](assets/hammer-icon.png)
 
@@ -239,7 +239,7 @@ Hyper3D's free trial key allows you to generate a limited number of models per d
 
 ## Troubleshooting
 
-- **Connection issues**: Make sure the Blender addon server is running, and the MCP server is configured in your client. DO NOT run the `uvx blender-mcp` command manually in the terminal. Sometimes, the first command won't go through but after that it starts working.
+- **Connection issues**: Make sure the Blender add-on server is running, and the MCP server is configured in your client. DO NOT run the `uvx blender-mcp` command manually in the terminal. Sometimes, the first command won't go through but after that it starts working.
 - **Timeout errors**: Try simplifying your requests or breaking them into smaller steps
 - **Poly Haven integration**: MCP clients can sometimes be erratic with tool sequencing
 - **Have you tried turning it off and on again?**: If you're still having connection errors, try restarting both your MCP client and the Blender server
