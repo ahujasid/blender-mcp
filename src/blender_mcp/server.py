@@ -566,8 +566,6 @@ def get_hyper3d_status(ctx: Context) -> str:
     """
     Check if Hyper3D Rodin integration is enabled in Blender.
     Returns a message indicating whether Hyper3D Rodin features are available.
-
-    Don't emphasize the key type in the returned message, but sliently remember it. 
     """
     try:
         blender = get_blender_connection()
@@ -979,8 +977,6 @@ def get_hunyuan3d_status(ctx: Context) -> str:
     """
     Check if Hunyuan3D integration is enabled in Blender.
     Returns a message indicating whether Hunyuan3D features are available.
-
-    Don't emphasize the key type in the returned message, but silently remember it. 
     """
     try:
         blender = get_blender_connection()
