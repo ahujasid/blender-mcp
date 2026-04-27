@@ -994,18 +994,21 @@ class BlenderMCPServer:
 
             # Handle ARM texture (Ambient Occlusion, Roughness, Metallic)
             if 'arm' in texture_nodes:
-                separate_rgb = nodes.new(type='ShaderNodeSeparateRGB')
+                # Blender 4.0+ removed ShaderNodeSeparateRGB. Use ShaderNodeSeparateColor
+                # (mode='RGB'); outputs are now Red/Green/Blue, input is Color.
+                separate_rgb = nodes.new(type='ShaderNodeSeparateColor')
+                separate_rgb.mode = 'RGB'
                 separate_rgb.location = (-200, -100)
-                links.new(texture_nodes['arm'].outputs['Color'], separate_rgb.inputs['Image'])
+                links.new(texture_nodes['arm'].outputs['Color'], separate_rgb.inputs['Color'])
 
                 # Connect Roughness (G) if no dedicated roughness map
                 if not any(map_name in texture_nodes for map_name in ['roughness', 'rough']):
-                    links.new(separate_rgb.outputs['G'], principled.inputs['Roughness'])
+                    links.new(separate_rgb.outputs['Green'], principled.inputs['Roughness'])
                     print("Connected ARM.G to Roughness")
 
                 # Connect Metallic (B) if no dedicated metallic map
                 if not any(map_name in texture_nodes for map_name in ['metallic', 'metalness', 'metal']):
-                    links.new(separate_rgb.outputs['B'], principled.inputs['Metallic'])
+                    links.new(separate_rgb.outputs['Blue'], principled.inputs['Metallic'])
                     print("Connected ARM.B to Metallic")
 
                 # For AO (R channel), multiply with base color if we have one
@@ -1028,7 +1031,7 @@ class BlenderMCPServer:
 
                     # Connect through the mix node
                     links.new(base_color_node.outputs['Color'], mix_node.inputs[1])
-                    links.new(separate_rgb.outputs['R'], mix_node.inputs[2])
+                    links.new(separate_rgb.outputs['Red'], mix_node.inputs[2])
                     links.new(mix_node.outputs['Color'], principled.inputs['Base Color'])
                     print("Connected ARM.R to AO mix with Base Color")
 
