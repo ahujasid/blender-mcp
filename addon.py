@@ -70,6 +70,11 @@ class BlenderMCPServer:
         return ""
 
     def _get_hyper3d_api_key(self):
+        # Let the free-trial button temporarily override persistent keys
+        # without overwriting user-saved private keys.
+        scene_value = getattr(bpy.context.scene, "blendermcp_hyper3d_api_key", "")
+        if scene_value == RODIN_FREE_TRIAL_KEY:
+            return scene_value
         return self._get_config_value(
             "blendermcp_hyper3d_api_key",
             "hyper3d_api_key",
@@ -2437,7 +2442,7 @@ class BLENDERMCP_AddonPreferences(bpy.types.AddonPreferences):
     hunyuan3d_api_url: bpy.props.StringProperty(
         name="Hunyuan3D API URL",
         description="Persistent Hunyuan3D API URL",
-        default="http://localhost:8081"
+        default=""
     )
 
     def draw(self, context):
@@ -2540,7 +2545,13 @@ class BLENDERMCP_OT_SetFreeTrialHyper3DAPIKey(bpy.types.Operator):
     def execute(self, context):
         prefs = get_blendermcp_addon_preferences(context)
         if prefs:
-            prefs.hyper3d_api_key = RODIN_FREE_TRIAL_KEY
+            if not prefs.hyper3d_api_key or prefs.hyper3d_api_key == RODIN_FREE_TRIAL_KEY:
+                prefs.hyper3d_api_key = RODIN_FREE_TRIAL_KEY
+            else:
+                self.report(
+                    {'INFO'},
+                    "Using free trial for this session only; saved private key was kept."
+                )
         context.scene.blendermcp_hyper3d_api_key = RODIN_FREE_TRIAL_KEY
         context.scene.blendermcp_hyper3d_mode = 'MAIN_SITE'
         self.report({'INFO'}, "API Key set successfully!")
