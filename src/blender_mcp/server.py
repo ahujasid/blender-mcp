@@ -802,6 +802,12 @@ def _process_bbox(original_bbox: list[float] | list[int] | None) -> list[int] | 
         raise ValueError("Incorrect number range: bbox must be bigger than zero!")
     return [int(float(i) / max(original_bbox) * 100) for i in original_bbox] if original_bbox else None
 
+def _is_valid_image_url(url: str) -> bool:
+    if not isinstance(url, str) or not url:
+        return False
+    parsed = urlparse(url)
+    return parsed.scheme in {"http", "https"} and bool(parsed.netloc)
+
 @telemetry_tool("generate_hyper3d_model_via_text")
 @mcp.tool()
 def generate_hyper3d_model_via_text(
@@ -874,7 +880,7 @@ def generate_hyper3d_model_via_images(
                     (Path(path).suffix, base64.b64encode(f.read()).decode("ascii"))
                 )
     elif input_image_urls is not None:
-        if not all(urlparse(i) for i in input_image_paths):
+        if not all(_is_valid_image_url(i) for i in input_image_urls):
             return "Error: not all image URLs are valid!"
         images = input_image_urls.copy()
     try:
