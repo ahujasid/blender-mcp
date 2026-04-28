@@ -29,7 +29,7 @@ Give feedback, get inspired, and build on top of the MCP: [Discord](https://disc
 - Run Blender MCP on a remote host
 - Telemetry for tools executed (completely anonymous)
 
-### Installating a new version (existing users)
+### Installing a new version (existing users)
 - For newcomers, you can go straight to Installation. For existing users, see the points below
 - Download the latest addon.py file and replace the older one, then add it to Blender
 - Delete the MCP server from Claude and add it back again, and you should be good to go!
@@ -227,7 +227,7 @@ Hyper3D's free trial key allows you to generate a limited number of models per d
 
 - **Connection issues**: Make sure the Blender addon server is running, and the MCP server is configured on Claude, DO NOT run the uvx command in the terminal. Sometimes, the first command won't go through but after that it starts working.
 - **Timeout errors**: Try simplifying your requests or breaking them into smaller steps
-- **Poly Haven integration**: Claude is sometimes erratic with its behaviour
+- **Poly Haven integration**: Claude is sometimes erratic with its behavior
 - **Have you tried turning it off and on again?**: If you're still having connection errors, try restarting both Claude and the Blender server
 
 

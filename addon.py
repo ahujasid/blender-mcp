@@ -2488,7 +2488,7 @@ def register():
 
     bpy.types.Scene.blendermcp_use_hyper3d = bpy.props.BoolProperty(
         name="Use Hyper3D Rodin",
-        description="Enable Hyper3D Rodin generatino integration",
+        description="Enable Hyper3D Rodin generation integration",
         default=False
     )
 
