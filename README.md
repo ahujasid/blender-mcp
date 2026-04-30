@@ -1,4 +1,4 @@
-
+addon.py
 
 # BlenderMCP - Blender Model Context Protocol Integration
 
