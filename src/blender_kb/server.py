@@ -1,11 +1,14 @@
 """FastMCP server exposing the local Bible/ Knowledge Base.
 
 Tools:
-  kb_status()                              -> KB root, KB folders, topic count
-  kb_list_topics(kb_name?)                 -> indexed topics with summary
-  kb_get_topic(topic_id, max_chars?)       -> full markdown of a topic doc
-  kb_search(query, kb_name?, max_results?) -> grep snippets across topic docs
-  kb_read(relative_path, max_chars?)       -> read any file under KB root (escape hatch)
+  kb_status()                                              -> KB root + stats
+  kb_list_topics(kb_name?, band?, solves_symptom?)         -> indexed topics
+  kb_get_topic(topic_id, max_chars?)                       -> full markdown
+  kb_search(query, kb_name?, max_results?, context_lines?) -> grep snippets
+  kb_read(relative_path, max_chars?)                       -> escape hatch
+  kb_route(analysis_json)                                  -> action routing
+  kb_list_playbooks()                                      -> available playbooks
+  kb_get_playbook(playbook_id)                             -> single playbook
 
 Prompts:
   kb_bootstrap()  -> CLAUDE.md + SYSTEM_PROMPT.md + INDEX summaries, intended as
@@ -29,6 +32,7 @@ from .kb import (
     build_index,
     resolve_root,
 )
+from .routing import next_action, route, summarize_analysis
 
 logging.basicConfig(
     level=logging.INFO,
@@ -104,21 +108,34 @@ def kb_status() -> str:
 
 
 @mcp.tool()
-def kb_list_topics(kb_name: str | None = None) -> str:
-    """List indexed topics with short summary.
+def kb_list_topics(
+    kb_name: str | None = None,
+    band: str | None = None,
+    solves_symptom: str | None = None,
+) -> str:
+    """List indexed topics with short summary, with optional filters.
 
     Parameters:
-    - kb_name: optional, restrict to one sub-KB (e.g. "Blender for 3d print documentation").
+    - kb_name: restrict to one sub-KB (e.g. "Blender for 3d print documentation").
                Use kb_status() to see available sub-KBs.
+    - band:    "A" = core print-prep workflow, "B" = adjacent / reference.
+               Archived (band "C") topics are stored in `_archive/` and are
+               never returned by this tool.
+    - solves_symptom: filter to topics that address a specific symptom from the
+               analyze_mesh_for_print output, e.g. "non_manifold_edges",
+               "disconnected_shells", "polycount_high", "dimensions_wrong".
 
-    Returns JSON: [{topic_id, kb_name, title, when_to_use, file_rel}, ...]
+    Returns JSON: [{topic_id, kb_name, title, when_to_use, file_rel, band,
+                   solves_symptoms, related}, ...]
     """
     try:
         kb = _get_kb()
     except KBError as e:
         return f"Error: {e}"
-    topics = kb.list_topics(kb_name=kb_name)
-    if kb_name and not topics:
+    topics = kb.list_topics(
+        kb_name=kb_name, band=band, solves_symptom=solves_symptom,
+    )
+    if kb_name and not topics and not band and not solves_symptom:
         available = ", ".join(kb.list_kbs())
         return f"Error: no topics for kb_name={kb_name!r}. Available: {available}"
     return json.dumps([
@@ -128,6 +145,9 @@ def kb_list_topics(kb_name: str | None = None) -> str:
             "title": t.title,
             "when_to_use": t.when_to_use,
             "file_rel": t.file_rel,
+            "band": t.band,
+            "solves_symptoms": t.solves_symptoms,
+            "related": t.related,
         }
         for t in topics
     ], indent=2, ensure_ascii=False)
@@ -226,6 +246,92 @@ def kb_read(relative_path: str, max_chars: int = 0) -> str:
     if truncated:
         text += f"\n\n[... truncated at {max_chars} chars]"
     return text
+
+
+# --------------------------------- routing -----------------------------------
+
+@mcp.tool()
+def kb_route(analysis_json: str) -> str:
+    """Map the output of `analyze_mesh_for_print` to a sequence of cleanup actions.
+
+    Loads the routing rules from each sub-KB's `routing_rules.yaml`, evaluates
+    them against the analysis, and returns the matched rules sorted by priority
+    descending, plus a `next_action` directly executable by the assistant.
+
+    Parameters:
+    - analysis_json: the JSON string returned by `analyze_mesh_for_print`
+      (or any dict-compatible JSON with the same keys: vertex_count,
+       face_count, non_manifold_edges, boundary_loops, disconnected_shells,
+       degenerate_faces, normals, dimensions_mm, ready_to_slice, ...).
+
+    Returns JSON with:
+      input_summary  : echo of the analysis keys that drove the decision
+      matched_rules  : list of {id, priority, topic_id, section, playbook,
+                                expected_after, rationale, needs_user_input}
+      next_action    : {tool, args, ...} — what to do next
+
+    Use this BEFORE deciding which topic to load. It will tell you the exact
+    topic_id + playbook to fetch, or signal `ask_user` for ambiguous cases.
+    """
+    try:
+        kb = _get_kb()
+    except KBError as e:
+        return f"Error: {e}"
+
+    if not analysis_json or not analysis_json.strip():
+        return "Error: empty analysis_json"
+    try:
+        analysis = json.loads(analysis_json)
+    except json.JSONDecodeError as e:
+        return f"Error: analysis_json is not valid JSON: {e}"
+    if not isinstance(analysis, dict):
+        return f"Error: analysis_json must be a JSON object, got {type(analysis).__name__}"
+
+    rules = kb.load_routing_rules()
+    matched = route(analysis, rules)
+    return json.dumps({
+        "input_summary": summarize_analysis(analysis),
+        "matched_rules": matched,
+        "next_action": next_action(matched, analysis),
+        "rules_loaded": len(rules),
+    }, indent=2, ensure_ascii=False)
+
+
+@mcp.tool()
+def kb_list_playbooks() -> str:
+    """List available playbooks under <root>/playbooks/.
+
+    A playbook is a JSON file with a deterministic sequence of cleanup steps
+    (e.g. repair_basic, decimate_to_target). Use `kb_get_playbook(id)` to
+    fetch the actual steps.
+
+    Returns JSON: [{id, file, title, when_to_use, step_count}, ...]
+    """
+    try:
+        kb = _get_kb()
+    except KBError as e:
+        return f"Error: {e}"
+    return json.dumps(kb.list_playbooks(), indent=2, ensure_ascii=False)
+
+
+@mcp.tool()
+def kb_get_playbook(playbook_id: str) -> str:
+    """Return the full JSON of a playbook (steps + metadata).
+
+    Parameters:
+    - playbook_id: filename stem of a playbook under <root>/playbooks/,
+      e.g. "repair_basic", "decimate_to_target".
+
+    Returns the playbook JSON or an Error: ... string.
+    """
+    try:
+        kb = _get_kb()
+        data = kb.get_playbook(playbook_id)
+    except KBNotFound as e:
+        return f"Error: {e}"
+    except KBError as e:
+        return f"Error: {e}"
+    return json.dumps(data, indent=2, ensure_ascii=False)
 
 
 # --------------------------------- prompt ------------------------------------

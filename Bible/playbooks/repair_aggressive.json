@@ -1,0 +1,50 @@
+{
+  "id": "repair_aggressive",
+  "title": "Aggressive non-manifold cleanup (3D Print Toolbox)",
+  "when_to_use": "Mesh con non_manifold_edges > 0 ma senza boundary_loops (T-junction, vertex fan, edge condivisi da 3+ facce). Triggered da R005. Richiede l'addon 3D Print Toolbox abilitato in Blender.",
+  "preconditions": [
+    "object_name esiste in bpy.data.objects",
+    "obj.type == 'MESH'",
+    "Addon 'object_print3d_utils' abilitato (Edit > Preferences > Add-ons > Mesh: 3D Print Toolbox)"
+  ],
+  "params": {
+    "object_name": {"type": "string", "required": true}
+  },
+  "steps": [
+    {
+      "label": "Verify 3D Print Toolbox is enabled",
+      "tool": "execute_blender_code",
+      "code": "import addon_utils\nenabled = addon_utils.check('object_print3d_utils')[1]\nif not enabled:\n    addon_utils.enable('object_print3d_utils')\n    print('Enabled 3D Print Toolbox')\nelse:\n    print('3D Print Toolbox already enabled')"
+    },
+    {
+      "label": "Select target and enter edit mode",
+      "tool": "execute_blender_code",
+      "code": "import bpy\nfor o in bpy.context.selected_objects:\n    o.select_set(False)\nobj = bpy.data.objects['{object_name}']\nobj.select_set(True)\nbpy.context.view_layer.objects.active = obj\nbpy.ops.object.mode_set(mode='EDIT')\nbpy.ops.mesh.select_all(action='SELECT')"
+    },
+    {
+      "label": "Print3d clean non-manifold",
+      "tool": "execute_blender_code",
+      "code": "import bpy\nbpy.ops.mesh.print3d_clean_non_manifold()\nprint('print3d_clean_non_manifold done')"
+    },
+    {
+      "label": "Recalc normals after the cleanup",
+      "tool": "execute_blender_code",
+      "code": "import bpy\nbpy.ops.mesh.select_all(action='SELECT')\nbpy.ops.mesh.normals_make_consistent(inside=False)"
+    },
+    {
+      "label": "Exit edit mode",
+      "tool": "execute_blender_code",
+      "code": "import bpy\nbpy.ops.object.mode_set(mode='OBJECT')"
+    }
+  ],
+  "verification": {
+    "tool": "analyze_mesh_for_print",
+    "args": {"object_name": "{object_name}"},
+    "expect": {
+      "non_manifold_edges": "<= input.non_manifold_edges / 2",
+      "normals": "consistent_or_unknown_open_mesh"
+    },
+    "notes": "Aggressive cleanup should at least halve the non-manifold edge count. If it goes to 0, mesh is watertight. If it stays high, escalate to Voxel Remesh (see [decimation_remesh])."
+  },
+  "topic_refs": ["mesh_repair", "mesh_quality_assessment"]
+}

@@ -1,0 +1,214 @@
+# Machine-readable metadata for Blender sub-KB.
+#
+# Bands:
+#   A = core for the STL print-prep workflow (mesh repair, decimate, manifold check)
+#   B = adjacent / reference (consulted occasionally)
+#   C = out of scope (already moved to _archive/)
+#
+# solves_symptoms: keys aligned with the output of analyze_mesh_for_print:
+#   non_manifold_edges, boundary_loops, disconnected_shells, degenerate_faces,
+#   normals_inverted, dimensions_wrong, polycount_high, thin_walls,
+#   overhangs, self_intersection, too_large_for_bed, not_oriented_for_print
+#
+# This file is parsed by blender-kb. INDEX.md remains the human-readable source
+# of truth for titles and "Quando usarlo". This file only adds structured fields.
+
+topics:
+  # ------- Band A: core print-prep workflow -------
+  - id: fdm_printing_constraints
+    band: A
+    solves_symptoms: [thin_walls, too_large_for_bed, overhangs]
+    related: [bambu_a1_physical_constants, preprint_validation]
+
+  - id: source_mesh_characteristics
+    band: A
+    solves_symptoms: [non_manifold_edges, normals_inverted, dimensions_wrong]
+    related: [ai_mesh_recipe, mesh_quality_assessment]
+
+  - id: mesh_quality_assessment
+    band: A
+    solves_symptoms:
+      [non_manifold_edges, boundary_loops, disconnected_shells, normals_inverted,
+       degenerate_faces, dimensions_wrong, thin_walls, polycount_high]
+    related: [problem_to_tool_map, preprint_validation, mesh_repair]
+
+  - id: analyze_to_action
+    band: A
+    solves_symptoms:
+      [non_manifold_edges, boundary_loops, disconnected_shells, degenerate_faces,
+       normals_inverted, dimensions_wrong, polycount_high, too_large_for_bed]
+    related: [problem_to_tool_map, mesh_repair, decimation_remesh, multi_object_management]
+
+  - id: problem_to_tool_map
+    band: A
+    solves_symptoms:
+      [non_manifold_edges, polycount_high, dimensions_wrong, thin_walls,
+       overhangs, disconnected_shells, normals_inverted]
+    related: [mesh_repair, decimation_remesh, multi_object_management]
+
+  - id: multi_object_management
+    band: A
+    solves_symptoms: [disconnected_shells]
+    related: [ai_mesh_recipe, mesh_repair]
+
+  - id: decimation_remesh
+    band: A
+    solves_symptoms: [polycount_high]
+    related: [ai_mesh_recipe, modifiers_generate, mesh_repair]
+
+  - id: scale_detection
+    band: A
+    solves_symptoms: [dimensions_wrong]
+    related: [import_export, utils_units]
+
+  - id: mcp_tools
+    band: A
+    related: [scripting_guide, error_handling_mcp]
+
+  - id: mesh_repair
+    band: A
+    solves_symptoms:
+      [non_manifold_edges, boundary_loops, normals_inverted, degenerate_faces,
+       self_intersection]
+    related: [mesh_quality_assessment, boolean_troubleshooting, ai_mesh_recipe]
+
+  - id: import_export
+    band: A
+    related: [scale_detection, fbx_import_guide]
+
+  - id: bmesh_scripting
+    band: A
+    related: [mesh_repair, mesh_ops]
+
+  - id: orientation_strategy
+    band: A
+    solves_symptoms: [not_oriented_for_print, overhangs]
+    related: [support_strategy, preprint_validation]
+
+  - id: support_strategy
+    band: A
+    solves_symptoms: [overhangs]
+    related: [orientation_strategy, fdm_printing_constraints]
+
+  - id: ai_mesh_recipe
+    band: A
+    solves_symptoms:
+      [non_manifold_edges, polycount_high, dimensions_wrong, boundary_loops,
+       normals_inverted, disconnected_shells]
+    related: [photogrammetry_recipe, mesh_repair, decimation_remesh, preprint_validation]
+
+  - id: error_handling_mcp
+    band: A
+    related: [mcp_tools, scripting_guide]
+
+  - id: boolean_troubleshooting
+    band: A
+    solves_symptoms: [self_intersection, non_manifold_edges]
+    related: [mesh_repair, mechanical_algorithms]
+
+  - id: measurement_toolkit
+    band: A
+    solves_symptoms: [thin_walls, dimensions_wrong]
+    related: [preprint_validation, mesh_quality_assessment]
+
+  - id: preprint_validation
+    band: A
+    solves_symptoms:
+      [non_manifold_edges, dimensions_wrong, thin_walls, overhangs,
+       polycount_high, normals_inverted, too_large_for_bed]
+    related: [mesh_quality_assessment, workflow_patterns, ai_mesh_recipe]
+
+  - id: workflow_patterns
+    band: A
+    related: [ai_mesh_recipe, boolean_troubleshooting, preprint_validation]
+
+  - id: bambu_a1_physical_constants
+    band: A
+    related: [fdm_printing_constraints, support_strategy]
+
+  # ------- Band B: adjacent / reference -------
+  - id: scripting_guide
+    band: B
+    related: [bpy_basics, mcp_tools]
+
+  - id: bpy_basics
+    band: B
+    related: [scripting_guide, mesh_ops, object_ops]
+
+  - id: mesh_ops
+    band: B
+    related: [bmesh_scripting, mesh_repair]
+
+  - id: object_ops
+    band: B
+    related: [object_placement, scripting_guide]
+
+  - id: modifiers_generate
+    band: B
+    related: [decimation_remesh, hollowing_and_lightening]
+
+  - id: modifiers_deform
+    band: B
+    related: [ai_mesh_recipe]
+
+  - id: mesh_types
+    band: B
+    related: [bmesh_scripting]
+
+  - id: object_scene_types
+    band: B
+    related: [object_ops]
+
+  - id: mathutils
+    band: B
+    related: [bmesh_scripting, measurement_toolkit]
+
+  - id: utils_units
+    band: B
+    related: [scale_detection, import_export]
+
+  - id: depsgraph_evaluated
+    band: B
+    related: [mesh_quality_assessment, preprint_validation]
+
+  - id: camera_verification
+    band: B
+    related: [mcp_tools]
+
+  - id: photogrammetry_recipe
+    band: B
+    solves_symptoms: [polycount_high, boundary_loops, disconnected_shells]
+    related: [ai_mesh_recipe, decimation_remesh]
+
+  - id: fbx_import_guide
+    band: B
+    solves_symptoms: [dimensions_wrong, normals_inverted]
+    related: [import_export, scale_detection]
+
+  - id: object_placement
+    band: B
+    solves_symptoms: [not_oriented_for_print]
+    related: [orientation_strategy, workflow_patterns]
+
+  - id: bisect_splitting
+    band: B
+    solves_symptoms: [too_large_for_bed]
+    related: [workflow_patterns, boolean_troubleshooting]
+
+  - id: api_migration_5x
+    band: B
+    related: [scripting_guide, import_export]
+
+  - id: cad_import_workflow
+    band: B
+    related: [import_export, mechanical_algorithms]
+
+  - id: mechanical_algorithms
+    band: B
+    related: [boolean_troubleshooting, measurement_toolkit]
+
+  - id: hollowing_and_lightening
+    band: B
+    # Anti-pattern doc: it explicitly recommends against hollowing in Blender
+    # for FDM and to delegate infill to the slicer. Kept as a stop-sign.
+    related: [fdm_printing_constraints]

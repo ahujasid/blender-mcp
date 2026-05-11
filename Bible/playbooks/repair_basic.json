@@ -1,0 +1,59 @@
+{
+  "id": "repair_basic",
+  "title": "Cleanup base: merge by distance + fill holes + recalc normals",
+  "when_to_use": "Primo cleanup post-import per la maggior parte degli STL AI. Risolve buchi piccoli (loops <= 8 lati), vertici doppi sotto soglia, normali inconsistenti. Triggers in routing_rules.yaml: R001 (dissolve degenerate), R004 (non-manifold + holes).",
+  "preconditions": [
+    "object_name esiste in bpy.data.objects",
+    "obj.type == 'MESH'",
+    "no modifiers blocking edit mode (apply them first if needed)"
+  ],
+  "params": {
+    "object_name": {"type": "string", "required": true, "description": "Mesh object to repair"},
+    "merge_distance_mm": {"type": "number", "default": 0.001, "description": "Distance threshold in MILLIMETERS for vertex merge. 0.001mm = 1 micron, safe default that won't damage geometry. Increase to 0.01 for very dense AI meshes."},
+    "fill_max_sides": {"type": "integer", "default": 8, "description": "Max polygon sides for fill_holes. Loops larger than this stay open (use voxel remesh fallback)."}
+  },
+  "steps": [
+    {
+      "label": "Select target and enter edit mode",
+      "tool": "execute_blender_code",
+      "code": "import bpy\nfor o in bpy.context.selected_objects:\n    o.select_set(False)\nobj = bpy.data.objects['{object_name}']\nobj.select_set(True)\nbpy.context.view_layer.objects.active = obj\nbpy.ops.object.mode_set(mode='EDIT')\nbpy.ops.mesh.select_all(action='SELECT')\nprint('Entered edit mode on', obj.name)"
+    },
+    {
+      "label": "Dissolve degenerate (zero-area faces, near-zero edges)",
+      "tool": "execute_blender_code",
+      "code": "import bpy\nbpy.ops.mesh.dissolve_degenerate(threshold=0.0001)\nprint('dissolve_degenerate done')"
+    },
+    {
+      "label": "Merge by distance (remove duplicate vertices)",
+      "tool": "execute_blender_code",
+      "code": "import bpy\n# {merge_distance_mm} is in millimetres. Blender units = metres by default,\n# so convert: 0.001 mm = 1e-6 m. If scene.unit_settings.scale_length=0.001\n# (1 BU = 1mm) you can pass merge_distance_mm directly.\nscale = bpy.context.scene.unit_settings.scale_length\nthreshold = ({merge_distance_mm} * 0.001) / scale\nbpy.ops.mesh.remove_doubles(threshold=threshold)\nprint('remove_doubles threshold=', threshold)"
+    },
+    {
+      "label": "Fill holes up to fill_max_sides",
+      "tool": "execute_blender_code",
+      "code": "import bpy\nbpy.ops.mesh.fill_holes(sides={fill_max_sides})\nprint('fill_holes done')"
+    },
+    {
+      "label": "Recalculate normals consistently (outside)",
+      "tool": "execute_blender_code",
+      "code": "import bpy\nbpy.ops.mesh.normals_make_consistent(inside=False)\nprint('normals_make_consistent done')"
+    },
+    {
+      "label": "Exit edit mode",
+      "tool": "execute_blender_code",
+      "code": "import bpy\nbpy.ops.object.mode_set(mode='OBJECT')\nprint('Back to object mode')"
+    }
+  ],
+  "verification": {
+    "tool": "analyze_mesh_for_print",
+    "args": {"object_name": "{object_name}"},
+    "expect": {
+      "degenerate_faces": "<= input.degenerate_faces",
+      "boundary_loops": "<= input.boundary_loops",
+      "non_manifold_edges": "<= input.non_manifold_edges",
+      "normals": "consistent_or_unknown_open_mesh"
+    },
+    "notes": "Re-run analyze_mesh_for_print and compare to the input that triggered the routing rule. All three repair metrics should be non-increasing; normals should be 'consistent' if the mesh is now watertight."
+  },
+  "topic_refs": ["mesh_repair", "bmesh_scripting"]
+}

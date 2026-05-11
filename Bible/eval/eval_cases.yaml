@@ -1,0 +1,74 @@
+# Eval cases for the STL print-prep workflow.
+#
+# Add a real case here as soon as you've processed one in practice.
+# The two examples below are SYNTHETIC — kept only to show the schema and to
+# let `scripts/eval_dry.py` produce a non-empty report on a fresh checkout.
+#
+# Mark synthetic cases with `synthetic: true` so the eval runner knows they
+# don't have a real input.stl to import.
+
+cases:
+  - name: synthetic_perfect_cube
+    synthetic: true
+    description: >
+      A theoretical perfect cube — all metrics green from the start. Useful
+      to verify the "ready" branch of kb_route fires when there's nothing to do.
+    expected_initial_analysis:
+      vertex_count: 8
+      edge_count: 12
+      face_count: 12
+      non_manifold_edges: 0
+      boundary_loops: 0
+      disconnected_shells: 1
+      degenerate_faces: 0
+      normals: consistent
+      watertight: true
+      signed_volume_mm3: 27000.0
+      dimensions_mm: [30, 30, 30]
+      ready_to_slice: true
+    expected_pipeline:
+      - tool: ready
+    expected_final_analysis: same_as_initial
+
+  - name: synthetic_meshy_chess_pawn
+    synthetic: true
+    description: >
+      Plausible profile of a freshly downloaded Meshy-style STL: oversized
+      polycount, a handful of non-manifold edges from triangle soup, two
+      floating shells (helmet noise + pedestal noise), normals OK but mesh
+      not watertight. The expected pipeline matches what the routing engine
+      should fire today.
+    expected_initial_analysis:
+      vertex_count: 320000
+      edge_count: 960000
+      face_count: 640000
+      non_manifold_edges: 42
+      boundary_loops: 3
+      disconnected_shells: 3
+      degenerate_faces: 5
+      normals: unknown_open_mesh
+      watertight: false
+      signed_volume_mm3: null
+      dimensions_mm: [45, 45, 120]
+      ready_to_slice: false
+    expected_pipeline:
+      # The routing engine should fire R001 first (degenerate > 0).
+      - rule_id: R001
+        playbook: repair_basic
+      - rule_id: R003
+        ask_user: true
+      - rule_id: R004
+        playbook: repair_basic
+      - rule_id: R006
+        playbook: decimate_to_target
+    expected_final_analysis:
+      # After the full pipeline (run by hand or by eval_full.py once it exists).
+      # Filled in by the user after the first real run.
+      face_count: 150000
+      non_manifold_edges: 0
+      boundary_loops: 0
+      disconnected_shells: 1
+      degenerate_faces: 0
+      normals: consistent
+      watertight: true
+      ready_to_slice: true

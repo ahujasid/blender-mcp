@@ -6,14 +6,14 @@ Carica questo file sempre nel contesto. Usa il tag [topic_id] per richiedere il 
 ## [a1_specs]
 **Specifiche hardware A1: dimensioni, nozzle, velocità, temperature**
 Quando usarlo: devi sapere build volume, nozzle disponibili, velocità max, limiti fisici
-File: `docs/a1_specs.md`
+File: `Printer Infos/a1_specs.md`
 
 Contenuto: Volume 256×256×256 mm³, nozzle 0.2/0.4/0.6/0.8 mm (stainless/hardened), max 300 °C nozzle / 100 °C heatbed, auto bed leveling 7×7, vibration compensation, accessori inclusi, regole lubrificanti.
 
 ## [a1_screen_workflow]
 **Operazioni da touchscreen: menu, calibrazione, avvio stampa**
 Quando usarlo: devi capire come si avvia o gestisce una stampa dalla stampante
-File: `docs/a1_screen_workflow.md`
+File: `Printer Infos/a1_screen_workflow.md`
 
 Contenuto: Menu principale (Print Files, Filament, Control, Setting, Assistant), caricamento external spool, modalità velocità (Silent/Standard/Sport/Ludicrous), calibrazioni da schermo (Motor Noise, Vibration, Bed Leveling), print options.
 
@@ -48,7 +48,7 @@ Contenuto: Parametri PLA (190–240 °C nozzle, 35–65 °C heatbed), tipi PLA (
 ## [calibration]
 **Calibrazione: bed leveling, flow rate, pressure advance, primo layer**
 Quando usarlo: ci sono problemi di qualità stampa o devi ottimizzare parametri
-File: `docs/calibration.md`
+File: `Printer Infos/calibration.md`
 
 Contenuto: Tipi bed leveling (rapido, partial, completo 21×21), manual bed tramming step-by-step, Flow Dynamics Calibration (quando e come), flow rate manuale (over/under-extrusion), checklist primo layer perfetto, Z-offset.
 
@@ -62,14 +62,14 @@ Contenuto: Stringing (umidità, temperatura, retraction), warping PLA (pulizia, 
 ## [a1_maintenance_relevant]
 **Manutenzione A1: lubrificazione assi, hotend, frequenze**
 Quando usarlo: la qualità stampa degrada nel tempo o ci sono rumori anomali
-File: `docs/a1_maintenance_relevant.md`
+File: `Printer Infos/a1_maintenance_relevant.md`
 
 Contenuto: Oil su X/Y binari e rulli folli; Grease su lead screw Z e gear estrusore (MAI grease su X-axis). Frequenze: X/Y mensile, Z ogni 3 mesi, gear ogni 5 bobine PLA. Pulizia hotend con alcool, cinghie su notifica HMS, fans settimanale.
 
 ## [build_plates]
 **Piastre di stampa: tipi, PLA su ogni piastra, pulizia, troubleshooting**
 Quando usarlo: devi scegliere la piastra giusta o risolvere problemi di adesione
-File: `docs/build_plates.md`
+File: `Printer Infos/build_plates.md`
 
 Contenuto: Textured PEI (inclusa, PLA senza colla, 55–65 °C, superficie rugosa), Cool Plate SuperTack (PLA senza colla, bassa T, liscia/matte), Smooth PEI, Engineering Plate legacy. Pulizia Textured PEI: acqua+detergente (NO acetone). Troubleshooting: piastra sbagliata in BS, piastra sporca, temperatura errata.
 

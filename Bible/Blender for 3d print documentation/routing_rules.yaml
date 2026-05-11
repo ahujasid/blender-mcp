@@ -1,0 +1,145 @@
+# Routing rules — analyze_mesh_for_print output → topic + action.
+#
+# Schema:
+#   rules:
+#     - id: Rxxx                        # stable identifier
+#       priority: <int>                 # higher = applied first
+#       when:                           # ALL conditions must match (AND)
+#         <metric>: <match_expr>        # exact value OR "OP NUM" string
+#       then:
+#         topic_id: <topic>             # must exist in active KB
+#         section: <anchor>             # optional, free text hint
+#         playbook: <playbook_id>       # optional, must exist in playbooks/
+#         expected_after:               # what the next analyze run should show
+#           <metric>: <expected_value>
+#         needs_user_input: false       # if true, kb_route signals "ask_user"
+#       rationale: <short text>
+#
+# Match expressions for numeric metrics:
+#   "> N"   "< N"   ">= N"   "<= N"   "== N"   "!= N"
+# For strings/booleans: provide the exact value.
+# `derived` metrics computed in the engine (see kb_route in server.py):
+#   max_dimension_mm = max(dimensions_mm)
+#   min_dimension_mm = min(dimensions_mm)
+#   ratio_non_manifold = non_manifold_edges / max(1, edge_count)
+
+rules:
+  - id: R001
+    priority: 110
+    when:
+      degenerate_faces: "> 0"
+    then:
+      topic_id: mesh_repair
+      section: dissolve_degenerate
+      playbook: repair_basic
+      expected_after:
+        degenerate_faces: 0
+    rationale: >
+      Facce degeneri sabotano Boolean, Remesh e il calcolo del signed volume.
+      Vanno rimosse all'inizio prima di qualsiasi altra operazione.
+
+  - id: R002
+    priority: 100
+    when:
+      normals: all_inverted
+    then:
+      topic_id: mesh_repair
+      section: recalc_normals
+      playbook: recalc_normals
+      expected_after:
+        normals: consistent
+    rationale: >
+      Mesh chiusa con normali tutte invertite — fix immediato con
+      normals_make_consistent(inside=False).
+
+  - id: R009
+    priority: 95
+    when:
+      max_dimension_mm: "< 1.0"
+    then:
+      topic_id: scale_detection
+      section: diagnose_and_rescale
+      needs_user_input: true
+    rationale: >
+      Mesh sotto 1mm: quasi certamente AI normalizzata a unit cube.
+      Richiede target_mm dall'utente.
+
+  - id: R009b
+    priority: 95
+    when:
+      min_dimension_mm: "> 1000"
+    then:
+      topic_id: scale_detection
+      section: diagnose_and_rescale
+      needs_user_input: true
+    rationale: >
+      Mesh con dimensione minima > 1m: probabilmente in metri non in mm.
+      Richiede target_mm dall'utente.
+
+  - id: R003
+    priority: 95
+    when:
+      disconnected_shells: "> 1"
+    then:
+      topic_id: multi_object_management
+      section: split_then_decide
+      needs_user_input: true
+    rationale: >
+      Più isole disconnesse. Se le shell minori sono < 1% del volume,
+      remove_small_objects automatico; altrimenti chiedere se union, split,
+      o lasciare al slicer.
+
+  - id: R004
+    priority: 90
+    when:
+      non_manifold_edges: "> 0"
+      boundary_loops: "> 0"
+    then:
+      topic_id: mesh_repair
+      section: fill_holes
+      playbook: repair_basic
+      expected_after:
+        boundary_loops: 0
+    rationale: >
+      Mesh con buchi topologici. fill_holes(sides=8) chiude i loop piccoli.
+
+  - id: R005
+    priority: 85
+    when:
+      non_manifold_edges: "> 0"
+      boundary_loops: 0
+    then:
+      topic_id: mesh_repair
+      section: clean_non_manifold
+      playbook: repair_aggressive
+      expected_after:
+        non_manifold_edges: 0
+    rationale: >
+      Non-manifold senza buchi: T-junction o vertex fan. Risolve con
+      print3d_clean_non_manifold (3D Print Toolbox).
+
+  - id: R006
+    priority: 70
+    when:
+      face_count: "> 500000"
+    then:
+      topic_id: decimation_remesh
+      section: decimate_collapse
+      playbook: decimate_to_target
+      expected_after:
+        ready_to_slice: true
+    rationale: >
+      Poly count alto rallenta lo slicer senza beneficio visibile su FDM 0.4mm.
+      Target 100-200k facce.
+
+  - id: R008
+    priority: 50
+    when:
+      max_dimension_mm: "> 256"
+    then:
+      topic_id: bisect_splitting
+      section: split_for_bambu_a1
+      needs_user_input: true
+    rationale: >
+      Volume Bambu A1 = 256x256x256mm. Oggetto più grande va diviso con
+      registration pin per riassemblaggio.

@@ -15,32 +15,58 @@ Questo file descrive **come è organizzato il repository** e **quali file legger
 ./
   CLAUDE.md
   SYSTEM_PROMPT.md
-  KB_SERVER.md          # come usare i tool MCP blender-kb (kb_search, kb_get_topic, ecc.)
+  KB_SERVER.md          # guida ai tool MCP blender-kb (kb_route, kb_get_topic, ecc.)
   .claudeignore
   .mcp.json             # registra blender (Blender control) + blender-kb (questa KB)
 
+  playbooks/            # JSON eseguibili (repair_basic, recalc_normals, ...)
+    README.md
+    repair_basic.json
+    repair_aggressive.json
+    recalc_normals.json
+    decimate_to_target.json
+
+  eval/                 # eval harness per misurare l'effetto di modifiche KB
+    README.md
+    eval_cases.yaml
+
+  scripts/              # tooling sulla KB (validate_kb.py, eval_dry.py)
+
   Blender for 3d print documentation/
-    INDEX.md
+    INDEX.md            # umano: titolo + "Quando usarlo" + File:
+    INDEX.yaml          # macchina: band + solves_symptoms + related
     FIELD_NOTES.md
+    routing_rules.yaml  # regole di kb_route (analyze_mesh_for_print → topic)
     docs/
+    _archive/           # topic fuori scope (modellazione from-scratch, ecc.)
 
   Bambu Wiki documentation/
     INDEX.md
+    INDEX.yaml
     docs/
+    Printer Infos/
 ```
 
 ## Accesso alla KB via MCP (blender-kb)
 
-Oltre alla lettura via filesystem, esiste un secondo MCP server `blender-kb`
-(setup in `KB_SERVER.md`) che espone la KB come tool:
+Oltre alla lettura via filesystem, il server `blender-kb` espone la KB come
+tool (setup in `KB_SERVER.md`):
 
-- `kb_list_topics()` per scoprire i `[topic_id]` disponibili
-- `kb_get_topic(topic_id)` per caricare on-demand il doc associato
-- `kb_search(query)` per grep substring sui doc indicizzati
-- `kb_read(relative_path)` per file non indicizzati (FIELD_NOTES, SYSTEM_PROMPT, Printer Infos/*)
-- prompt `kb_bootstrap` che restituisce CLAUDE.md + SYSTEM_PROMPT.md + lista topic_id
+| Tool | Quando usarlo |
+| --- | --- |
+| `kb_route(analysis_json)` | **PRIMO step** dopo `analyze_mesh_for_print`. Restituisce la regola top-priority + il `next_action` direttamente eseguibile (playbook, topic, o ask_user). |
+| `kb_list_topics(kb_name?, band?, solves_symptom?)` | Scopri topic; filtra per band ("A"=core, "B"=adiacente) o per sintomo (es. "non_manifold_edges"). |
+| `kb_get_topic(topic_id)` | Markdown completo di un topic. Usalo quando `kb_route` ti indirizza qui. |
+| `kb_search(query)` | Grep substring sui doc. Per ricerca strutturata preferisci `kb_list_topics(solves_symptom=...)`. |
+| `kb_read(relative_path)` | File non indicizzati: `FIELD_NOTES.md`, `SYSTEM_PROMPT.md`, `Printer Infos/*.md`. |
+| `kb_list_playbooks()` / `kb_get_playbook(id)` | Sequenze deterministiche di step (repair_basic, recalc_normals, decimate_to_target, repair_aggressive). L'esecuzione spetta a `blender-mcp` via `execute_blender_code`. |
+| prompt `kb_bootstrap` | CLAUDE.md + SYSTEM_PROMPT.md + tabella topic_id, da invocare a inizio sessione. |
 
-Preferisci questi tool quando il client MCP è configurato: caricano solo il doc rilevante invece dell'intero INDEX.
+**Pipeline tipica**:
+1. `import_stl` → 2. `analyze_mesh_for_print` → 3. `kb_route(analysis_json)` →
+4. Segui `next_action.tool`: di solito `kb_get_playbook(playbook_id)`, poi
+   esegui gli step via `execute_blender_code`, poi 5. ri-`analyze_mesh_for_print`
+   per verificare il delta atteso.
 
 ## Come orientarsi
 - `Blender for 3d print documentation/INDEX.md`
@@ -56,17 +82,24 @@ Preferisci questi tool quando il client MCP è configurato: caricano solo il doc
 
 ## Sequenza di lettura consigliata
 
-Per un nuovo task su mesh:
+Per un task di cleanup STL (workflow principale):
+1. `import_stl(...)` → `analyze_mesh_for_print(...)` via `blender-mcp`
+2. `kb_route(analysis_json)` via `blender-kb` per ottenere la prossima azione
+3. Segui `next_action`: di solito un `kb_get_playbook(id)`
+4. Re-`analyze_mesh_for_print` e confronta con `verification.expect` del playbook
+5. Itera o concludi con `preprint_validation` + `export_stl`
+
+Per un task fuori dalla pipeline standard (capire un concetto, debug):
 1. `Blender for 3d print documentation/INDEX.md`
-2. `Bambu Wiki documentation/INDEX.md` se servono dettagli stampante/slicer/materiali
+2. `Bambu Wiki documentation/INDEX.md` se serve hardware/slicer/materiali
 3. I documenti specifici richiamati dagli index
 4. `FIELD_NOTES.md` se il task tocca aree già esplorate o problematiche
 
 Per onboarding o manutenzione del progetto:
 1. `SYSTEM_PROMPT.md`
 2. `CLAUDE.md`
-3. `Blender for 3d print documentation/INDEX.md`
-4. `Bambu Wiki documentation/INDEX.md`
+3. `KB_SERVER.md` (tool MCP + workflow)
+4. `Blender for 3d print documentation/docs/analyze_to_action.md` (decision tree)
 
 ## Convenzioni utili
 - I percorsi nei prompt sono relativi alla root del progetto Claude. Se il progetto aperto è `Bible/`, non anteporre `Bible/`.

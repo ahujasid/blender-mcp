@@ -1,0 +1,39 @@
+{
+  "id": "recalc_normals",
+  "title": "Recalculate normals (consistent outside)",
+  "when_to_use": "Mesh chiusa con normali tutte invertite (analyze_mesh_for_print reports normals='all_inverted'). Triggered da R002.",
+  "preconditions": [
+    "object_name esiste in bpy.data.objects",
+    "obj.type == 'MESH'"
+  ],
+  "params": {
+    "object_name": {"type": "string", "required": true}
+  },
+  "steps": [
+    {
+      "label": "Select target and enter edit mode",
+      "tool": "execute_blender_code",
+      "code": "import bpy\nfor o in bpy.context.selected_objects:\n    o.select_set(False)\nobj = bpy.data.objects['{object_name}']\nobj.select_set(True)\nbpy.context.view_layer.objects.active = obj\nbpy.ops.object.mode_set(mode='EDIT')\nbpy.ops.mesh.select_all(action='SELECT')"
+    },
+    {
+      "label": "Recalculate normals outside",
+      "tool": "execute_blender_code",
+      "code": "import bpy\nbpy.ops.mesh.normals_make_consistent(inside=False)\nprint('normals_make_consistent(inside=False) done')"
+    },
+    {
+      "label": "Exit edit mode",
+      "tool": "execute_blender_code",
+      "code": "import bpy\nbpy.ops.object.mode_set(mode='OBJECT')"
+    }
+  ],
+  "verification": {
+    "tool": "analyze_mesh_for_print",
+    "args": {"object_name": "{object_name}"},
+    "expect": {
+      "normals": "consistent",
+      "signed_volume_mm3": "> 0"
+    },
+    "notes": "After recalc, signed_volume_mm3 must be positive (outside-facing normals)."
+  },
+  "topic_refs": ["mesh_repair"]
+}

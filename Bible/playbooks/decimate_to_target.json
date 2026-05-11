@@ -1,0 +1,41 @@
+{
+  "id": "decimate_to_target",
+  "title": "Decimate COLLAPSE to a target face count",
+  "when_to_use": "Mesh con face_count > 500_000 (R006). Riduce a target_faces preservando silhouette. Per FDM 0.4mm il range tipico è 100k-200k facce; oltre, lo slicer rallenta senza beneficio visibile.",
+  "preconditions": [
+    "object_name esiste in bpy.data.objects",
+    "obj.type == 'MESH'",
+    "face_count > target_faces (altrimenti il decimate è no-op)"
+  ],
+  "params": {
+    "object_name": {"type": "string", "required": true},
+    "target_faces": {"type": "integer", "default": 150000, "description": "Target triangle count. FDM 0.4mm sweet spot: 100k-200k."}
+  },
+  "steps": [
+    {
+      "label": "Make target active and compute ratio",
+      "tool": "execute_blender_code",
+      "code": "import bpy\nfor o in bpy.context.selected_objects:\n    o.select_set(False)\nobj = bpy.data.objects['{object_name}']\nobj.select_set(True)\nbpy.context.view_layer.objects.active = obj\ncurrent = len(obj.data.polygons)\ntarget = {target_faces}\nratio = max(0.01, min(1.0, target / current)) if current > 0 else 1.0\nprint(f'Current faces: {{current}}, target: {{target}}, ratio: {{ratio:.4f}}')\n# Stash on the object for the next step (avoid mutating module globals).\nobj['_decimate_ratio'] = ratio"
+    },
+    {
+      "label": "Add Decimate modifier (COLLAPSE)",
+      "tool": "execute_blender_code",
+      "code": "import bpy\nobj = bpy.data.objects['{object_name}']\nmod = obj.modifiers.new(name='AutoDecimate', type='DECIMATE')\nmod.decimate_type = 'COLLAPSE'\nmod.ratio = float(obj.get('_decimate_ratio', 0.5))\nmod.use_collapse_triangulate = True\nprint(f'Decimate ratio set to {{mod.ratio:.4f}}')"
+    },
+    {
+      "label": "Apply the modifier",
+      "tool": "execute_blender_code",
+      "code": "import bpy\nobj = bpy.data.objects['{object_name}']\nbpy.context.view_layer.objects.active = obj\nbpy.ops.object.modifier_apply(modifier='AutoDecimate')\nif '_decimate_ratio' in obj:\n    del obj['_decimate_ratio']\nprint(f'Decimate applied. Final face count: {{len(obj.data.polygons)}}')"
+    }
+  ],
+  "verification": {
+    "tool": "analyze_mesh_for_print",
+    "args": {"object_name": "{object_name}"},
+    "expect": {
+      "face_count": "<= target_faces * 1.05",
+      "watertight": "should not regress from True to False"
+    },
+    "notes": "Decimate COLLAPSE can occasionally introduce non-manifold edges; if so chain repair_basic after this playbook."
+  },
+  "topic_refs": ["decimation_remesh", "modifiers_generate"]
+}

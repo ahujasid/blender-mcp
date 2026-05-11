@@ -1,0 +1,73 @@
+# Machine-readable metadata for Bambu sub-KB.
+# All topics are Band B — they describe printer hardware, slicer profiles,
+# materials, FDM rules. They don't repair mesh; they inform decisions made on
+# top of the cleanup pipeline.
+
+topics:
+  - id: a1_specs
+    band: B
+    solves_symptoms: [too_large_for_bed]
+
+  - id: a1_screen_workflow
+    band: B
+
+  - id: bambu_studio_workflow
+    band: B
+    related: [bambu_studio_settings, slicing_profiles]
+
+  - id: bambu_studio_settings
+    band: B
+    related: [bambu_studio_workflow, slicing_profiles, advanced_slicing_params]
+
+  - id: design_rules_fdm
+    band: B
+    solves_symptoms: [thin_walls, overhangs, dimensions_wrong]
+    related: [tolerances_and_fits, threads_and_fasteners]
+
+  - id: filament_materials
+    band: B
+
+  - id: calibration
+    band: B
+
+  - id: print_quality_issues
+    band: B
+    related: [calibration, bambu_studio_settings]
+
+  - id: a1_maintenance_relevant
+    band: B
+
+  - id: build_plates
+    band: B
+
+  - id: faq_glossary
+    band: B
+
+  - id: slicing_profiles
+    band: B
+    related: [bambu_studio_settings, advanced_slicing_params]
+
+  - id: tolerances_and_fits
+    band: B
+    related: [design_rules_fdm, threads_and_fasteners, assembly_design]
+
+  - id: threads_and_fasteners
+    band: B
+    related: [tolerances_and_fits, assembly_design]
+
+  - id: assembly_design
+    band: B
+    related: [tolerances_and_fits, threads_and_fasteners]
+
+  - id: post_processing
+    band: B
+
+  - id: gcode_inspection_basics
+    band: B
+
+  - id: text_and_engravings
+    band: B
+
+  - id: advanced_slicing_params
+    band: B
+    related: [slicing_profiles, bambu_studio_settings]

@@ -26,6 +26,13 @@ File: `docs/mesh_quality_assessment.md`
 
 Contenuto: 3D Print Toolbox operators (print3d_check_solid/intersect/thick/sharp/overhang/all, print3d_clean_non_manifold/distorted, print3d_info_volume/area, print3d_scale_to_bounds), scene.print_3d properties (thickness_min, overhang_angle), bmesh inspection (non-manifold edges, boundary edges, find_doubles, zero-area faces, dimensions), tabella metriche (come estrarle, soglia, significato), verifica scale (scale_length, length_unit), ordine di priorità assessment (1.scale → 2.non-manifold → 3.dimensions → 4.wall thickness → 5.poly count → 6.overhangs → 7.surface noise).
 
+## [analyze_to_action]
+**Decision tree: dall'output JSON di analyze_mesh_for_print alla sequenza di azioni di cleanup**
+Quando usarlo: hai appena eseguito analyze_mesh_for_print e devi decidere cosa fare; vuoi capire le regole che il tool MCP kb_route applica; vuoi aggiungere o modificare regole di routing
+File: `docs/analyze_to_action.md`
+
+Contenuto: tabella chiavi dell'analysis JSON, 9 regole numerate (R001-R009) ognuna con priority/when/then/expected_after/rationale: R001 degenerate_faces→dissolve_degenerate (priority 110, primo step), R002 normals=all_inverted→recalc_normals, R003 disconnected_shells>1→split_then_decide (needs_user_input), R004 non_manifold+holes→fill_holes (playbook repair_basic), R005 non_manifold senza holes→clean_non_manifold (playbook repair_aggressive), R006 face_count>500k→decimate_collapse (playbook decimate_to_target), R007 voxel remesh fallback, R008 dimension>256mm→bisect_splitting, R009 scale errata→scale_detection. Convenzione output kb_route (input_summary, matched_rules, next_action). Le regole sono machine-readable in `routing_rules.yaml` ed eseguibili via tool MCP kb_route(analysis_json).
+
 ## [problem_to_tool_map]
 **Mappa problema → strumento Blender: quale tool per quale difetto, tradeoff, quando usare quale**
 Quando usarlo: hai identificato un problema specifico (non-manifold, troppi poligoni, rumore superficiale, scala sbagliata, pareti sottili, overhangs, geometria disconnessa, normali invertite) e devi scegliere lo strumento giusto
@@ -145,20 +152,6 @@ File: `docs/mathutils.md`
 
 Contenuto: Vector (costruzione, operatori +/-/*/@ dot/cross, .length, .normalized(), .dot(), .cross(), .angle(), .project(), .lerp(), .slerp(), .rotation_difference()), Matrix (Identity/Translation/Rotation/Scale/LocRotScale, matmul @, .decompose(), .to_euler(), .to_quaternion(), .inverted(), .transposed()), Euler (costruzione, .to_matrix(), conversioni, .rotate_axis()), mathutils.geometry (intersect_ray_tri, closest_point_on_tri, intersect_line_line, intersect_point_line, area_tri, normal, distance_point_to_plane, tessellate_polygon), BVHTree (FromMesh/FromObject/FromBMesh/FromPolygons, .ray_cast(), .find_nearest(), .find_nearest_range(), .overlap()), KDTree (costruzione size+insert+balance, .find(), .find_n(), .find_range()). Tabella recap uso/strumento per problemi stampa 3D.
 
-## [texture_displacement]
-**Texture procedurali e DisplaceModifier: Clouds, Voronoi, Musgrave, Marble, Wood, Image + surface detail + Sculpt+Stencil**
-Quando usarlo: vuoi aggiungere dettaglio superficiale a una mesh (buccia d'arancia, texture organica, rugosità, pattern), usare DisplaceModifier con texture procedurale o immagine, oppure applicare texture interattiva via Sculpt Mode con stencil
-File: `docs/texture_displacement.md`
-
-Contenuto: bpy.types.Texture (base class, proprietà comuni, evaluate()), 8 tipi di texture (CloudsTexture/NoiseTexture/VoronoiTexture/MarbleTexture/WoodTexture/StucciTexture/MusgraveTexture/ImageTexture) con parametri chiave per effetti stampa 3D, tabella noise_basis (9 algoritmi), DisplaceModifier (strength, mid_level, texture_coords, direction, space), bpy.types.Image (load/access/pixels), creazione texture via bpy.data.textures.new(), tradeoff procedurale vs immagine, requisiti densità mesh. **Sculpt Mode + Multi-Resolution + Stencil**: pipeline interattiva alternativa (Sculpt Mode → Multi-Resolution modifier 5 livelli → pennello Stencil con immagine overlay → Front Faces Only + Constant falloff) per texture mattoni/roccia/organica; codice Python per setup Multi-Res via script; nota: scultura stencil non automatizzabile via MCP, richiede interazione manuale.
-
-## [geometry_nodes]
-**Geometry Nodes: NodeTree, GeometryNodeTree, Node, NodeSocket, NodeLink — modellazione procedurale**
-Quando usarlo: devi fare modellazione procedurale non-distruttiva (distribuire elementi, ripetere pattern, operazioni parametriche), configurare un setup GeoNodes via Python
-File: `docs/geometry_nodes.md`
-
-Contenuto: Architettura a 2 livelli (modifier NODES + NodeTree), GeometryNodeTree vs NodeTree, bpy.types.Node (bl_idname, inputs/outputs, default_value), NodeSocket (tipi, default_value, is_linked), NodeLinks.new(from_socket, to_socket), NodeGroupInput/Output, 15+ bl_idname per nodi GeoNodes rilevanti alla stampa (MeshBoolean, SubdivisionSurface, SetPosition, JoinGeometry, DistributePointsOnFaces, InstanceOnPoints, RealizeInstances, ecc.), accesso a input modifier via mod["Input_X"], tradeoff GeoNodes vs bmesh vs modifier.
-
 ## [utils_units]
 **bpy.utils, bpy.utils.units, bpy.app, bl_math, idprop, save_homefile, viewport clipping — conversioni unità e utilities**
 Quando usarlo: devi convertire mm↔Blender units, controllare versione Blender, attivare addon, lavorare con custom properties, fare calcoli matematici semplici, salvare impostazioni unità come startup default, correggere scomparsa oggetti nel viewport
@@ -172,13 +165,6 @@ Quando usarlo: devi ottenere la mesh con tutti i modifier applicati SENZA modifi
 File: `docs/depsgraph_evaluated.md`
 
 Contenuto: differenza original vs evaluated data, 3 modi per ottenere depsgraph (evaluated_depsgraph_get, view_layer.depsgraph, view_layer.update()), pattern obj.evaluated_get(depsgraph) + to_mesh() + to_mesh_clear(), Depsgraph properties (scene_eval, updates, id_type_updated()), DepsgraphObjectInstance (object, matrix_world, is_instance, persistent_id), iterazione object_instances, DepsgraphUpdate (is_updated_transform/geometry/shading), tradeoff evaluated-vs-modifier_apply.
-
-## [shapekey_vertexgroup]
-**ShapeKey, Key, VertexGroup — deformazioni vertex e maschere per modifier**
-Quando usarlo: devi usare vertex groups come maschera di peso per modifier (es. Displace solo su alcune facce), gestire shape keys per deformazioni parametriche
-File: `docs/shapekey_vertexgroup.md`
-
-Contenuto: VertexGroup (name, index, add/remove/weight get/set), VertexGroups collection (new/remove/active), VertexGroupElement (group/weight), come usare vertex groups come maschera nei modifier (vertex_group property), ShapeKey (name, value 0-1, data/co per ogni vertice, relative_key), Key (use_relative, reference_key, key_blocks), creazione shape key via obj.shape_key_add(), applicazione shape key permanente via mesh data.
 
 ## [orientation_strategy]
 **Scelta orientamento ottimale per stampa FDM: scoring, ricerca a griglia, criteri euristici, applicazione rotazione**
@@ -229,33 +215,12 @@ File: `docs/camera_verification.md`
 
 Contenuto: `get_view3d_area()` — trova area VIEW_3D per temp_override; `bpy.ops.view3d.view_all()` e `view_selected()` via temp_override; `bpy.ops.view3d.view_axis(type=...)` per TOP/FRONT/RIGHT/BACK/BOTTOM; **vista isometrica** via quaternione manuale (q_z @ q_x con 45° azimuth + 35.264° elevation); **`screenshot_4views()`** — salva PNG Top/Front/Right/Iso in cartella; **`setup_qa_view()`** — configura viewport per viste standard + frame oggetto, usare prima di `get_viewport_screenshot` MCP; toggle overlay wireframe (`space.overlay.show_wireframes`); overlay normali (`show_face_normals`, `normals_length`); **checklist QA 6-step** (ISO → TOP → FRONT → RIGHT → ISO+wireframe → ISO+normali); tabella `bpy.ops.screen.screenshot` vs `get_viewport_screenshot` MCP.
 
-## [curve_and_text]
-**Curve Objects e Text Geometry: pipe/tube parametrici, testo 3D, bevel, extrude, conversione a mesh**
-Quando usarlo: devi creare tubi/cavi/pipe via Curve, aggiungere testo 3D emboss/deboss, creare profili estrusi, convertire curve in mesh per export STL
-File: `docs/curve_and_text.md`
-
-Contenuto: `bpy.data.curves.new(type='CURVE'/'FONT')`, dimensioni 2D/3D; **Spline Bezier** (bezier_points, handle_left/right/type AUTO/VECTOR/FREE, use_cyclic_u); **Spline POLY** (points con co Vector4 w=1, segmenti retti, loops chiusi); **bevel_depth** (raggio circolare in BU → FDM minimo 0.4mm=0.0004BU, pratico ≥0.8mm; `bevel_resolution` 4=ottogono/12=liscio; `use_fill_caps=True` chiude estremità); **bevel con profilo custom** (bevel_mode='OBJECT', curva 2D come profilo); **extrude** su curve 2D (extrude, offset, fill_mode); **bpy.types.TextCurve** (body, size, extrude, offset, align_x/y, space_character/word/line); font loading via `bpy.data.fonts.load()`; **conversione obbligatoria a mesh** (`bpy.ops.object.convert(target='MESH')` + transform_apply) prima di export STL; **Pattern FDM**: testo emboss su base (size ≥4mm, extrude 0.6–1.2mm), tubo parametrico `create_tube()` con path points; **tabella limiti FDM** (altezza testo min 4mm, emboss min 0.4mm, raggio bevel min 0.4mm, note die swell offset=-0.0001 per testo ≤6mm).
-
-## [parametric_design_patterns]
-**Pattern design parametrico from-scratch: box/enclosure, bracket, piastra fori, gusset, chamfer/fillet**
-Quando usarlo: devi progettare geometria stampabile da zero via Python (non modificare mesh esistenti), creare contenitori/case, mensole a L, piastre di montaggio, nervature di rinforzo, chamfer FDM
-File: `docs/parametric_design_patterns.md`
-
-Contenuto: utility `mm()` e `new_mesh_obj()` e `apply_all_transforms()`; **Pattern 1 Box Enclosure** parametrico (width/depth/height/wall_mm, open_top, Solidify modifier per shell + rimozione faccia top via normale Z); **Pattern 2 L-Bracket** (flange orizzontale + parete verticale + gusset triangolare, stampa verticale per massima resistenza a flessione); **Pattern 3 Piastra con fori** in griglia (hole_diameter_mm regola FDM: nominale+0.4mm; fori via Boolean DIFFERENCE con cilindro; M3=3.4mm, M4=4.4mm); **Pattern 4 Gusset/Rib** triangolare parametrico (axis X/Y, width/height/depth mm); **Pattern 5 Chamfer** via Bevel modifier (width_mm, segments=1 chamfer / 3-5 fillet; limit_method ANGLE; regola anti-elephant-foot 0.4–0.5mm); **SubSurf fillet** approssimato (crease + livello 2); **tabella regole FDM design parametrico** (spessore parete min 0.8mm/raccomandato 2.4mm; boss vite 2.5–3× diametro; foro M3 inserto 4.0mm; overhang <40°; bridge <25mm).
-
 ## [fbx_import_guide]
 **FBX Import da generatori AI: parametri bpy.ops.import_scene.fbx, scala, asse up, normali, mesh multipli**
 Quando usarlo: hai ricevuto un FBX da un generatore AI (Rodin, HunyuanVideo, Meshy) e devi importarlo in Blender, hai problemi di scala, asse ruotato, normali corrotte, armatura embedded, mesh separate
 File: `docs/fbx_import_guide.md`
 
 Contenuto: firma completa `bpy.ops.import_scene.fbx()` con tutti i parametri (global_scale, use_manual_orientation, axis_forward/up, use_custom_normals, use_anim, ignore_leaf_bones); **Problema 1 Scala cm** (diagnostica via obj.dimensions in mm; fix reimport con global_scale=0.01 o scala post-import ×0.01); **Problema 2 Asse up** (Y-up AI vs Z-up Blender → use_manual_orientation=True + axis_up='Y'; fix post-import rotation_euler.x = -90°); **Problema 3 Normali custom corrotte** (use_custom_normals=False + customdata_custom_splitnormals_clear() dopo import); **Problema 4 Mesh multipli** (`collect_fbx_meshes()` — identifica e join di tutte le MESH); **Problema 5 Armatura embedded** (`remove_armatures()` e `remove_modifiers_armature()`); **CALL_1 FBX AI completo** — script di import + fix automatici (asse Y-up, no custom normals, no anim, join mesh, remove armature, fix normali, apply transforms, auto-correzione scala vs EXPECTED_SIZE_MM); **tabella comportamento generatori AI** (Rodin/HunyuanVideo/Meshy/CSM — unità, asse up, normali, struttura); confronto FBX vs STL per workflow stampa 3D.
-
-## [image_to_mesh]
-**Pipeline input 2D → mesh FDM: lithophane, heightmap terrain, SVG-to-3D (logo/keychain/badge)**
-Quando usarlo: l'utente fornisce un'immagine raster (JPG/PNG grayscale) o un vettoriale SVG e vuole ottenere un STL stampabile — casi tipici: lithophane retro-illuminata, heightmap topografica, logo estruso con foro keyring
-File: `docs/image_to_mesh_recipes.md`
-
-Contenuto: 4 pipeline complete. (1) **Lithophane**: piano subdiviso + Displace(UV, mid_level=1, strength negativo per inversione) + Solidify back_plate, regole FDM (back 0.8mm, max 3.2mm, layer 0.08–0.12mm, 100% infill, stampa verticale); codice CALL completo con parametri WIDTH_MM/HEIGHT_MM/BACK_THICK/MAX_THICK/SUBDIV_RES/INVERT. (2) **Heightmap terrain**: simile ma mid_level=0 con LaplacianSmooth post. (3) **SVG→3D**: `bpy.ops.wm.svg_import` nativo Blender 5.1 (con fallback a io_curve_svg addon), join curve, rescale al TARGET_WIDTH_MM, `curve.dimensions='2D'` + `fill_mode='BOTH'`, convert to mesh, Solidify, foro keyring con Boolean DIFFERENCE + regola margine anti-coplanarità; tabella trade-off SVG e regole FDM per estrusioni (stroke min 0.8mm, extrusion min 0.6mm). (4) Quick reference input 2D con pipeline di riferimento.
 
 ## [boolean_troubleshooting]
 **Diagnosi e recovery di Boolean EXACT falliti: cause, sanitize pre-boolean, retry automatico, fallback bmesh**
@@ -284,13 +249,6 @@ Quando usarlo: modello >256mm va diviso in N pezzi, vuoi taglio a 45° per rimuo
 File: `docs/bisect_and_splitting.md`
 
 Contenuto: **bisect_plane vs Boolean** (tabella: O(n) vs O(n·m), preservazione UV, output multi-pezzo, fill). **bisect_object(obj, plane_co_mm, plane_no, keep='POS'|'NEG'|'BOTH', fill_cut=True)** via bmesh.ops.bisect_plane + edgenet_fill su geom_cut; duplica prima (MCP-safe). **split_two_halves** e **split_n_horizontal** per suddivisione verticale. **cut_at_angle** piano inclinato attorno a X o Y. **split_with_registration_pins**: cut + UNION di N cilindri maschi su BOTTOM + DIFFERENCE di N fori femmina su TOP con clearance 0.10mm; default 2 pin asimmetrici Ø4mm; tabella alternative (cilindro/cono/dovetail/key/offset asimmetrico). **Color change marker** via custom property color_changes_mm (no split fisico — delegato al slicer). **extract_cross_section**: bisect + fill + Solidify per silhouette 2D stampabile. Tabella failure mode (buco non riempito, normali flipped, pin overhang, clearance stretta, n-gon non triangolato). Quick reference richieste utente.
-
-## [functional_patterns]
-**Libreria oggetti funzionali parametrici: spur gear, pin hinge, box with lid friction-fit, knurled knob, cable clip**
-Quando usarlo: l'utente chiede di progettare da zero un ingranaggio, una cerniera, una scatola con coperchio, una manopola, una clip — estensione della libreria base di [parametric_design_patterns]
-File: `docs/functional_patterns_library.md`
-
-Contenuto: **Spur gear**: teoria modulo m/N teeth/addendum/dedendum/pressure_angle 20°, denti trapezoidali (approssimazione, non involute), regole stampabilità FDM (m≥1.5mm, N≥10); `create_spur_gear(module_mm, n_teeth, thickness_mm, bore_diameter_mm)` via bmesh con 4 punti per dente + extrude + Boolean bore; tabella quick ref per applicazione (toys/mechanism/torque/heavy); nota accoppiamento (stesso modulo, center_distance=(D1+D2)/2 + 0.3–0.5mm clearance); caveat per true-involute (usare FreeCAD plugin). **Pin hinge**: topologia knuckles alternati + pin commerciale Ø3mm, parametri (knuckle_od=pin+2×wall 1.5mm, bore=pin+0.4mm clearance, n_knuckles dispari, gap 0.2mm); `create_pin_hinge()` con loop per half_idx, UNION knuckle esterno + DIFFERENCE pin bore; note orientamento stampa (halves piatti sul bed, Tree support sotto knuckles). **Box with lid**: estensione di Box Enclosure con lid+lip friction-fit; parametri (lip_height 4–6mm, clearance 0.20–0.35mm); `create_box_with_lid()` con Boolean hollow + lid UNION con lip; tabella clearance/fit (press/friction/slip). **Knurled knob**: cilindro + shaft bore + N flute radiali (cilindri piccoli a flute_orbit_radius=D/2) + Bevel chamfer top; varianti D-shaft/set-screw/hexagonal. **Cable clip**: anello a C con apertura snap-fit, DIFFERENCE inner cylinder + DIFFERENCE gap cube. Quick reference richieste utente → pattern.
 
 ## [preprint_validation]
 **Validatore unificato pre-export STL: decisione go/no-go, metriche strutturate, report issue con severità**
