@@ -14,3 +14,12 @@ wheels/
 
 # Local config secrets
 src/blender_mcp/config.py
+
+# Claude local/project metadata
+Bible/.claude/
+
+# Knowledge base build artifacts and raw source material
+Bible/Bambu Wiki documentation/clusters.json
+Bible/Blender for 3d print documentation/clusters.json
+Bible/Scraping/
+Bible/Research materials/

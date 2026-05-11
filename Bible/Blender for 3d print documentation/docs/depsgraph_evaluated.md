@@ -1,0 +1,225 @@
+# Depsgraph & Evaluated Data — Blender Python API
+
+Blender maintains two parallel representations of every data block: the **original** (what you edit, stored in `.blend`) and the **evaluated** (what gets computed, with modifiers, constraints, and drivers applied). The dependency graph (depsgraph) manages this evaluation and tracks what needs recomputing when something changes.
+
+---
+
+## Why the Depsgraph Exists
+
+In Blender's architecture, editing a modifier's settings does not immediately update the mesh — instead it marks the object as dirty in the dependency graph. The depsgraph then propagates that change and lazily recomputes evaluated data when needed (during rendering, viewport draw, or explicit `update()` calls).
+
+This separation means:
+- `bpy.data.objects["Cube"]` — the original object, with unevaluated mesh (no modifier effects)
+- `obj.evaluated_get(depsgraph)` — the evaluated object, with all modifiers applied
+
+Accessing vertex positions directly on `obj.data.vertices` gives the pre-modifier mesh. To get the final geometry (e.g., for export or analysis), you must go through the depsgraph.
+
+---
+
+## Getting the Depsgraph
+
+```python
+# From an interactive context (most scripts run from operator or panel context):
+depsgraph = bpy.context.evaluated_depsgraph_get()
+
+# Alternative direct access from view layer:
+depsgraph = bpy.context.view_layer.depsgraph
+
+# In background scripts (no UI context), force an update first:
+bpy.context.view_layer.update()
+depsgraph = bpy.context.evaluated_depsgraph_get()
+```
+
+The depsgraph is context-sensitive — it corresponds to the current view layer and its visibility settings. Objects hidden in the current view layer may not appear in the evaluated graph.
+
+---
+
+## bpy.types.Depsgraph
+
+`Depsgraph(bpy_struct)` — the dependency graph for a view layer.
+
+| Property | Type | Notes |
+|---|---|---|
+| `scene` | `Scene` | The original scene this depsgraph is built for (readonly) |
+| `scene_eval` | `Scene` | The scene at its evaluated state (readonly) |
+| `view_layer` | `ViewLayer` | Original view layer (readonly) |
+| `view_layer_eval` | `ViewLayer` | Evaluated view layer (readonly) |
+| `mode` | enum | `'VIEWPORT'` or `'RENDER'` — evaluation context |
+| `objects` | collection | Evaluated objects (by name, not all instances) |
+| `object_instances` | collection | ALL object instances including duplicates from particles, collections, etc. |
+| `ids` | collection | All evaluated data blocks (ID types) |
+| `updates` | collection | `DepsgraphUpdate` items describing what changed since last evaluation |
+
+### Methods
+
+```python
+depsgraph.update()
+# Re-evaluate all modified data blocks. Invalidates all existing references to
+# evaluated objects from this depsgraph. Must be called after programmatic changes
+# before reading evaluated data.
+
+depsgraph.id_eval_get(id) → ID
+# Get the evaluated version of any ID block directly.
+# Equivalent to id.evaluated_get(depsgraph).
+
+depsgraph.id_type_updated(id_type) → bool
+# Check whether any data block of the given type was updated.
+# id_type: 'OBJECT', 'MESH', 'MATERIAL', 'SCENE', 'LIGHT', etc.
+```
+
+---
+
+## Getting an Evaluated Object
+
+The primary pattern for accessing final geometry:
+
+```python
+depsgraph = bpy.context.evaluated_depsgraph_get()
+obj_eval = obj.evaluated_get(depsgraph)
+```
+
+`obj.evaluated_get(depsgraph)` returns an evaluated `Object` — all modifiers, shape keys, constraints, and drivers have been applied to it.
+
+### Extracting Evaluated Mesh
+
+```python
+obj_eval = obj.evaluated_get(depsgraph)
+mesh_eval = obj_eval.to_mesh(preserve_all_data_layers=False, depsgraph=depsgraph)
+
+# Access evaluated geometry
+for vert in mesh_eval.vertices:
+    print(vert.co)  # final position with all modifiers applied
+
+for poly in mesh_eval.polygons:
+    print(poly.vertices)
+
+# IMPORTANT: free the temporary mesh when done
+obj_eval.to_mesh_clear()
+```
+
+`to_mesh()` creates a **temporary mesh** owned by the evaluated object. It is not a persistent data block and must be freed with `to_mesh_clear()` to avoid memory leaks. You cannot add it to `bpy.data.meshes` — it is ephemeral.
+
+`preserve_all_data_layers=True` retains UV maps, vertex colors, and other data layers in the result. Setting it to `False` (default) gives a minimal mesh with geometry only, which is faster.
+
+---
+
+## bpy.types.DepsgraphObjectInstance
+
+`DepsgraphObjectInstance(bpy_struct)` — a single instance in the evaluated scene, used when iterating `depsgraph.object_instances`.
+
+| Property | Type | Notes |
+|---|---|---|
+| `object` | `Object` | The evaluated Object this instance points to (readonly) |
+| `instance_object` | `Object` | The original source object being instanced (for particle/collection instances) (readonly) |
+| `matrix_world` | `mathutils.Matrix` | World-space transform for this specific instance (readonly) |
+| `is_instance` | bool | True if generated by another object (particle, collection, dupli-verts) (readonly) |
+| `parent` | `Object` | Parent object that generated this instance, if applicable (readonly) |
+| `persistent_id` | `bpy_prop_array[int]` | 8-element int array uniquely identifying this instance across frames (for motion blur) (readonly) |
+| `random_id` | int | Per-instance random value, usable for randomized behavior (readonly) |
+| `show_self` | bool | Whether the object's own geometry should be visible in render (readonly) |
+| `show_particles` | bool | Whether particle systems on this object should be rendered (readonly) |
+| `orco` | `mathutils.Vector` | 3D position in parent object space (for dupli-verts placement) (readonly) |
+| `uv` | `bpy_prop_array[float]` | 2D UV in parent object space (for dupli-faces placement) (readonly) |
+
+**Warning from the API:** `object_instances` must only be used as an iterator — never store the collection as a variable or keep references to individual instances. The underlying memory may be invalidated between iterations.
+
+```python
+# Correct usage: iterate directly
+for inst in depsgraph.object_instances:
+    if inst.is_instance:
+        world_matrix = inst.matrix_world.copy()  # copy before moving on
+        source_obj = inst.instance_object
+```
+
+---
+
+## DepsgraphUpdate
+
+Items in `depsgraph.updates` describe what changed since the last evaluation:
+
+| Property | Type | Notes |
+|---|---|---|
+| `id` | `ID` | The data block that was updated |
+| `is_updated_transform` | bool | Object transform (location/rotation/scale) changed |
+| `is_updated_geometry` | bool | Mesh or other geometry data changed |
+| `is_updated_shading` | bool | Material or shading changed |
+
+Useful in `depsgraph_update_post` handlers to respond only to relevant changes:
+
+```python
+@bpy.app.handlers.persistent
+def on_update(scene, depsgraph):
+    for update in depsgraph.updates:
+        if update.is_updated_geometry and update.id.bl_rna.identifier == 'Object':
+            print(f"Geometry changed: {update.id.name}")
+
+bpy.app.handlers.depsgraph_update_post.append(on_update)
+```
+
+---
+
+## Key Patterns
+
+### Non-destructive Geometry Analysis (e.g., for export)
+
+Use evaluated mesh when you need the final shape without permanently modifying the original:
+
+```python
+depsgraph = bpy.context.evaluated_depsgraph_get()
+
+for obj in bpy.data.objects:
+    if obj.type != 'MESH':
+        continue
+    obj_eval = obj.evaluated_get(depsgraph)
+    mesh = obj_eval.to_mesh()
+    
+    # Analyze or export mesh data
+    vertex_count = len(mesh.vertices)
+    poly_count = len(mesh.polygons)
+    
+    # Calculate volume (requires triangulated mesh)
+    # mesh.calc_volume() is available on the Mesh type
+    
+    obj_eval.to_mesh_clear()  # always free
+```
+
+### Evaluated vs Applied — When to Choose What
+
+| Need | Use |
+|---|---|
+| Read final geometry for export without changing the file | `evaluated_get()` + `to_mesh()` |
+| Permanently bake modifiers into the mesh | `bpy.ops.object.modifier_apply(modifier=name)` |
+| Analyze final positions for collision detection/bounds | `evaluated_get()` + `matrix_world` + `to_mesh()` |
+| Check if a specific modifier's output would produce valid manifold | `evaluated_get()` + `to_mesh()` + bmesh analysis |
+| Duplicate evaluated result as a new persistent object | Convert via `bpy.data.meshes.new_from_object(obj, preserve_all_data_layers=True, depsgraph=depsgraph)` |
+
+`modifier_apply()` is irreversible within a session without undo — it destroys the modifier stack. The evaluated path is always preferable for analysis or export when the modifier stack must be preserved.
+
+### When to Call depsgraph.update()
+
+After Python code that modifies object data, modifiers, or constraints, call:
+```python
+bpy.context.view_layer.update()
+# or
+depsgraph.update()
+```
+
+Without this, `evaluated_get()` may return stale data. In operator or panel code, Blender's event loop handles this automatically. In scripts run from text editor or CLI, you may need to call it explicitly.
+
+**Note:** `depsgraph.update()` invalidates all previously obtained evaluated object references from that depsgraph. Call `evaluated_get()` again after updating.
+
+### Getting All Instance World Positions
+
+For particle systems, collection instances, or dupli-verts setups, `depsgraph.objects` only lists unique evaluated objects (not duplicates). `depsgraph.object_instances` lists every visible instance with its unique transform:
+
+```python
+depsgraph = bpy.context.evaluated_depsgraph_get()
+positions = []
+for inst in depsgraph.object_instances:
+    if inst.object.type == 'MESH':
+        # matrix_world gives position, rotation, scale for this specific instance
+        pos = inst.matrix_world.translation.copy()
+        positions.append(pos)
+```
+
+This is the correct way to collect positions for all copies of an instanced object (e.g., all objects scattered via Geometry Nodes `InstanceOnPoints` — without `RealizeInstances`, they appear only in `object_instances`, not in `bpy.data.objects`).

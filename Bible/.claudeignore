@@ -1,0 +1,9 @@
+# Raw scraped data e tool di build — voluminosi, non utili a runtime
+Scraping/
+
+# Artefatti di build KB
+Bambu Wiki documentation/clusters.json
+Blender for 3d print documentation/clusters.json
+
+# Materiale di ricerca grezzo — già sintetizzato nei doc KB
+Research materials/
