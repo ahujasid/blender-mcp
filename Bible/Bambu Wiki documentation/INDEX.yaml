@@ -71,3 +71,27 @@ topics:
   - id: advanced_slicing_params
     band: B
     related: [slicing_profiles, bambu_studio_settings]
+
+  - id: bambu_3mf_export
+    band: A
+    related: [bambu_studio_workflow, bambu_studio_settings, import_export, blender_addons_recommended]
+
+  - id: a1_field_kit
+    band: B
+    related: [calibration, print_quality_issues, a1_maintenance_relevant, filament_materials]
+
+  - id: mvs_filament_table
+    band: B
+    related: [filament_materials, calibration, slicing_profiles, bambu_studio_settings]
+
+  - id: tree_support_tuning
+    band: B
+    related: [bambu_studio_settings, slicing_profiles, support_strategy, orientation_strategy]
+
+  - id: hidden_bambu_studio_settings
+    band: B
+    related: [bambu_studio_settings, advanced_slicing_params, slicing_profiles, bambu_3mf_export]
+
+  - id: pla_post_processing_field_data
+    band: B
+    related: [post_processing, filament_materials, print_quality_issues]

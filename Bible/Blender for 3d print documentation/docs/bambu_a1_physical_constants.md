@@ -206,4 +206,66 @@ Valori tipici (riferimento per tolleranze CAD):
 7. **Fits PLA:** 0.1 fisso / 0.2 slide / 0.3 libero
 8. **Flow max operativo:** 17–20 mm³/s (70% di 28)
 
+---
+
+## Approfondimenti deep research (2024-2026)
+
+### Bedslinger I_eff(Z) — rationale per la tabella accelerazione
+
+La tabella `accel max vs Z` (10000 → 6000 → 4000 → 2000 mm/s² a Z = 0/50/100/150 mm) segue il **teorema dell'asse parallelo**: l'inerzia effettiva dell'asse Y (= bed) cresce col quadrato della distanza Z dell'oggetto stampato.
+
+```
+I_eff(Z) = I_bed + m_part × Z²
+f_res = √(k / I_eff)
+```
+
+L'**input shaping è calibrato a piatto vuoto** (`Z=0`), per-asse X e Y separatamente. A `Z=150mm` con oggetto da 200g, `f_res` può scendere da 50Hz a 25Hz — fuori dalla banda dello shaper → invece di cancellare le vibrazioni, le **inietta**.
+
+**Implicazione operativa**:
+- Su moves diagonali (X+Y simultanei), accel = `min(accel_X, accel_Y)`. X e Y hanno shaper a frequenze diverse, il più basso vince.
+- Modelli wide+short (low aspect ratio, low Z) → resta vicino al `accel` baseline.
+- Modelli tall+thin (high aspect ratio, high Z) → degradano rapidamente: spesso il vincolo è `accel` non MVS.
+- Schedule rampa: oggetto >100mm con `aspect_ratio > 4` → assert max `accel = 4000 mm/s²` per evitare ringing visibile sotto i 30mm dal top.
+
+### Compensazione fori scalata (1/r law)
+
+La regola tabellare `+0.10mm hole comp` è la **media** per fori 5–10 mm. La fisica reale (PLA contrazione 0.2–0.3%, materiale concentrato sul lato concavo dell'arco) dà compensation che scala come `1/r`:
+
+| Diametro nominale | Errore reale tipico | Compensazione CAD consigliata |
+|---|---|---|
+| Ø2 mm | ~0.35 mm | +0.30 mm (foro CAD 2.30) |
+| Ø3 mm (M3 clearance) | ~0.25 mm | +0.25 mm |
+| Ø5 mm | ~0.20 mm | +0.20 mm |
+| Ø10 mm | ~0.10 mm | +0.10 mm (Bambu default OK) |
+| Ø20 mm | ~0.05 mm | +0.05 mm |
+| Ø30+ mm | ~0.03 mm | trascurabile |
+
+Per fori inferiori a Ø2mm: spesso **non stampare il foro**, stampa pieno + foratura post (drill bit standard è più preciso del nozzle 0.4mm sotto Ø2mm).
+
+Riferimento: [fdm_printing_constraints] §P5.
+
+### Flow rate ceiling — chiarimento
+
+Constante #8 sopra dice "17–20 mm³/s operativo" (70% di 28). Il valore preciso varia per filament:
+
+| Filament class | Flow ceiling realistico A1 (mm³/s) |
+|---|---|
+| Bambu Basic PLA (QA controlled) | 21 (default profile) |
+| Bambu PLA Matte | 18 |
+| Bambu PLA Silk | 14 |
+| Bambu PLA Marble / Glitter | 12 |
+| PolyTerra PLA / PolyLite | 22 |
+| Sunlu PLA Meta @ 230°C | 24 |
+| **Generico PLA (sconosciuto)** | **12 baseline, calibra incrementale** |
+| PETG (raro su A1 no enclosure) | 14 |
+
+Il **28 mm³/s** è il limite hardware (nozzle + hotend thermal capacity). Il **realistico** dipende da filament + temp + cooling. Vedi [mvs_filament_table] nel sub-KB Bambu per tabella estesa community-validated.
+
+### Cross-reference
+
+- [fdm_printing_constraints] §Why these numbers — physics basis per P1–P7
+- [Bambu Wiki/mvs_filament_table] — tabella community per filament
+- [Bambu Wiki/a1_field_kit] — quirks A1 specifici non in docs ufficiali
+- [orientation_strategy] §Migliorie — accel scaling per acceleration-aware orientation
+
 Questi valori, se rispettati, sostituiscono l'approccio empirico "trial-and-error" con design deterministico pronto alla stampa.

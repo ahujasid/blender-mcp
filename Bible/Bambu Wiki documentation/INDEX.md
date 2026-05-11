@@ -129,6 +129,48 @@ File: `docs/text_and_engravings.md`
 
 Contenuto: limiti fisici nozzle 0.4mm (min stroke 0.4mm, altezza min 4mm, die swell +0.1–0.2mm per lato), tabella font size (< 3mm illeggibile, 4mm leggibile bold, 6mm molto chiaro), font consigliati (Arial Black, Liberation Sans Bold — no serif/script), emboss 0.4–0.6mm vs deboss 0.4–0.6mm con problema isole (≥0.8mm), orientamento orizzontale/verticale/fondo con pro/contro, Arachne obbligatorio per stroke variabili, Ironing per top surface, Z-hop per testo embossato piccolo, multi-color via filament change (≥1mm depth), magic numbers layer height (0.12/0.16mm).
 
+## [bambu_3mf_export]
+**Blender → Bambu Studio handoff via 3MF: 3 fork addon (threemf-io/LeeGillie/eki), Production Extension gap, pre-export checklist, Parent Empty multi-plate trick, Issues #7775/#6976/#3316**
+Quando usarlo: vuoi capire come esportare da Blender a Bambu Studio in modo robusto, decidere quale fork 3MF installare, conoscere cosa si perde nel roundtrip, fare multi-plate da Blender
+File: `docs/bambu_3mf_export.md`
+
+Contenuto: comparazione STL vs Generic 3MF vs Bambu Production Extension (units/multi-object/modifier_part/profile metadata/round-trip/file size), 3 fork addon (threemf-io Jan 2026 primary, LeeGillie Blender 5.x, eki stale), pre-export pipeline obbligatoria (transform_apply + origin lowest-Z + recalc normals + triangulate + naming), export call con global_scale correlato a scene unit_settings, Parent Empty trick per multi-plate, cosa si perde all'import in Bambu (material colors, per-object slicer settings, modifier flags, AMS filament_ids), Issue #7775 (color discarded) #6976 (Bambu-to-Bambu lose settings) #3316 (Bambu 3MF non apre in PrusaSlicer/Cura), OrcaSlicer alternative.
+
+## [a1_field_kit]
+**Community knowledge A1 oltre docs ufficiali: belt tension drift, ABL HMS 0300 fix, hotend unclog hex wrench, heat creep mitigations, Blob of Doom recovery, layer shift causes**
+Quando usarlo: hai un sintomo A1 e i docs ufficiali non hanno la soluzione completa, vuoi sapere maintenance schedule community-revised
+File: `docs/a1_field_kit.md`
+
+Contenuto: X-belt tension warning drift (procedura corretta, over-tightening danni), ABL failures HMS 0300 1800 0001 0003 con 3 fix non-ufficiali (USB connector, cooling fin, TH board screw), hotend unclog A1-specific (hex dall'alto vs pin dal nozzle), heat creep mitigations per PLA conduttivo (Silk/Metal/Glow: 195-200°C, retraction 60mm/s 0.5-0.8mm, fan max, MVS 12-14), Blob of Doom recovery (NON spegnere, heat 250 strip mechanical, sostituisci sock), Power Loss Recovery quirks (functionality OK ma fallisce su layer change pause / bed cold / filament retracted), layer shift X causes (belt drift, vibration compensation drift, motor current reset), build plate quirks (Textured PEI NO acetone, Cool Plate non per PETG), maintenance schedule community-revised (X/Y mensile, Z 6 settimane, gear ogni 3kg, sock 50h, belt cal 2 settimane).
+
+## [mvs_filament_table]
+**Max Volumetric Speed (MVS) per brand: tabella community-dialed Bambu/Polymaker/eSun/Sunlu/Overture/Hatchbox, calibrazione manuale, MVS vs print speed**
+Quando usarlo: hai un filament generico o branded, vuoi sapere MVS effettivo testato beyond default, evitare misconception PLA Meta = high-speed
+File: `docs/mvs_filament_table.md`
+
+Contenuto: A1 hardware ceiling 28 mm³/s, real-world per arbitrario PLA 18 mm³/s, tabella per brand (Bambu Basic 21, Matte 18, Silk 12-14, PolyTerra 22, eSun PLA+ 18-21 bug #3233, Sunlu Meta 24 @ 230°C NON 35-40 come marketing implies), misconception PLA Meta confutata, calibrazione manuale incrementale 2 mm³/s per print, auto-cal A1 senza LIDAR sotto-stima per generic filaments (manual flow + manual PA per cosmetic), formula volumetric_flow = print_speed × line_width × layer_height (lo slicer scala silently se MVS limitante).
+
+## [tree_support_tuning]
+**Tree Support style decision matrix Normal/Hybrid/Organic/Strong, regression Hybrid post-1.9, easy-removal settings, PETG interface trick, branch parameters, Adaptive Layer Height incompat**
+Quando usarlo: hai supports difficili da rimuovere o falliti, vuoi sapere quale style usare, configurare per cosmetic surface vs functional removal
+File: `docs/tree_support_tuning.md`
+
+Contenuto: 4-style decision matrix (Normal per flat-bottom mech, Hybrid default 1.9+ con regression bug, Organic per figurine, Strong per loaded prints), bug Hybrid post-update con workaround rollback Organic + disable adaptive, easy-removal settings PLA-on-PLA (Top Z 0.20/0.16, XY 0.35, Top Interface Concentric, Interface spacing 0.2), PETG interface trick per glass-smooth top surface (Top Z 0.00, fall-off removal), branch parameters (angle 35-45, diameter 4-7mm, density 5-10%, tip 0.4mm nozzle-bound, layers above tip 3-7), Adaptive Layer Height + Tree Hybrid incompat (workaround Tree Organic o disable adaptive), Support Painting workflow integration (Sphere → Gap Fill → Fill order).
+
+## [hidden_bambu_studio_settings]
+**Bambu Studio tricks: wall order Outer/Inner per cosmetic, force solid layers per reinforcement, Smooth Spiral + Timelapse bug, bridge speed override, custom G-code injection, adaptive layer height when NOT to use, negative volume modifier, per-object overrides**
+Quando usarlo: vuoi spingere oltre i defaults Bambu Studio, capire trick community per quality/speed tradeoff, evitare bug noti
+File: `docs/hidden_bambu_studio_settings.md`
+
+Contenuto: wall order Outer/Inner per cosmetic surface vs Inner/Outer default per dim accuracy vs Inner/Outer/Inner per heavy overhang, force solid layers per modifier mesh (top_solid_layers=8 zonale), Smooth Spiral + Traditional Timelapse bug #9166 (pause per layer ricrea seam) workaround disable o Smooth Timelapse, bridge speed override per length (>20mm 25-30, >40mm 20), outer wall speed per cosmetic (60-80 vs 200 default), custom G-code injection at layer (right-click slider, M600/M104/M106), adaptive layer height NON usare su mech parts/Tree Hybrid/bridge/threading, negative volume parts via 3MF modifier (editable post-slice vs Boolean DIFFERENCE in Blender), per-object process overrides (different infill same plate), Spiral Vase quirks (no top, no infill, 1 wall forced, no Z hop).
+
+## [pla_post_processing_field_data]
+**Post-processing PLA con dati testati: annealing curva temp/tempo/shrinkage XY+Z, sanding grit progression, primer+paint workflow, heat gun smoothing caveat, filler putty, XTC-3D**
+Quando usarlo: vuoi finire un modello stampato con qualità cosmetic, capire annealing trade-off dimensionali, scegliere tra sanding manuale vs epoxy coating
+File: `docs/pla_post_processing_field_data.md`
+
+Contenuto: annealing curva (60-70°C safe +20% strength <1% shrink, 85°C sweet spot +80% strength 4-5% XY shrink, 100°+ warping severo), shrinkage anisotropa XY contrae 4-5% Z cresce 1-3% (CAD compensation), procedura forno con sabbia bed + cooldown lento, annealing NON adatto a feature ≤1mm/bordi sottili/metallic embed/dim critical, acetone vapor smoothing NON funziona su PLA, A1 NON adatto a ABS (no enclosure), sanding grit progression 120→180→240→400→800→1500 con wet sanding da 400, primer+paint workflow (sand 240 → filler primer → sand 400 wet → second primer → color → top coat) tempo 4-8h, heat gun smoothing per massive walls only NON per pareti sottili/feature fini, Bondo/Tamiya putty per gap fill, XTC-3D epoxy alternative ma aggiunge 0.1-0.3mm.
+
 ## [advanced_slicing_params]
 **Parametri slicing avanzati Bambu Studio: wall optimization, Arachne, thick bridges, ironing, modificatori locali, ricette specifiche**
 Quando usarlo: vuoi ottimizzare resistenza meccanica oltre i profili base, configurare Ironing, capire Arachne vs Classic, usare modificatori locali per rinforzi, stampare contenitori impermeabili, gestire modelli alti su A1
