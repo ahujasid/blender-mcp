@@ -96,6 +96,13 @@ File: `docs/blender_addons_recommended.md`
 
 Contenuto: 7 addon Tier 1 con MCP API completi e workflow value (3MF I/O bambu, Booltron con solver MANIFOLD 4.5+, Bool Tool interactive, LoopTools bridge_edge_loops per buchi grandi post-decimate, F2 quad fill 3-5 vertex gap, Mesh Repair Tools fill_holes più robusto, Extra Mesh Objects round_cube per cutter); Tier 2 Extra Mesh Objects; NON raccomandati con motivo (MeasureIt pure UI, Quad Remesher ridondante con QuadriFlow built-in, MeshLint abbandonato, Tweaker-3 GPL virale); builtin sottoutilizzati (wm.stl_import/export moderni, voxel_remesh/quadriflow_remesh callable, solver MANIFOLD); decisione 3MF fork (threemf-io primary, LeeGillie per Blender 5.x, evita Korchy/shusain); install order one-shot via Extensions Platform; verifica caricamento programmatica; conflitti & coesistenza (Bool Tool + Booltron complementari); MCP wrapper consigliato (export_3mf_bambu, bridge_open_loops, safe_boolean_difference).
 
+## [mcp_blind_operating_protocol]
+**Master protocol per MCP cieco: 3 sensi (analyze JSON / report._data / viewport screenshot), pre-flight, post-flight, decision matrix, anti-patterns**
+Quando usarlo: PRIMO doc da leggere quando inizi a lavorare. Spiega come ragionare senza vedere la viewport, quando usare quale sense, come compensare l'assenza di vista visiva con metriche numeriche
+File: `docs/mcp_blind_operating_protocol.md`
+
+Contenuto: principio fondamentale "trust metrics not the viewport", i 3 sensi (analyze_mesh_for_print snapshot completo / 3D Print Toolbox report._data drill-down per category / get_viewport_screenshot l'unica vista vera ma costosa) + Senso 4 Python introspection diretta, tabella domande-visive → metric proxies (sliver via aspect_ratio_p95, normali via inverted_face_pct, adesione piatto via bottom_contact_area_mm2 ratio, blob vs spiky via convex_hull_volume_ratio, peso PLA via surface_area_mm2, ribaltamento via center_of_mass_mm vs bottom bbox), pre-flight checklist (object exists, type MESH, geometria, OBJECT mode, active+selected, scale_length, modifier stack), post-flight verification (delta atteso vs reale), decision matrix (quale senso per quale domanda), error handling (campi null, report empty, screenshot empty), workflow standard end-to-end, anti-patterns screenshot, TL;DR.
+
 ## [analyze_to_action]
 **Decision tree: dall'output JSON di analyze_mesh_for_print alla sequenza di azioni di cleanup**
 Quando usarlo: hai appena eseguito analyze_mesh_for_print e devi decidere cosa fare; vuoi capire le regole che il tool MCP kb_route applica; vuoi aggiungere o modificare regole di routing

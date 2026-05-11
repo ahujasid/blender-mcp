@@ -346,5 +346,216 @@ show_normals_overlay(False)
 | Dipendenza | `filepath` valido | Nessuna — usa viewport corrente |
 | Risoluzione | Tutta la finestra Blender | Solo il viewport |
 
-Per il workflow MCP interattivo: usare `setup_qa_view()` + `get_viewport_screenshot`.  
+Per il workflow MCP interattivo: usare `setup_qa_view()` + `get_viewport_screenshot`.
 Per report automatici multi-view: usare `screenshot_4views()` + file PNG.
+
+---
+
+## Screenshot Decision Matrix — quando lo screenshot vale il costo
+
+L'MCP è cieco (vedi [mcp_blind_operating_protocol]). Lo screenshot è l'unica forma di "vista" reale ma è **costoso in token**: ogni call genera un'immagine ~50-200KB che entra nel context. Va usato strategicamente.
+
+**Regola base**: se la domanda può essere risposta con `analyze_mesh_for_print` o `print3d_check_*` → NON serve screenshot. Lo screenshot copre solo cose che le metriche numeriche non possono catturare.
+
+### Recipe per situazione
+
+#### R1 — Verifica orientation pre-print (silhouette estetica)
+
+**Quando**: hai scelto un'orientation candidate basata su `bottom_contact_area_mm2` + overhang count, ma vuoi confermare che la silhouette visibile sarà accettabile.
+
+**Setup**:
+```python
+import bpy
+area = next(a for a in bpy.context.screen.areas if a.type == 'VIEW_3D')
+space = next(s for s in area.spaces if s.type == 'VIEW_3D')
+space.shading.type = 'SOLID'
+space.shading.show_cavity = True       # accentua topology
+space.shading.cavity_type = 'BOTH'
+
+with bpy.context.temp_override(area=area):
+    bpy.ops.view3d.view_axis(type='FRONT')
+    bpy.ops.view3d.view_orbit(angle=0.785, type='ORBITRIGHT')   # +45° azimuth
+    bpy.ops.view3d.view_orbit(angle=0.615, type='ORBITUP')      # +35.264° elevation
+    bpy.ops.view3d.view_selected()
+# Poi chiama get_viewport_screenshot dal MCP, max_size=600
+```
+
+**Cosa cercare**: silhouette, overhangs come zone in shadow profondo, layer line direction.
+
+#### R2 — Verifica feature preservation post-Voxel Remesh
+
+**Quando**: Voxel Remesh con `voxel_size=0.4mm`. Metriche confermano manifold ma feature ≤1mm potrebbe essere appiattita.
+
+**Setup**: zoom sulla feature critica.
+```python
+import bpy, bmesh
+obj = bpy.data.objects['<name>']
+bpy.context.view_layer.objects.active = obj
+obj.select_set(True)
+bpy.ops.object.mode_set(mode='EDIT')
+bpy.ops.mesh.select_all(action='DESELECT')
+bm = bmesh.from_edit_mesh(obj.data)
+# Seleziona via bbox della feature
+for v in bm.verts:
+    if 0.020 < v.co.x < 0.025 and 0.010 < v.co.z < 0.015:
+        v.select = True
+bmesh.update_edit_mesh(obj.data)
+
+area = next(a for a in bpy.context.screen.areas if a.type == 'VIEW_3D')
+with bpy.context.temp_override(area=area):
+    bpy.ops.view3d.view_axis(type='FRONT')
+    bpy.ops.view3d.view_selected()
+bpy.ops.object.mode_set(mode='OBJECT')
+# get_viewport_screenshot(max_size=1024)  ← detail fine, alta risoluzione giustificata
+```
+
+**Cosa cercare**: feature shape ancora riconoscibile, edge non eccessivamente smussato.
+
+#### R3 — Verifica posizione foro post-Boolean DIFFERENCE
+
+**Quando**: Boolean DIFFERENCE eseguito. Volume diminuito conferma che il cut è avvenuto, ma non sai se è nella **posizione corretta**.
+
+**Setup**: 2 view (top + side) per triangolare.
+```python
+import bpy
+area = next(a for a in bpy.context.screen.areas if a.type == 'VIEW_3D')
+
+# View 1: TOP (foro deve essere visibile da sopra)
+with bpy.context.temp_override(area=area):
+    bpy.ops.view3d.view_axis(type='TOP')
+    bpy.ops.view3d.view_selected()
+# get_viewport_screenshot(max_size=600)
+
+# View 2: FRONT (passante deve uscire da front)
+with bpy.context.temp_override(area=area):
+    bpy.ops.view3d.view_axis(type='FRONT')
+    bpy.ops.view3d.view_selected()
+# get_viewport_screenshot(max_size=600)
+```
+
+**Cosa cercare**: posizione foro corretta da entrambe le proiezioni.
+
+#### R4 — Debug normali residue post-recalc
+
+**Quando**: `normals_make_consistent(inside=False)` chiamato ma `inverted_face_pct > 5`. Probabilmente `disconnected_shells > 1` e recalc opera solo sulla shell connessa.
+
+**Setup**: Face Orientation overlay (rosso = flipped).
+```python
+import bpy
+area = next(a for a in bpy.context.screen.areas if a.type == 'VIEW_3D')
+space = next(s for s in area.spaces if s.type == 'VIEW_3D')
+space.overlay.show_face_orientation = True
+
+with bpy.context.temp_override(area=area):
+    bpy.ops.view3d.view_axis(type='FRONT')
+    bpy.ops.view3d.view_orbit(angle=0.785, type='ORBITRIGHT')
+    bpy.ops.view3d.view_orbit(angle=0.615, type='ORBITUP')
+    bpy.ops.view3d.view_selected()
+# get_viewport_screenshot(max_size=800)
+
+# Disabilita dopo
+space.overlay.show_face_orientation = False
+```
+
+**Cosa cercare**: zone rosse residue (= shells disgiunte con normale opposta). Decidi: split, ri-import, o re-meshing.
+
+#### R5 — Pre-export visual sanity (gate finale)
+
+**Quando**: tutti i check numerici passati, prima di `export_stl`. Singolo iso-screenshot per "ho davvero costruito quello che pensavo?".
+
+**Setup**:
+```python
+import bpy
+area = next(a for a in bpy.context.screen.areas if a.type == 'VIEW_3D')
+space = next(s for s in area.spaces if s.type == 'VIEW_3D')
+space.shading.type = 'SOLID'
+space.shading.color_type = 'OBJECT'   # diversifica object multipli
+space.overlay.show_face_orientation = False
+space.overlay.show_wireframes = False
+
+with bpy.context.temp_override(area=area):
+    bpy.ops.object.select_all(action='SELECT')
+    bpy.ops.view3d.view_axis(type='FRONT')
+    bpy.ops.view3d.view_orbit(angle=0.785, type='ORBITRIGHT')
+    bpy.ops.view3d.view_orbit(angle=0.615, type='ORBITUP')
+    bpy.ops.view3d.view_all()
+# get_viewport_screenshot(max_size=800)
+```
+
+**Cosa cercare**: matches user expectation. Non ci dovrebbero essere sorprese — è check di sanità, non scoperta.
+
+#### R6 — Pre/post sculpt comparison
+
+**Quando**: l'utente farà Sculpt manuale (Inflate per chiudere buco, Smooth, ecc.). Sculpt non scriptabile, ma puoi confermare delta visivo.
+
+**Setup** (prima e dopo, identica view):
+```python
+import bpy
+area = next(a for a in bpy.context.screen.areas if a.type == 'VIEW_3D')
+with bpy.context.temp_override(area=area):
+    bpy.ops.view3d.view_axis(type='FRONT')
+    bpy.ops.view3d.view_orbit(angle=0.785, type='ORBITRIGHT')
+    bpy.ops.view3d.view_orbit(angle=0.615, type='ORBITUP')
+    bpy.ops.view3d.view_selected()
+# get_viewport_screenshot(max_size=600)  ← PRIMA
+# ... sculpt session manuale dell'utente ...
+# get_viewport_screenshot(max_size=600)  ← DOPO (stessa view)
+```
+
+**Cosa cercare**: cambiamento avvenuto nella zona target, no distorsione fuori, silhouette globale preservata.
+
+#### R7 — Diagnose sliver concentration post-decimate
+
+**Quando**: post-decimate aggressivo, R013 ha matchato (`aspect_ratio_p95 > 10`). Vuoi vedere visivamente dove si concentrano gli sliver.
+
+**Setup**: wireframe overlay completo.
+```python
+import bpy
+area = next(a for a in bpy.context.screen.areas if a.type == 'VIEW_3D')
+space = next(s for s in area.spaces if s.type == 'VIEW_3D')
+space.overlay.show_wireframes = True
+space.overlay.wireframe_threshold = 1.0   # mostra TUTTI gli edge
+
+with bpy.context.temp_override(area=area):
+    bpy.ops.view3d.view_axis(type='FRONT')
+    bpy.ops.view3d.view_orbit(angle=0.785, type='ORBITRIGHT')
+    bpy.ops.view3d.view_selected()
+# get_viewport_screenshot(max_size=1024)  ← detail fine, alta risoluzione
+
+space.overlay.show_wireframes = False
+```
+
+**Cosa cercare**: zone con triangoli ad ago concentrati = sliver. Tipicamente vicino a feature curve dove decimate ha collapsato troppo.
+
+### Costi screenshot — table di reference
+
+| max_size | File size tipico | Cost | Use case |
+|---|---|---|---|
+| 400 | ~30 KB | basso | Quick sanity, thumbnail |
+| 600 | ~80 KB | medio-basso | Default per QA recipes (R1, R3, R5, R6) |
+| 800 | ~120 KB | medio | R4 (debug overlays) |
+| 1024 | ~200 KB | alto | R2, R7 (detail inspection feature critica / sliver) |
+| 1600+ | ~500 KB+ | molto alto | Quasi mai necessario |
+
+**Default per la maggior parte dei casi**: `max_size=600`.
+
+### Anti-patterns
+
+❌ **Screenshot dopo OGNI playbook step**. Le metriche di `verification.expect` sono il check primario. Screenshot solo se la metrica non basta.
+
+❌ **Screenshot per contare cose**. Per "quanti object nella scena" usa `len(bpy.context.scene.objects)`. Per "quanti buchi nel modello" usa `boundary_loops`.
+
+❌ **Screenshot senza setup**. Senza camera positioning, l'immagine è quello che il viewport mostrava prima — spesso view casuale. Sempre `view_selected` + axis preset prima.
+
+❌ **Screenshot a `max_size=1600` di default**. Cost alto per zero beneficio.
+
+❌ **Screenshot per validare numeri**. "Ha funzionato il Boolean?" → confronta `signed_volume_mm3 / volume_mm3` pre/post, NON screenshot.
+
+❌ **Multipli screenshot consecutivi senza setup diverso**. Stessa view = stesso info, costa il doppio in token.
+
+## Cross-reference
+
+- [mcp_blind_operating_protocol] — perché lo screenshot è il "Senso 3" e quando giustifica il costo
+- [orientation_strategy] — decisione orientation con metriche, screenshot solo per silhouette finale
+- [blender_3d_print_toolbox] — `print3d_check_overhang` per drill-down su overhang (alternativa a screenshot)
+- [analyze_to_action] — routing decisions vanno su metriche, mai su screenshot

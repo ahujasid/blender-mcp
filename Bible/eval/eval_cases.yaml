@@ -145,7 +145,34 @@ cases:
       watertight: false
       signed_volume_mm3: null
       dimensions_mm: [45, 45, 120]
+      aspect_ratio_p95: 14.5
       ready_to_slice: false
     expected_pipeline:
       - rule_id: R011
+        playbook: post_decimate_cleanup
+
+  - name: synthetic_aspect_ratio_only
+    synthetic: true
+    description: >
+      Mesh post-decimate where degenerate_faces is 0 (R011 won't fire) but
+      aspect_ratio_p95 is high — sliver triangles that aren't strictly
+      zero-area but still cause slicer artifacts. Should trigger R013
+      (the new visual-proxy-driven rule) which targets the same
+      post_decimate_cleanup playbook.
+    expected_initial_analysis:
+      vertex_count: 70000
+      edge_count: 210000
+      face_count: 140000
+      non_manifold_edges: 0
+      boundary_loops: 0
+      disconnected_shells: 1
+      degenerate_faces: 0
+      normals: consistent
+      watertight: true
+      signed_volume_mm3: 28000.0
+      dimensions_mm: [45, 45, 120]
+      aspect_ratio_p95: 13.2
+      ready_to_slice: true
+    expected_pipeline:
+      - rule_id: R013
         playbook: post_decimate_cleanup

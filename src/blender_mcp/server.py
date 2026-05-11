@@ -337,27 +337,51 @@ def analyze_mesh_for_print(ctx: Context, object_name: str) -> str:
     """
     Run a structured print-readiness check on a mesh and return JSON.
 
-    Reports: vertex/edge/face count, dimensions in millimeters, watertightness
-    (non-manifold edge count), boundary loops (holes), disconnected shells,
-    degenerate triangle count, normals consistency (signed volume + raycast
-    sampling for partial inversion), wall thickness statistics (p10, p50,
-    percentage under 0.8mm), and a "ready_to_slice" boolean.
+    The MCP assistant cannot see the viewport. This tool is its primary "eye":
+    it returns a structured JSON describing the mesh state in numbers, so the
+    assistant can reason about cleanup decisions without rendering.
 
-    Wall thickness and inverted_face_pct are populated only when the mesh is
-    watertight (raycast on open meshes returns garbage). Sampling is capped
-    at 5000 faces with a deterministic seed. On non-watertight meshes those
-    four fields are null.
+    Returns (all units in mm; counts are integers; ratios are floats):
+      Topology:
+        vertex_count, edge_count, face_count
+        non_manifold_edges, boundary_edges, boundary_loops
+        disconnected_shells
+        degenerate_faces (area < 1e-12 m²)
+        watertight (bool: non_manifold_edges == 0)
+        normals: "consistent" | "all_inverted" | "unknown_open_mesh"
+        signed_volume_mm3
+        ready_to_slice (bool: watertight AND no degenerate AND shells==1 AND normals consistent)
+      Dimensions:
+        dimensions_mm [x, y, z]
+        surface_area_mm2
+        center_of_mass_mm [x, y, z]  (area-weighted surface centroid)
+      Wall thickness (watertight only, raycast-sampled, capped at 5000 faces):
+        wall_thickness_p10_mm, wall_thickness_p50_mm
+        wall_thickness_under_min_pct  (% faces below 0.8mm)
+      Normals statistics (watertight only):
+        inverted_face_pct  (0..100; raycast-sampled; partial inversion detect)
+      Geometric quality (proxies for visual inspection):
+        aspect_ratio_p95  (95p of max/min edge length ratio per face;
+                           >10 = sliver triangles, typically post-decimate)
+        dihedral_angle_p90_deg  (90p of dihedral angle across manifold edges;
+                                 >60 = visible sharp folds)
+        bottom_contact_area_mm2  (area of faces facing downward, normal.z <= -0.95;
+                                  proxy for build-plate adhesion)
+        convex_hull_volume_ratio  (volume / hull_volume in (0,1]; 1=brick,
+                                   <0.5=thin/spiky, blob-vs-spiky proxy)
 
-    `inverted_face_pct` ranges [0, 100]:
-      0     = all face normals point outward (consistent)
-      100   = all face normals point inward (covered by R002 + normals==all_inverted)
-      5-95  = partial inversion (covered by R002b) — typical Meshy output where
-              part of a closed sub-surface was reconstructed with flipped winding
+    These numeric proxies replace common visual checks the assistant cannot do:
+      - "Are there sliver triangles?" -> aspect_ratio_p95 > 10
+      - "Will it sit stable on the plate?" -> bottom_contact_area_mm2 vs
+        dimensions_mm[0] * dimensions_mm[1]
+      - "Is the part spiky or chunky?" -> convex_hull_volume_ratio
+      - "How heavy/expensive in PLA?" -> surface_area_mm2 (shell volume estimate)
+      - "Will it tip during print?" -> compare center_of_mass_mm[0:2] with the
+        bbox of bottom_contact faces
 
     Use this BEFORE running cleanup ops (so you know what to fix) and AFTER
-    (so you know it's done). Cheaper for the LLM than asking it to parse
-    free-text output from execute_blender_code. Feed the JSON directly into
-    `kb_route(analysis_json)` to get the next action.
+    (so you know it's done). Feed the JSON directly into kb_route(analysis_json)
+    to get the next action.
 
     Parameters:
     - object_name: Name of the mesh object to analyze.

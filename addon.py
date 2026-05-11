@@ -431,6 +431,12 @@ class BlenderMCPServer:
                 bm, watertight=watertight,
             )
             inverted_pct = self._inverted_face_pct(bm, watertight=watertight)
+            aspect_p95 = self._aspect_ratio_p95(bm)
+            dihedral_p90 = self._dihedral_angle_p90(bm)
+            bottom_area = self._bottom_contact_area_mm2(bm)
+            hull_ratio = self._convex_hull_volume_ratio(bm)
+            surface_area = self._surface_area_mm2(bm)
+            com_xyz = self._center_of_mass_mm(bm)
 
             result = {
                 "object": obj.name,
@@ -450,6 +456,12 @@ class BlenderMCPServer:
                 "wall_thickness_p50_mm": wt_p50,
                 "wall_thickness_under_min_pct": wt_pct_under,
                 "inverted_face_pct": inverted_pct,
+                "aspect_ratio_p95": aspect_p95,
+                "dihedral_angle_p90_deg": dihedral_p90,
+                "bottom_contact_area_mm2": bottom_area,
+                "convex_hull_volume_ratio": hull_ratio,
+                "surface_area_mm2": surface_area,
+                "center_of_mass_mm": com_xyz,
             }
             result["ready_to_slice"] = (
                 watertight
@@ -553,6 +565,155 @@ class BlenderMCPServer:
         if valid == 0:
             return None
         return round(100.0 * inverted / valid, 1)
+
+    def _aspect_ratio_p95(self, bm, max_samples=5000):
+        """95th percentile of face edge-length aspect ratio (max/min).
+
+        Why: a value above 10 indicates sliver triangles (degenerate-shape
+        but not zero-area) typical of post-decimate damage. An ideal mesh
+        sits below 4. Cheap proxy for visual "long thin triangles" check
+        that the assistant can never see otherwise.
+        """
+        if len(bm.faces) == 0:
+            return None
+        faces = list(bm.faces)
+        if len(faces) > max_samples:
+            import random
+            rng = random.Random(44)
+            faces = rng.sample(faces, max_samples)
+        ratios = []
+        for f in faces:
+            lens = [e.calc_length() for e in f.edges]
+            mn = min(lens)
+            if mn <= 1e-12:
+                continue
+            ratios.append(max(lens) / mn)
+        if not ratios:
+            return None
+        ratios.sort()
+        idx = int(len(ratios) * 0.95)
+        return round(ratios[min(idx, len(ratios) - 1)], 2)
+
+    def _dihedral_angle_p90(self, bm, max_samples=5000):
+        """90th percentile of dihedral angle across manifold edges, in degrees.
+
+        Why: high value (> ~60deg) flags sharp folds that the slicer renders
+        as visible edges. Useful to compare orientation candidates without
+        viewport access.
+        """
+        edges = [e for e in bm.edges if e.is_manifold and len(e.link_faces) == 2]
+        if not edges:
+            return None
+        if len(edges) > max_samples:
+            import random
+            rng = random.Random(45)
+            edges = rng.sample(edges, max_samples)
+        import math
+        angles_deg = []
+        for e in edges:
+            try:
+                rad = e.calc_face_angle(0.0)
+            except (ValueError, RuntimeError):
+                continue
+            angles_deg.append(math.degrees(rad))
+        if not angles_deg:
+            return None
+        angles_deg.sort()
+        idx = int(len(angles_deg) * 0.90)
+        return round(angles_deg[min(idx, len(angles_deg) - 1)], 1)
+
+    def _bottom_contact_area_mm2(self, bm, normal_z_threshold=-0.95):
+        """Area of faces facing downward (normal.z <= -0.95), in mm^2.
+
+        Why: proxy for build-plate adhesion area. A part with high contact
+        area is stable during print without brim; a part with low contact
+        area may tip. Independent of bbox — a tripod has small bbox-bottom
+        area but the contact area may still be acceptable.
+        """
+        if len(bm.faces) == 0:
+            return None
+        mm = self._mm_per_unit()
+        area_bu = 0.0
+        for f in bm.faces:
+            if f.normal.length_squared <= 0:
+                continue
+            if f.normal.z <= normal_z_threshold:
+                area_bu += f.calc_area()
+        return round(area_bu * (mm ** 2), 2)
+
+    def _convex_hull_volume_ratio(self, bm):
+        """volume(mesh) / volume(convex_hull). Range (0, 1].
+
+        Why: 1.0 = the mesh IS its convex hull (a brick); near 0 = thin spiky
+        shape. Catches "spiky / fragile silhouette" patterns from AI mesh
+        without needing a screenshot. Returns None if the mesh isn't closed
+        (signed volume meaningless).
+        """
+        try:
+            mesh_vol = bm.calc_volume(signed=False)
+        except (ValueError, RuntimeError):
+            return None
+        if mesh_vol <= 0:
+            return None
+        try:
+            import bmesh as _bm
+            hull_bm = _bm.new()
+            for v in bm.verts:
+                hull_bm.verts.new(v.co)
+            hull_bm.verts.ensure_lookup_table()
+            geom = list(hull_bm.verts)
+            _bm.ops.convex_hull(hull_bm, input=geom)
+            hull_vol = hull_bm.calc_volume(signed=False)
+            hull_bm.free()
+        except Exception:
+            return None
+        if hull_vol <= 0:
+            return None
+        return round(min(mesh_vol / hull_vol, 1.0), 3)
+
+    def _surface_area_mm2(self, bm):
+        """Total surface area in mm^2.
+
+        Why: input for print-time estimate and PLA cost calculation.
+        surface_area_mm2 * wall_thickness_mm / 1000 ≈ shell volume in cm^3;
+        multiply by 1.24 g/cm^3 for PLA mass (excluding infill).
+        """
+        if len(bm.faces) == 0:
+            return None
+        mm = self._mm_per_unit()
+        area_bu = sum(f.calc_area() for f in bm.faces)
+        return round(area_bu * (mm ** 2), 2)
+
+    def _center_of_mass_mm(self, bm):
+        """Area-weighted centroid of the surface, in mm coordinates [x, y, z].
+
+        Why: surface centroid approximates the printed part's center of mass
+        (uniform shell + uniform infill). The assistant can compare CoM_xy
+        against the bottom-contact bbox to flag tipping risk during print.
+        Not the true CoM of the printed solid (that depends on infill
+        pattern), but a usable proxy.
+        """
+        if len(bm.faces) == 0:
+            return None
+        mm = self._mm_per_unit()
+        total_area = 0.0
+        cx = cy = cz = 0.0
+        for f in bm.faces:
+            a = f.calc_area()
+            if a <= 0:
+                continue
+            c = f.calc_center_median()
+            cx += c.x * a
+            cy += c.y * a
+            cz += c.z * a
+            total_area += a
+        if total_area <= 0:
+            return None
+        return [
+            round((cx / total_area) * mm, 3),
+            round((cy / total_area) * mm, 3),
+            round((cz / total_area) * mm, 3),
+        ]
 
     @staticmethod
     def _count_boundary_loops(boundary_edges):

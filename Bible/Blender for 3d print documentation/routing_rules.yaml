@@ -239,3 +239,25 @@ rules:
       repair_basic, triangola, e ricalcola normali.
       Quando NON dovrebbe scattare: se la mesh è ancora >200k (probabilmente
       non hai decimato ancora) il caso è R001 sul repair_basic standard.
+
+  # R013 fires on sliver triangles (high aspect ratio) that AREN'T necessarily
+  # zero-area-degenerate. They pass the degenerate_faces check but still cause
+  # slicer artifacts. analyze_mesh_for_print exposes aspect_ratio_p95 as a
+  # visual-inspection proxy specifically for this case.
+  - id: R013
+    priority: 105
+    when:
+      aspect_ratio_p95: "> 10"
+      face_count: "< 200000"
+    then:
+      topic_id: decimation_remesh
+      section: failure_modes
+      playbook: post_decimate_cleanup
+      expected_after:
+        aspect_ratio_p95: "< 8"
+    rationale: >
+      Il 5% peggiore delle facce ha aspect ratio max/min > 10 — triangoli ad
+      ago (sliver) tipici di Decimate COLLAPSE aggressivo. Non sono
+      zero-area (R001 non li cattura) ma il slicer li renderizza come
+      micro-gap o segnali di under-extrusion. post_decimate_cleanup
+      dissolve degenerate + triangulate riduce l'aspect ratio.

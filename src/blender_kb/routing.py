@@ -114,6 +114,10 @@ def summarize_analysis(analysis: dict) -> dict:
         "non_manifold_edges", "boundary_loops", "disconnected_shells",
         "degenerate_faces", "normals", "watertight",
         "dimensions_mm", "ready_to_slice",
+        "wall_thickness_p10_mm", "inverted_face_pct",
+        "aspect_ratio_p95", "dihedral_angle_p90_deg",
+        "bottom_contact_area_mm2", "convex_hull_volume_ratio",
+        "surface_area_mm2",
     )
     return {k: analysis[k] for k in keys if k in analysis}
 

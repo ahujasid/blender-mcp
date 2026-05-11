@@ -80,13 +80,17 @@ topics:
     band: A
     related: [addon_booltron, addon_bool_tool, boolean_troubleshooting, blender_addons_recommended]
 
+  - id: mcp_blind_operating_protocol
+    band: A
+    related: [analyze_to_action, camera_verification, blender_3d_print_toolbox, error_handling_mcp, mcp_tools, problem_to_tool_map]
+
   - id: analyze_to_action
     band: A
     solves_symptoms:
       [non_manifold_edges, boundary_loops, disconnected_shells, degenerate_faces,
        normals_inverted, dimensions_wrong, polycount_high, too_large_for_bed,
        thin_walls]
-    related: [problem_to_tool_map, mesh_repair, decimation_remesh, multi_object_management, wall_thickness_actionable]
+    related: [problem_to_tool_map, mesh_repair, decimation_remesh, multi_object_management, wall_thickness_actionable, mcp_blind_operating_protocol]
 
   - id: wall_thickness_actionable
     band: A
