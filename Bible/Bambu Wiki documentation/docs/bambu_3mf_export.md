@@ -99,35 +99,74 @@ Per usare una mesh Blender come **negative part** in Bambu Studio:
 2. Right-click sul main → `Add Negative Part → Load…` → seleziona un secondo STL/3MF dalla cartella di lavoro.
 3. Bambu **non legge** `part_type` da 3MF esterni — devi sempre dichiararlo nel UI di Bambu.
 
-## Trick: multi-plate da Blender via Parent Empty
+## Multi-plate da Blender — **NON è possibile direttamente**
 
-`threemf-io` mappa **Parent Empty con mesh children → plate separata** in OrcaSlicer e Bambu Studio.
+**Correzione importante**: contrariamente a quanto comunemente affermato, `threemf-io` **NON** mappa Parent Empty a plate separate in Bambu Studio. Verificato leggendo il source di import_3mf.py / export_3mf.py (Ghostkeeper master + LeeGillie fork).
+
+**Cosa fa davvero un Parent Empty in export**:
+- Root objects (no parent) → `<build><item>` entries.
+- Children objects → `<components>` con transform relativo al parent.
+- Empty parent → diventa un parentless `<item>` senza mesh (raggruppamento logico).
+- **Resta UN file 3MF con UN plate**. Bambu Studio importa tutti su plate 1.
+
+**Perché non funziona il "trick"**: la plate config Bambu vive in `Metadata/model_settings.config` (proprietary Production Extension format). Nessun fork threemf-io scrive questo file. PR [#58](https://github.com/Ghostkeeper/Blender3mfFormat/pull/58) lo aggiungerebbe ma è unmerged dal 2022.
+
+**Workaround per multi-plate**:
+
+### Opzione A — Un file 3MF per plate (raccomandato)
 
 ```python
 import bpy
 
-# Plate 1: 3 oggetti
-empty_p1 = bpy.data.objects.new("Plate_1", None)
-bpy.context.scene.collection.objects.link(empty_p1)
-for name in ('part_a', 'part_b', 'part_c'):
-    bpy.data.objects[name].parent = empty_p1
+def export_plate(plate_objects, filepath):
+    for o in bpy.context.scene.objects:
+        o.select_set(False)
+    for name in plate_objects:
+        bpy.data.objects[name].select_set(True)
+    bpy.ops.export_mesh.threemf(
+        filepath=filepath,
+        use_selection=True,
+        use_mesh_modifiers=True,
+        global_scale=1.0,  # se scale_length=1.0 default
+    )
 
-# Plate 2: 1 oggetto
-empty_p2 = bpy.data.objects.new("Plate_2", None)
-bpy.context.scene.collection.objects.link(empty_p2)
-bpy.data.objects['part_d'].parent = empty_p2
+export_plate(['part_a', 'part_b', 'part_c'], '/tmp/plate_1.3mf')
+export_plate(['part_d'], '/tmp/plate_2.3mf')
+```
 
-# Export
+Poi in Bambu Studio: New Project → Import 3MF plate_1.3mf → Add Plate → Import 3MF plate_2.3mf.
+
+### Opzione B — Tutto su 1 plate, riarrangia in Bambu Studio
+
+```python
+# Export tutti gli oggetti su un file
 bpy.ops.object.select_all(action='SELECT')
 bpy.ops.export_mesh.threemf(
-    filepath='/tmp/multi_plate.3mf',
+    filepath='/tmp/all.3mf',
     use_selection=True,
     use_mesh_modifiers=True,
-    global_scale=1000.0,
 )
 ```
 
-In Bambu Studio: ogni empty diventa una plate, gli object children atterrano sulla rispettiva plate. È **l'unico modo** per dirigere l'assegnamento plate da Blender.
+In Bambu Studio: Import 3MF → tutti su plate 1 → manualmente Move to Plate per quelli che vanno su plate diverse.
+
+### Opzione C — Grouping via Parent Empty (un solo plate)
+
+Utile NON per separare plates, ma per **raggruppare logicamente** oggetti nella Objects panel di Bambu Studio:
+
+```python
+import bpy
+
+empty = bpy.data.objects.new("Assembly", None)
+bpy.context.scene.collection.objects.link(empty)
+for name in ('part_a', 'part_b', 'part_c'):
+    bpy.data.objects[name].parent = empty
+
+bpy.ops.object.select_all(action='SELECT')
+bpy.ops.export_mesh.threemf(filepath='/tmp/assy.3mf', use_selection=True)
+```
+
+In Bambu Studio: tutti gli object appaiono insieme sulla plate 1, ma raggruppati visualmente sotto "Assembly" nella Objects panel. **Non sono plate separate**.
 
 ## Cosa si perde all'import in Bambu Studio
 

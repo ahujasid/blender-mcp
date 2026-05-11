@@ -45,7 +45,40 @@ topics:
 
   - id: blender_addons_recommended
     band: A
-    related: [blender_3d_print_toolbox, import_export, boolean_troubleshooting, decimation_remesh]
+    related: [blender_3d_print_toolbox, addon_threemf_io, addon_bool_tool, addon_booltron, addon_looptools, addon_f2, addon_mesh_repair_tools, addon_extra_mesh_objects, import_export, boolean_troubleshooting, decimation_remesh]
+
+  - id: addon_threemf_io
+    band: A
+    related: [bambu_3mf_export, import_export, blender_addons_recommended]
+
+  - id: addon_bool_tool
+    band: A
+    solves_symptoms: [self_intersection]
+    related: [addon_booltron, boolean_troubleshooting, mesh_repair, blender_addons_recommended]
+
+  - id: addon_booltron
+    band: A
+    solves_symptoms: [self_intersection, non_manifold_edges]
+    related: [addon_bool_tool, boolean_troubleshooting, mesh_repair, blender_addons_recommended]
+
+  - id: addon_looptools
+    band: A
+    solves_symptoms: [boundary_loops, non_manifold_edges]
+    related: [addon_f2, mesh_repair, addon_mesh_repair_tools, blender_addons_recommended]
+
+  - id: addon_f2
+    band: A
+    solves_symptoms: [boundary_loops]
+    related: [addon_looptools, mesh_repair, blender_addons_recommended]
+
+  - id: addon_mesh_repair_tools
+    band: A
+    solves_symptoms: [non_manifold_edges, boundary_loops, degenerate_faces, normals_inverted, self_intersection]
+    related: [mesh_repair, blender_3d_print_toolbox, addon_looptools, blender_addons_recommended]
+
+  - id: addon_extra_mesh_objects
+    band: A
+    related: [addon_booltron, addon_bool_tool, boolean_troubleshooting, blender_addons_recommended]
 
   - id: analyze_to_action
     band: A

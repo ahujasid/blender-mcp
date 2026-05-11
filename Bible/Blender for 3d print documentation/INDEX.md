@@ -40,6 +40,55 @@ File: `docs/blender_3d_print_toolbox.md`
 
 Contenuto: enable programmatico via addon_utils, lettura risultati via `from object_print3d_utils import report; report.info()`, scene.print_3d properties (thickness_min/threshold_zero/angle_distort/angle_sharp/angle_overhang/export_*), info ops (volume/area), check ops (solid/intersect/degenerate/distort/thick/sharp/overhang/all) - tutti i check NON modificano selezione, salvano in report._data globale, recuperabile via `select_report(index)`, clean_non_manifold pipeline interna (delete_loose → remove_doubles → dissolve_degenerate → fill_holes → make_normals_consistent) con bug noto T48565, clean_distorted, clean_thin STUB vuoto, transform (scale_to_volume/scale_to_bounds/align_to_xy + use_alignxy_face_area), hollow VDB pyopenvdb-based, 7 pattern idiomatici (set threshold prima di check_thick, check+select_report+edit, check_all triage, repair iterativo R005, scale to A1 bounds 256mm, auto-orient face piatta, overhang assessment per orientation), confronto con analyze_mesh_for_print (complementarità routing vs investigation), 10 quirks (check_thick undercount su mesh aperta, check_overhang object-local space, clean_non_manifold introduce nuovi non-manifold, clean_thin stub, Bad Contiguous Edges = flipped normals).
 
+## [addon_threemf_io]
+**threemf-io Blender addon (import/export 3MF, Ghostkeeper + LeeGillie fork): bug Blender 4.5+ TypeError, operator API, Production Extension limits, scale_length workaround**
+Quando usarlo: stai per chiamare `import_mesh.threemf` o `export_mesh.threemf`, vuoi sapere quale fork installare per Blender version, capire perché Bambu Studio scarta certi 3MF
+File: `docs/addon_threemf_io.md`
+
+Contenuto: 2 operator (import_mesh.threemf + export_mesh.threemf, solo OBJECT mode), tabella params completi con types/defaults/ranges, spec coverage Core 1.2.3 (Ghostkeeper) vs 1.4.0 (LeeGillie), materials solo Principled BSDF Base Color → basematerials displaycolor (NO texture roundtrip), **Multi-plate via Parent Empty NON è feature reale** (Empty diventa parentless item group, plate config Bambu non scritta), units handling con scale_length quirk #89, 6 quirks con citazioni GitHub (#89 tiny exports, #61 file rejection, #81/84/87/92 Blender 4.5 TypeError, #91 hide_render ignored, #76 import names fix), 7 patterns idiomatici, comparison Ghostkeeper vs LeeGillie (Blender 4.5+ obbligatorio LeeGillie).
+
+## [addon_bool_tool]
+**Bool Tool addon (nickberckley): brush=non-destructive + auto=destructive, solver in prefs, cutter library management**
+Quando usarlo: serve cutter library reversibile (toggle/apply/remove), single cutter interactive workflow, brush ops mantengono modifier sticky vs auto applies immediato
+File: `docs/addon_bool_tool.md`
+
+Contenuto: nomenclatura confusa (brush=non-destr, auto=destr counter-intuitive), 4 brush ops + 4 auto ops + 6 cutter management ops (toggle/remove/apply/toggle_all/remove_all/apply_all), selection contract (active=canvas, others=cutters), shared mixin params (material_mode INDEX/TRANSFER, use_self, use_hole_tolerant, double_threshold 1e-6), solver NON parametro per-call (letto da add-on prefs globali: FLOAT default, EXACT, MANIFOLD), side effects (collection boolean_cutters, parent, wireframe display), 5 patterns (cutter library reversibile, quick destructive, MANIFOLD solver setup, pre-flight transform_apply, toggle off temporary), bug Blender 5.0 #148829, comparison vs Booltron (preferisci per interactive single cutter).
+
+## [addon_booltron]
+**Booltron addon (mrachinskiy): pre-op sanitize automatico, MANIFOLD per-side, multi-cutter batch join, coplanar jitter**
+Quando usarlo: STL imports non puliti da AI/scan/CAD, batch boolean N cutters, serve solver MANIFOLD differenziato primary/secondary, mesh con coplanarità rischiose
+File: `docs/addon_booltron.md`
+
+Contenuto: 4 destructive + 3 nondestructive ops (geometry-nodes based), killer feature `meshlib.prepare()` (remove_doubles + dissolve_degenerate + delete_loose + holes_fill automatici), settings via WindowManager.booltron.destructive/.nondestructive (solver per primary+secondary, merge_distance 3e-4, dissolve_distance 1e-4, use_loc_rnd + loc_offset 0.005 per coplanar jitter), multi-cutter batch join in 1 mesh poi 1 modifier (vs N modifier di Bool Tool), is_nonmanifold post-op check (reports ma no auto-fix), failure modes MANIFOLD requires watertight both sides + tiny merge collassa hole <0.3mm, 7 patterns (mounting hole array N→1 modifier, flatten bottom Z=0, snap-fit shrunk cutter, multi-shell UNION MANIFOLD, slice con overlap_distance per glue lap, coplanar jitter setup, batch pipeline config).
+
+## [addon_looptools]
+**LoopTools addon (8 ops mesh repair): bridge, circle, flatten, relax (string iterations!), space, curve. Workflow canonico repair AI mesh post-decimate**
+Quando usarlo: riparare buchi grandi/irregolari su AI mesh, bridge 2 shells, circolarizzare hole distorto, distribute vertices, flatten loop su build plate
+File: `docs/addon_looptools.md`
+
+Contenuto: 8 operator sotto bpy.ops.mesh.looptools_* (EDIT mode), bridge con shortest matching + mode hidden in UI ma callable + auto normals_make_consistent line 3419, circle best-fit + flatten in uno shot, flatten con plane=best_fit/normal/view + lock_x/y/z lowercase, **relax iterations è STRING enum '1'/'3'/'5'/'10'/'25' NON int** (silent failure tipico), space per equalize spacing pre-bridge, curve/loft/gstretch (skip per FDM), quirks (iterations string typo, lock lowercase, cache invalidation via undo_push, bridge unequal vertex counts greedy match, relax volume loss con linear), workflow canonico repair (select_non_manifold → relax cubic 3 iter → circle → flatten → fill_holes/bridge/f2 → normals_make_consistent), comparison vs built-in (per hole repair sempre LoopTools, per smooth profile-shaped bridge built-in).
+
+## [addon_f2]
+**F2 addon (quad fill da 1 vertex/edge): autograb=False obbligatorio per MCP, INVOKE_DEFAULT required**
+Quando usarlo: gap 3-5 vertex post-decimate dove built-in F non infera quad, fill consistent con flow surrounding
+File: `docs/addon_f2.md`
+
+Contenuto: 1 solo operator mesh.f2, **quirk killer per MCP** (solo invoke() no execute(), autograb=True stalla in modal grab → bug T52506), set autograb=False + 'INVOKE_DEFAULT' obbligatorio, 5 branches in invoke() (≥3 verts → edge_face_add, 2 verts same edge → quad_from_edge, 2 verts not same edge → fallback, 1 vert con 2 boundary edges → quad_from_vertex, 1 vert con extendvert → expand_vert), addon preferences (adjustuv/autograb/extendvert/material_inherit flags), failure modes (selezione errata su gap concavo, vertex con non-2 boundary edges → fallback), 4 patterns (setup MCP obbligatorio, fill 1 vertex gap, loop N vertices multi-quad, fill irregular boundary chain), comparison vs built-in F (F2 inventa 4° vertex da topology, F solo bridge selection).
+
+## [addon_mesh_repair_tools]
+**Mesh Repair Tools (SineWave): mega-op fix_mesh_global con properties group, hole-fill più robusto del built-in, smart normal recalc**
+Quando usarlo: AI mesh decimata con buchi irregolari, serve cleanup multi-pass configurable, recalc normals con auto-flip, fix self-intersection actually (non solo report come PT3D)
+File: `docs/addon_mesh_repair_tools.md`
+
+Contenuto: N-panel Local Fix (EDIT) + Global Fix (OBJ/EDIT), 7 operator (object.fix_mesh_global mega-op + 6 locali), properties da scene.meshfixtool_properties (tri_boolean, face_normal_boolean, minor_parts_boolean + threshold 1%, spikes_boolean + angle 10°, intersection_boolean + angle, holes_boolean, volume_intersection_boolean DANGEROUS clear modifiers + drop vgroups, wiz_boolean Fix Wizard paid), pipeline fix_mesh_global (remove_doubles → tris/quads → recalc normals → spikes dissolve → intersection smooth → loose parts → volume union opt → custom holes_fill edgeloop su ogni boundary → final remove_doubles), local_face_normal smart auto-flip, remesh_local_v2 (subdiv+laplacian+decimate), smooth_local_v2, flatten_local (requires LoopTools), reduce_local, refind_local (typo nel bl_idname), 4 patterns (AutoFix completo, AutoFix + PT3D QC chained, smart recalc post-boolean, volume_intersection con backup), comparison vs PT3D (MRT actually fixes intersections + spikes, PT3D solo reports + ottimo per QC finale).
+
+## [addon_extra_mesh_objects]
+**Extra Mesh Objects: primitive parametriche utili come Boolean cutter (round_cube bevellato, pipe joints, gear, diamond countersink, beam profile, honeycomb)**
+Quando usarlo: serve cutter Boolean parametrico complesso (chamfered hole, channel routing, countersink), primitive print-ready (spur gear, beam strutturale), pattern infill (honeycomb)
+File: `docs/addon_extra_mesh_objects.md`
+
+Contenuto: tutti gli operator creano nuovo object al 3D cursor + active+selected (mixin AddObjectHelper), primitive_round_cube_add (bevelled cube cutter chamfered holes), pipe joint family (elbow/tee/wye/cross/n_joint per cable channel cutters), primitive_gear (spur gear con vertex groups Tips+Valleys, negative radius → crown gear), primitive_worm_gear, primitive_diamond_add (countersink cutter), primitive_steppyramid_add (overhang test calibration), primitive_solid_add (Platonic/Archimedean/Catalan con vTrunc/eTrunc/snub/dual), add_beam (C/I/L/T/U/rectangular profile structural), honeycomb_add (infill pattern), failure modes (arc_div alto senza no_limit aborts, xyz_function_surface security warning), 7 patterns (chamfered mounting hole cutter, cable channel elbow, print-ready spur gear M=1.5mm 20 denti, diamond countersink M3, honeycomb infill, test staircase overhang, I-beam structural), comparison vs built-in primitives (Extra è estensione non sostituzione di cube/sphere/cylinder built-in).
+
 ## [blender_addons_recommended]
 **Addon raccomandati per print-prep workflow: 3D Print Toolbox, threemf-io, Booltron, Bool Tool, LoopTools, F2, Mesh Repair Tools, Extra Mesh Objects + install order + 3MF fork decision**
 Quando usarlo: vuoi sapere quali addon installare oltre i bundled, decidere quale fork 3MF usare (threemf-io vs LeeGillie), capire quale builtin sottoutilizzato c'è (voxel_remesh/quadriflow_remesh callable diretti, solver MANIFOLD)
