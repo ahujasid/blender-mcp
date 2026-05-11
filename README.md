@@ -2,11 +2,14 @@
 
 # BlenderMCP - Blender Model Context Protocol Integration
 
-BlenderMCP connects Blender to Claude AI through the Model Context Protocol (MCP), allowing Claude to directly interact with and control Blender. This integration enables prompt assisted 3D modeling, scene creation, and manipulation.
+BlenderMCP connects Blender to Claude AI through the Model Context Protocol (MCP).
+This fork is **refocused on STL print-prep**: take an AI-generated STL (e.g. from
+Meshy), inspect and repair it in Blender, then export a print-ready file for a
+slicer. It does not cover modeling from scratch, materials, rendering, or
+animation. For domain knowledge about mesh repair and FDM constraints the fork
+ships a second MCP server (`blender-kb`) backed by the `Bible/` knowledge base.
 
 **We have no official website. Any website you see online is unofficial and has no affiliation with this project. Use them at your own risk.**
-
-[Full tutorial](https://www.youtube.com/watch?v=lCyQ717DuzQ)
 
 ### Join the Community
 
@@ -20,35 +23,44 @@ Give feedback, get inspired, and build on top of the MCP: [Discord](https://disc
 
 [Support this project](https://github.com/sponsors/ahujasid)
 
-## Current version(1.5.5)
-- Added Hunyuan3D support
-- View screenshots for Blender viewport to better understand the scene
-- Search and download Sketchfab models
-- Support for Poly Haven assets through their API
-- Support to generate 3D models using Hyper3D Rodin
-- Run Blender MCP on a remote host
-- Telemetry for tools executed (completely anonymous)
+## Current version (1.6.0 — print-prep refocus)
 
-### Installating a new version (existing users)
-- For newcomers, you can go straight to Installation. For existing users, see the points below
-- Download the latest addon.py file and replace the older one, then add it to Blender
-- Delete the MCP server from Claude and add it back again, and you should be good to go!
+This fork removed the Polyhaven / Sketchfab / Hyper3D Rodin / Hunyuan3D
+asset-generation tools to focus on the STL cleanup workflow. The MCP server
+now exposes 7 tools and one prompt (`print_prep_strategy`).
 
+### Migrating from upstream
+- Reinstall the addon: download `addon.py` from this fork and replace your old
+  install in Blender. The sidebar no longer shows Polyhaven/Sketchfab/Hyper3D
+  checkboxes — only the port and the Connect/Disconnect buttons.
+- Re-add the MCP server in your client config (no change needed if you already
+  use `uvx blender-mcp`).
+- If you want the Bible knowledge base, also register the `blender-kb` server
+  (see `Bible/KB_SERVER.md`).
 
 ## Features
 
-- **Two-way communication**: Connect Claude AI to Blender through a socket-based server
-- **Object manipulation**: Create, modify, and delete 3D objects in Blender
-- **Material control**: Apply and modify materials and colors
-- **Scene inspection**: Get detailed information about the current Blender scene
-- **Code execution**: Run arbitrary Python code in Blender from Claude
+- **Two-way communication**: socket-based connection between Claude and Blender
+- **STL import / export**: `import_stl`, `export_stl` wrappers compatible with
+  Blender 3.x and 4.x operators
+- **Structured print-readiness check**: `analyze_mesh_for_print` returns JSON
+  (watertight, non-manifold edges, hole loops, shell count, inverted normals,
+  dimensions in mm, ready_to_slice flag) so the LLM doesn't have to parse
+  free-text
+- **Scene inspection**: `get_scene_info`, `get_object_info`, viewport screenshot
+- **Arbitrary Python**: `execute_blender_code` for anything the dedicated tools
+  don't cover (bmesh ops, modifiers, boolean cuts, supports)
+- **Print-prep prompt**: `print_prep_strategy` walks the assistant through
+  import → analyze → consult KB → cleanup → re-analyze → export
 
 ## Components
 
-The system consists of two main components:
-
-1. **Blender Addon (`addon.py`)**: A Blender addon that creates a socket server within Blender to receive and execute commands
-2. **MCP Server (`src/blender_mcp/server.py`)**: A Python server that implements the Model Context Protocol and connects to the Blender addon
+1. **Blender Addon (`addon.py`)**: socket server inside Blender that executes
+   the print-prep handlers on the main thread
+2. **MCP Server (`src/blender_mcp/server.py`)**: FastMCP server that exposes the
+   handlers as MCP tools
+3. **Knowledge Base MCP Server (`src/blender_kb/server.py`)**: optional second
+   MCP server that serves the `Bible/` docs on demand. See `Bible/KB_SERVER.md`.
 
 ## Installation
 
@@ -185,9 +197,8 @@ _Prerequisites_: Make sure you have [Visual Studio Code](https://code.visualstud
 
 1. In Blender, go to the 3D View sidebar (press N if not visible)
 2. Find the "BlenderMCP" tab
-3. Turn on the Poly Haven checkbox if you want assets from their API (optional)
-4. Click "Connect to Claude"
-5. Make sure the MCP server is running in your terminal
+3. Click "Connect to MCP server"
+4. Make sure the MCP server is running in your client (Claude Desktop / Cursor / VS Code)
 
 ### Using with Claude
 
@@ -197,38 +208,36 @@ Once the config file has been set on Claude, and the addon is running on Blender
 
 #### Capabilities
 
-- Get scene and object information 
-- Create, delete and modify shapes
-- Apply or create materials for objects
-- Execute any Python code in Blender
-- Download the right models, assets and HDRIs through [Poly Haven](https://polyhaven.com/)
-- AI generated 3D models through [Hyper3D Rodin](https://hyper3d.ai/)
+Tools exposed by `blender-mcp`:
 
+| Tool | What it does |
+| --- | --- |
+| `get_scene_info` | Scene name, object list (first 10), unit system, scale length |
+| `get_object_info` | Per-object data: type, transform, materials, mesh counts, world bounding box, dimensions in mm |
+| `get_viewport_screenshot` | PNG of the active 3D viewport (auto-resized to `max_size`) |
+| `execute_blender_code` | Run arbitrary Python inside Blender's main thread |
+| `import_stl` | Import an STL, report verts/edges/faces and dimensions in mm |
+| `export_stl` | Export a single mesh to STL (`apply_modifiers=True` by default) |
+| `analyze_mesh_for_print` | Structured JSON: watertight, non-manifold edges, boundary loops, shells, degenerate faces, normals consistency, signed volume, `ready_to_slice` |
 
-### Example Commands
+Prompt:
+- `print_prep_strategy` — guides the assistant through the full STL cleanup
+  pipeline and points it at `blender-kb` topics for recipes.
 
-Here are some examples of what you can ask Claude to do:
+### Example commands
 
-- "Create a low poly scene in a dungeon, with a dragon guarding a pot of gold" [Demo](https://www.youtube.com/watch?v=DqgKuLYUv00)
-- "Create a beach vibe using HDRIs, textures, and models like rocks and vegetation from Poly Haven" [Demo](https://www.youtube.com/watch?v=I29rn92gkC4)
-- Give a reference image, and create a Blender scene out of it [Demo](https://www.youtube.com/watch?v=FDRb03XPiRo)
-- "Generate a 3D model of a garden gnome through Hyper3D"
-- "Get information about the current scene, and make a threejs sketch from it" [Demo](https://www.youtube.com/watch?v=jxbNI5L7AH8)
-- "Make this car red and metallic" 
-- "Create a sphere and place it above the cube"
-- "Make the lighting like a studio"
-- "Point the camera at the scene, and make it isometric"
-
-## Hyper3D integration
-
-Hyper3D's free trial key allows you to generate a limited number of models per day. If the daily limit is reached, you can wait for the next day's reset or obtain your own key from hyper3d.ai and fal.ai.
+- "Import `~/meshy/dragon.stl`, analyze it, and tell me what's broken"
+- "The model has 17 non-manifold edges and 3 hole loops — fix them"
+- "Orient this part so the largest flat face is on the build plate"
+- "Decimate this mesh to ~50k triangles while keeping the silhouette"
+- "Run a final analyze_mesh_for_print and export to `out/dragon_clean.stl`"
 
 ## Troubleshooting
 
-- **Connection issues**: Make sure the Blender addon server is running, and the MCP server is configured on Claude, DO NOT run the uvx command in the terminal. Sometimes, the first command won't go through but after that it starts working.
-- **Timeout errors**: Try simplifying your requests or breaking them into smaller steps
-- **Poly Haven integration**: Claude is sometimes erratic with its behaviour
-- **Have you tried turning it off and on again?**: If you're still having connection errors, try restarting both Claude and the Blender server
+- **Connection issues**: Make sure the Blender addon server is running (you should see the green "Disconnect from MCP server" button in the BlenderMCP sidebar). Do NOT run `uvx blender-mcp` manually in a terminal — your MCP client launches it.
+- **Timeout errors**: Break the request into smaller `execute_blender_code` chunks. Long-running bmesh ops can exceed the 180s socket timeout.
+- **STL import operator missing**: Blender 4.x uses `bpy.ops.wm.stl_import`, 3.x uses `bpy.ops.import_mesh.stl`. The addon picks the right one automatically. If both are missing your Blender build is broken.
+- **Have you tried turning it off and on again?**: Restart both the MCP client and the Blender server on persistent issues.
 
 
 ## Technical Details
@@ -243,8 +252,8 @@ The system uses a simple JSON-based protocol over TCP sockets:
 ## Limitations & Security Considerations
 
 - The `execute_blender_code` tool allows running arbitrary Python code in Blender, which can be powerful but potentially dangerous. Use with caution in production environments. ALWAYS save your work before using it.
-- Poly Haven requires downloading models, textures, and HDRI images. If you do not want to use it, please turn it off in the checkbox in Blender. 
-- Complex operations might need to be broken down into smaller steps
+- `import_stl` and `export_stl` take absolute filesystem paths. They do not sandbox; treat the MCP server as having the same filesystem access as the user running Blender.
+- Complex operations might need to be broken down into smaller steps.
 
 
 #### Telemetry Control
