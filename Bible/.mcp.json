@@ -3,6 +3,18 @@
     "blender": {
       "command": "uvx",
       "args": ["--python", "3.12", "blender-mcp"]
+    },
+    "blender-kb": {
+      "command": "uv",
+      "args": [
+        "run",
+        "--python", "3.12",
+        "--directory", "<ABS_PATH_TO_FORK_ROOT>",
+        "blender-kb"
+      ],
+      "env": {
+        "BLENDER_KB_PATH": "<ABS_PATH_TO_BIBLE_FOLDER>"
+      }
     }
   }
 }

@@ -15,7 +15,9 @@ Questo file descrive **come è organizzato il repository** e **quali file legger
 ./
   CLAUDE.md
   SYSTEM_PROMPT.md
+  KB_SERVER.md          # come usare i tool MCP blender-kb (kb_search, kb_get_topic, ecc.)
   .claudeignore
+  .mcp.json             # registra blender (Blender control) + blender-kb (questa KB)
 
   Blender for 3d print documentation/
     INDEX.md
@@ -26,6 +28,19 @@ Questo file descrive **come è organizzato il repository** e **quali file legger
     INDEX.md
     docs/
 ```
+
+## Accesso alla KB via MCP (blender-kb)
+
+Oltre alla lettura via filesystem, esiste un secondo MCP server `blender-kb`
+(setup in `KB_SERVER.md`) che espone la KB come tool:
+
+- `kb_list_topics()` per scoprire i `[topic_id]` disponibili
+- `kb_get_topic(topic_id)` per caricare on-demand il doc associato
+- `kb_search(query)` per grep substring sui doc indicizzati
+- `kb_read(relative_path)` per file non indicizzati (FIELD_NOTES, SYSTEM_PROMPT, Printer Infos/*)
+- prompt `kb_bootstrap` che restituisce CLAUDE.md + SYSTEM_PROMPT.md + lista topic_id
+
+Preferisci questi tool quando il client MCP è configurato: caricano solo il doc rilevante invece dell'intero INDEX.
 
 ## Come orientarsi
 - `Blender for 3d print documentation/INDEX.md`

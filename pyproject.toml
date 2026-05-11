@@ -21,6 +21,7 @@ dependencies = [
 
 [project.scripts]
 blender-mcp = "blender_mcp.server:main"
+blender-kb = "blender_kb.server:main"
 
 [build-system]
 requires = ["setuptools>=61.0", "wheel"]
@@ -28,6 +29,9 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
 package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
 
 [project.urls]
 "Homepage" = "https://github.com/yourusername/blender-mcp"
