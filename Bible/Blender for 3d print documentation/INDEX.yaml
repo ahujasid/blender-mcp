@@ -82,7 +82,15 @@ topics:
 
   - id: mcp_blind_operating_protocol
     band: A
-    related: [analyze_to_action, camera_verification, blender_3d_print_toolbox, error_handling_mcp, mcp_tools, problem_to_tool_map]
+    related: [analyze_to_action, camera_verification, blender_3d_print_toolbox, error_handling_mcp, mcp_tools, problem_to_tool_map, session_kickoff_template, use_case_taxonomy]
+
+  - id: session_kickoff_template
+    band: A
+    related: [mcp_blind_operating_protocol, use_case_taxonomy, orientation_strategy, wall_thickness_actionable, bisect_splitting]
+
+  - id: use_case_taxonomy
+    band: A
+    related: [session_kickoff_template, orientation_strategy, support_strategy, slicing_profiles, tree_support_tuning, hidden_bambu_studio_settings, pla_post_processing_field_data]
 
   - id: analyze_to_action
     band: A

@@ -247,6 +247,102 @@ Combinando i tre sensi:
 
 I 6 punti sono il "happy path". Le deviazioni (failure mode di un playbook, ask_user, rule conflitto) sono codificate altrove.
 
+## Session kickoff protocol — T+0 first moves
+
+L'utente importa STL manualmente in Blender e poi apre il client MCP. Il primo messaggio della sessione è (idealmente) il **session kickoff template** compilato — vedi `Bible/templates/session_kickoff.{md,jsonc}` e [session_kickoff_template] per come parsarlo.
+
+**Sequenza T+0 obbligatoria** (PRIMA di qualsiasi op mutativa):
+
+### Step 1 — Parse del kickoff template
+
+Se il messaggio dell'utente contiene un blocco riconoscibile come kickoff (markdown con `## OGGETTO` etc, o JSONC), parsalo. Estrai:
+- 3 campi vitali (`object.name`, `target.use_case`, `target.dimension`)
+- Tutti gli altri campi (con default fallback se vuoti)
+
+Se NON c'è kickoff (utente ha scritto solo "pulisci questo modello"), non panicare: assumi tutti i default ma chiedi i 3 vitali al primo round.
+
+### Step 2 — Scene discovery (sempre, anche con kickoff completo)
+
+```python
+import bpy
+# Snapshot scene state — questo PRECEDE qualsiasi azione mutativa
+get_scene_info()
+# Output JSON: nomi tutti object, type, location.
+# Filtra MESH non default:
+mesh_objects = [o for o in bpy.context.scene.objects
+                if o.type == 'MESH' and o.name not in ('Cube',)]  # default cube
+```
+
+Se `object.name == "auto"`:
+- 1 solo MESH → usa quello.
+- 0 MESH → blocca con error "Scena vuota o solo non-mesh".
+- >1 MESH → ask user "Quale di: [name_1, name_2, name_3]?"
+
+### Step 3 — Sanity check `unit_settings.scale_length` (CRITICO)
+
+Tutta la pipeline cambia comportamento in base a questo. **Verifica esplicitamente prima di toccare la mesh**.
+
+```python
+sl = bpy.context.scene.unit_settings.scale_length
+print(f"scale_length={sl} (1 BU = {sl}m = {sl * 1000}mm)")
+# Default Blender = 1.0 (1 BU = 1m)
+# Profilo "Millimeters" preset = 0.001 (1 BU = 1mm)
+```
+
+Implicazioni:
+- `scale_length=1.0` (1 BU = 1m): un cubo Blender 1.0 = 1000mm. AI mesh importate sono ~1 BU = 1m. Devi rescale.
+- `scale_length=0.001` (1 BU = 1mm): un cubo Blender 1.0 = 1mm. AI mesh importate sono ~1 BU = 1mm. Diverso threshold per `remove_doubles`, `merge_distance`, eccc.
+
+Tutti i playbook esistenti gestiscono entrambi (vedono `unit_settings.scale_length` runtime). MA: **logga sempre** lo state al T+0 per future debug. Se l'utente lamenta "il modello è 1000× più piccolo del previsto", primo sospetto è scale_length mismatch.
+
+### Step 4 — Pre-flight check sull'object identificato
+
+Esegui il [Pre-flight checklist](#pre-flight-checklist-prima-di-qualsiasi-azione-mutativa) sopra.
+
+### Step 5 — Initial analysis + routing
+
+```python
+analysis = analyze_mesh_for_print(object_name)
+route = kb_route(analysis)
+```
+
+Confronta con il kickoff:
+- Se `target.use_case` impone vincoli (es. snap_fit → preserve poly count), aggiungi quei vincoli alla decision tree.
+- Se `target.dimension` richiede scaling pre-analysis (R009/R009b match), applica scaling PRIMA di rifare analyze.
+
+### Step 6 — Ask user round (solo se necessario)
+
+Se mancano campi vitali O routing rules hanno `needs_user_input=True`:
+- **Raggruppa tutte le domande in UN messaggio**. Se l'utente deve rispondere 3 volte, è un fail UX.
+- Format chiaro con numeri.
+
+### Step 7 — Begin pipeline esecuzione
+
+Vai al "workflow standard end-to-end" sopra.
+
+### Esempio sessione completa
+
+User: `[paste session_kickoff.md compilato per dragon, use_case display, height 80mm]`
+
+MCP T+0:
+1. Parse template → `object.name=dragon`, `use_case=display`, `dimension.axis=height, mm=80`.
+2. `get_scene_info()` → `dragon` MESH confermato.
+3. `scale_length=1.0` (default Blender). Log.
+4. Pre-flight su `dragon`: passes.
+5. `analyze_mesh_for_print("dragon")` → `dimensions_mm=[1003, 802, 1501]`, `non_manifold=234`, ecc.
+6. `kb_route(analysis)` → matched R009 (dim suspect), R001, R004, R003.
+7. R009 needs_user_input ma `dimension` è già nel kickoff → skip ask, applica rescale a height=80mm.
+8. Re-analyze: `dimensions_mm=[53, 43, 80]`. Run rest of route.
+9. Execute R001 → repair_basic playbook → verify delta.
+10. Execute R004 → repair_basic → verify delta.
+11. Execute R003 → "3 shells, max=99% of total volume → auto remove_small_objects" (no ask perché kickoff non specifica `policies.disconnected_shells`, default = ratio rule).
+12. Continue fino a `ready_to_slice=true`.
+13. Pre-export R5 screenshot (`pre_export_qa: si` dal kickoff).
+14. `export_stl("~/print_ready/dragon.stl")`.
+15. Output summary report (vedi [session_kickoff_template] §Output).
+
+**0 ask_user round** se il kickoff è compilato bene. Tipicamente 1 round se l'utente lascia un campo vitale vuoto o se le shells multiple richiedono input.
+
 ## Cross-reference
 
 - [analyze_to_action] — decision tree completo da analysis output

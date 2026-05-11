@@ -96,6 +96,20 @@ File: `docs/blender_addons_recommended.md`
 
 Contenuto: 7 addon Tier 1 con MCP API completi e workflow value (3MF I/O bambu, Booltron con solver MANIFOLD 4.5+, Bool Tool interactive, LoopTools bridge_edge_loops per buchi grandi post-decimate, F2 quad fill 3-5 vertex gap, Mesh Repair Tools fill_holes più robusto, Extra Mesh Objects round_cube per cutter); Tier 2 Extra Mesh Objects; NON raccomandati con motivo (MeasureIt pure UI, Quad Remesher ridondante con QuadriFlow built-in, MeshLint abbandonato, Tweaker-3 GPL virale); builtin sottoutilizzati (wm.stl_import/export moderni, voxel_remesh/quadriflow_remesh callable, solver MANIFOLD); decisione 3MF fork (threemf-io primary, LeeGillie per Blender 5.x, evita Korchy/shusain); install order one-shot via Extensions Platform; verifica caricamento programmatica; conflitti & coesistenza (Bool Tool + Booltron complementari); MCP wrapper consigliato (export_3mf_bambu, bridge_open_loops, safe_boolean_difference).
 
+## [session_kickoff_template]
+**Come l'MCP interpreta il session kickoff template (markdown + JSONC): campi vitali, default fallback, missing-field policy, output summary report**
+Quando usarlo: ogni sessione print-prep inizia con un kickoff template compilato dall'utente. Questo doc spiega come l'MCP lo parsa, quali campi sono vitali (chiede se mancano), quali hanno default, e cosa risponde a fine workflow
+File: `docs/session_kickoff_template.md`
+
+Contenuto: 3 campi vitali bloccanti (object.name, target.use_case, target.dimension), parser permissivo per markdown (commenti # ignored, placeholder <...> = empty) e JSONC (strip // comments before json.loads, pattern <...> riconosciuto come not-compiled), tabella semantica per ogni campo delle 5 sezioni (object/target/printer/policies/output), default layer_height: auto derivato da use_case + time_budget matrix, summary report YAML a fine sessione (status, duration, initial_analysis, pipeline_executed con rule_id, user_interventions, final_analysis, output_files, estimates pla_mass+print_time, slicer_profile_reco, warnings, fields_used explicit vs defaulted), missing-field policy con 3 esempi rounds (kickoff vitale completo = 0 stop, use_case mancante = 1 stop, kickoff vuoto = 1 round con 3 domande).
+
+## [use_case_taxonomy]
+**Mapping use_case → tutti i defaults: display, mech, snap_fit, container, test, tool_print con override precedence**
+Quando usarlo: hai use_case dal kickoff, l'MCP deve derivare layer_height/walls/infill/support/seam/decimate target/thin walls policy/oversize policy. Vuoi sapere quale playbook attivare per use_case
+File: `docs/use_case_taxonomy.md`
+
+Contenuto: tabella sinottica completa 6 use_case × 14 aspect (priority/layer/walls/infill/support/seam/wall_order/poly/brim/pre_export_qa/thin_walls/oversize/time_bias), sezioni dettaglio per ogni use_case con priority + decisioni derivate + pitfalls (display: silhouette pulita Outer/Inner walls Gyroid 15% tree_organic scarf; mech: load XY anisotropia 4 walls Cubic 25-40%; snap_fit: preserve poly NO support tolerance critical 100% infill in load zone; container: bottom-flat Spiral Vase option brim; test: 0.28mm draft no QA; tool_print: 4-5 walls Cubic 30-50% annealing post), order of precedence (utente explicit > use_case derived > MCP fallback), custom use_case fallback (lessical match + warn), tabella playbook attivati tipicamente per use_case.
+
 ## [mcp_blind_operating_protocol]
 **Master protocol per MCP cieco: 3 sensi (analyze JSON / report._data / viewport screenshot), pre-flight, post-flight, decision matrix, anti-patterns**
 Quando usarlo: PRIMO doc da leggere quando inizi a lavorare. Spiega come ragionare senza vedere la viewport, quando usare quale sense, come compensare l'assenza di vista visiva con metriche numeriche

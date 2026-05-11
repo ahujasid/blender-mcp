@@ -1,0 +1,145 @@
+// Session Kickoff — JSONC Template (JSON con // commenti)
+//
+// COPIA QUESTO FILE per ogni nuovo progetto e compila i placeholder "<...>".
+// Salva come .jsonc o copia il contenuto come messaggio MCP.
+//
+// Convenzione:
+//   "<campo>"          = placeholder DA RIEMPIRE (sostituisci tutto incluso <>)
+//   ""                 = stringa vuota = MCP usa default sensato
+//   null               = lascia decidere all'MCP
+//
+// I commenti // sopra ogni campo elencano valori riconosciuti + esempi.
+// I campi [VITAL] vanno riempiti — se vuoti l'MCP chiederà all'inizio.
+//
+// Sintassi JSONC: stesso JSON ma supporta // line comments e /* block */
+// Lo capiscono VSCode, Cursor, Claude Code via lettura testo. Per uso pure
+// JSON, rimuovi i commenti // manualmente o usa session_kickoff.md.
+
+{
+  "object": {
+
+    // Nome dell'object in scena Blender. "auto" = MCP cerca l'unico MESH
+    // non default (esclude Camera, Light, Empty).
+    // Esempi: "dragon" | "mesh_001" | "auto"
+    "name": "<auto>",
+
+    // Generator AI di provenienza (utile per pre-flight ai_generators_field_kit).
+    // Valori: "meshy" | "triposr" | "triposg" | "hunyuan3d" | "rodin" |
+    //         "trellis" | "zero123" | "step1x_3d" | "ultrashape" |
+    //         "photogrammetry" | "cad" | "unknown"
+    "source_generator": "<unknown>",
+
+    // Percorso file originale (logging only).
+    // Esempi: "~/meshy/dragon_v3.stl" | "C:/3d/figurina.glb" | ""
+    "source_file": ""
+  },
+
+  "target": {
+
+    // [VITAL] Use case. Determina decision tree default.
+    // Valori: "display" (figurina/decor) | "mech" (load-bearing) |
+    //         "snap_fit" (tolerance critica) | "container" (vasi/scatole) |
+    //         "test" (calibrazione, no QA gate) | "tool_print" (utensile/jig)
+    "use_case": "<display>",
+
+    // [VITAL] Dimensione target. Specifica UN asse — MCP scala uniforme.
+    // Esempi:
+    //   {"axis": "height",   "mm": 80}    // Z = 80mm
+    //   {"axis": "width",    "mm": 50}    // max XY = 50mm
+    //   {"axis": "diagonal", "mm": 100}   // bbox diagonal = 100mm
+    //   {"axis": "longest",  "mm": 120}   // max dimension qualsiasi asse
+    //   {"axis": "preserve", "mm": null}  // NON scalare
+    "dimension": {
+      "axis": "<height>",
+      "mm": "<80>"
+    },
+
+    // Orientation policy (vedi orientation_strategy.md).
+    // Valori: "auto" | "flat-bottom" | "upright" | "preserve-current" |
+    //         "custom" (in tal caso specifica custom_axis/custom_deg)
+    "orientation": "<auto>",
+    "custom_axis": "",   // es. "X" | "Y" | "Z" se orientation="custom"
+    "custom_deg": null,  // es. 15 = +15° su asse sopra
+
+    // Show side / load axis (opzionale, migliora orient + support).
+    // Esempi:
+    //   "front + 3/4"      // display, ¾ view visibile
+    //   "top only"
+    //   "all-around"       // statua centerpiece
+    //   "load: Y"          // carico mech lungo Y (orient per anisotropia)
+    //   "load: Z"          // carico Z (52% PLA strength, sconsigliato)
+    "show_side_or_load": ""
+  },
+
+  "printer": {
+
+    // Profilo printer + filament. Default A1 + PLA Basic Bambu.
+    // Vedi Bambu Wiki/mvs_filament_table.md per altri brand.
+    "model": "<bambu_a1>",
+    "filament": "<pla_basic>",  // pla_basic | pla_matte | pla_silk |
+                                // pla_meta_sunlu | polyterra | pla_generic
+
+    // Nozzle. Default A1 = 0.4. Cambia solo se hardware modificato.
+    // Valori: "0.2mm" | "0.4mm" | "0.6mm" | "0.8mm"
+    "nozzle": "<0.4mm>",
+
+    // Layer height. "auto" = MCP picks da use_case + detail.
+    // Valori: "auto" | "0.08mm" | "0.12mm" | "0.16mm" | "0.20mm" | "0.28mm"
+    "layer_height": "<auto>",
+
+    // Build plate. Valori: "textured_pei" | "cool_plate" | "smooth_pei"
+    "build_plate": "<textured_pei>",
+
+    // Time budget — bias velocità vs qualità.
+    // Valori: "rapido" | "medio" | "qualita"
+    "time_budget": "<medio>"
+  },
+
+  "policies": {
+
+    // Sculpt Mode manuale permesso (non scriptabile via MCP).
+    // Valori: "si" (MCP ti chiama quando serve) |
+    //         "no" (MCP usa fallback auto, accetta feature loss) |
+    //         "ask" (MCP chiede caso per caso)
+    "sculpt_manual_allowed": "<no>",
+
+    // Target poly count post-decimate.
+    // Valori: "auto" | "<int>" (es. "100000") | "preserve"
+    "poly_count_target": "<auto>",
+
+    // Wall thickness sotto 0.8mm: cosa fare?
+    // Valori: "auto_fix" (Solidify +0.3mm) | "accept_warn" (flag slicer) |
+    //         "ask" | "reject" (blocca pipeline)
+    "thin_walls_policy": "<ask>",
+
+    // Modello > 256mm (oltre Bambu A1 build volume).
+    // Valori: "bisect_auto" | "ask" | "reject" | "scale_down"
+    "oversize_policy": "<ask>",
+
+    // Ops distruttive (Boolean su originale, delete, apply modifier).
+    // Valori: "ask" (default raccomandato) | "auto"
+    "destructive_ops_policy": "<ask>"
+  },
+
+  "output": {
+
+    // Path output. Estensione decide formato. <object_name> è sostituito.
+    // Esempi: "~/print_ready/dragon.stl" | "./output/<object_name>.3mf"
+    "path": "<~/print_ready/<object_name>.stl>",
+
+    // Formato export.
+    // Valori: "stl" | "3mf" | "both"
+    "format": "<stl>",
+
+    // Pre-export QA gate (analyze finale + iso screenshot).
+    // Valori: "si" (raccomandato) | "no"
+    "pre_export_qa": "<si>"
+  },
+
+  // Free text — qualsiasi info specifica al modello.
+  // Esempi:
+  //   "Il naso e gli artigli sono dettagli critici, no Voxel sotto 0.4mm"
+  //   "Cliente vuole base flat per montaggio magnetico — Z=0 esatto"
+  //   "Stampa #3 dello stesso modello — applicare lessons learned da #2"
+  "notes": "<>"
+}
