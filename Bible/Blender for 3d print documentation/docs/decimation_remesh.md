@@ -88,6 +88,78 @@ mod.octree_depth = 6  # 6–9; più alto = più dettaglio, più lento
 
 ---
 
+## QuadriFlow — remesh quad-dominant feature-preserving (built-in Blender)
+
+**Importante**: QuadriFlow è già incluso in Blender (`bpy.ops.object.quadriflow_remesh`, dal 2.81). Zero install. È spesso la scelta migliore tra Decimate e Voxel quando la mesh ha **spigoli netti da preservare** (mech parts, key-cap, snap-fit, contenitori) che Voxel Remesh ammorbidisce. Costo: 10–60s su 200k tri (più lento di Decimate, comparabile/più veloce di Voxel su feature complesse).
+
+```python
+import bpy
+obj = bpy.data.objects['<name>']
+bpy.context.view_layer.objects.active = obj
+
+bpy.ops.object.quadriflow_remesh(
+    mode='FACES',                  # 'FACES' (target_faces) | 'EDGE' (target_edge_length) | 'RATIO'
+    target_faces=80_000,
+    use_preserve_sharp=True,       # critical for mech parts — preserves edges with dihedral > 30°
+    use_preserve_boundary=True,    # critical if mesh has boundaries (open mesh)
+    smooth_normals=False,
+    seed=0,                        # deterministic
+)
+
+# QuadriFlow produces quad-dominant output. For STL export → triangulate:
+bpy.ops.object.mode_set(mode='EDIT')
+bpy.ops.mesh.select_all(action='SELECT')
+bpy.ops.mesh.quads_convert_to_tris(quad_method='BEAUTY', ngon_method='BEAUTY')
+bpy.ops.object.mode_set(mode='OBJECT')
+```
+
+**Quando usarlo vs Voxel Remesh:**
+
+| Caso | Tool consigliato |
+|---|---|
+| Mesh AI organica (busto, figurina) | Voxel Remesh (`voxel_size=0.4mm`) |
+| Mesh AI / CAD con spigoli funzionali (chiavi, ingranaggi, scatole) | **QuadriFlow** con `use_preserve_sharp=True` |
+| Mesh con `min_feature_mm < voxel_size_mm × 1.5` (Voxel cancellerebbe feature) | **QuadriFlow** o decimate + repair |
+| Mesh non-manifold da AI ma con topologia hard-surface | **QuadriFlow** + recalc post |
+
+**Algoritmo**: Mixed-Integer Quadrangulation con cross-field di curvatura (Bommes/Zimmer/Kobbelt 2009 + Huang 2018). Produce quad mesh feature-aligned, manifold per costruzione su input chiuso.
+
+**Caveat**: su mesh non-watertight l'output può avere boundary loops. `use_preserve_boundary=True` minimizza ma non risolve. Per mesh AI con buchi pesanti, repair prima (R004/R005) o ricorri a Voxel Remesh.
+
+## Fallback esterni (sidecar venv MCP, non Blender Python)
+
+Quando i tool built-in non bastano — Voxel OOM su mesh grandi, output blob su feature sub-mm, o serve metrica obiettiva per A/B test tra remesh alternativi — esistono due pacchetti pip leggeri da installare nel venv dell'host MCP (NON in Blender, che ha il suo Python bundled):
+
+**`pip install point-cloud-utils`** (BSD/MIT, ~30MB):
+- `pcu.make_mesh_watertight(v, f, resolution=20_000)` — wrapper Manifold (Huang 2020). Octree TSDF + dual contour, più memory-efficient di OpenVDB su feature thin.
+- `pcu.chamfer_distance(samples_A, samples_B)` — distanza Chamfer pre/post remesh per misurare distorsione.
+- `pcu.hausdorff_distance(samples_A, samples_B)` — worst-case feature loss.
+
+Workflow: il server MCP `blender-mcp` esporta STL → script Python esterno chiama `pcu.make_mesh_watertight` → re-import dell'STL ripulito. Trasparente all'utente.
+
+```python
+# Sidecar script — esegue su filesystem, non in Blender
+import numpy as np, point_cloud_utils as pcu
+
+v, f = pcu.load_mesh_vf("/tmp/input.stl")
+v_wt, f_wt = pcu.make_mesh_watertight(v, f, resolution=50_000)
+pcu.save_mesh_vf("/tmp/output.stl", v_wt, f_wt)
+
+# Quality metric: Chamfer distance to original
+sa = pcu.sample_mesh_random(v, f, 50_000)
+sb = pcu.sample_mesh_random(v_wt, f_wt, 50_000)
+cd = pcu.chamfer_distance(sa, sb)
+print(f"Chamfer (mm-scale): {cd:.4f}")
+```
+
+**`pip install pymeshlab`** (GPL, ~150MB) — bundle di MeshLab. Utile per `meshing_isotropic_explicit_remeshing` (Botsch-Kobbelt, mantiene manifoldness e preserva spigoli con `featuredeg=30`) quando serve mesh isotropa post-Voxel. Più pesante di pcu — installa solo se serve davvero.
+
+**Skip**: Instant Meshes (no Python wrapper maintained), Open3D `simplify_quadric_decimation` (issue #6673 regression in 0.18, lascia buchi), trimesh.repair (subset di pcu).
+
+**Riferimenti**: [QuadriFlow GitHub](https://github.com/hjwdzh/QuadriFlow) · [Manifold paper arXiv 2005.11621](https://arxiv.org/abs/2005.11621) · [point-cloud-utils](https://pypi.org/project/point-cloud-utils/)
+
+---
+
 ## Tabella di Calibrazione Pratica — Voxel Size per Stampa FDM
 
 Valori empirici per workflow scale_length=0.001 (1 BU = 1mm).

@@ -196,6 +196,31 @@ rules:
   # Same playbook target (mesh_repair) but a specialised playbook
   # (post_decimate_cleanup) that also triangulates n-gons and merges with a
   # higher threshold.
+  # R012 doesn't compete with R001/R011 — it's an optional alternative path that
+  # only the assistant chooses when it detects "hard-surface" features that
+  # Voxel Remesh would destroy. The routing engine evaluates all matches; the
+  # priority just orders them. R012 stays below R001/R011 because degenerate
+  # cleanup must happen first.
+  - id: R012
+    priority: 75
+    when:
+      non_manifold_edges: "> 0"
+      face_count: "> 5000"
+      watertight: false
+    then:
+      topic_id: decimation_remesh
+      section: quadriflow
+      playbook: quadriflow_preserve_edges
+      expected_after:
+        watertight: true
+        non_manifold_edges: 0
+    rationale: >
+      Fallback per mesh non-watertight con feature da preservare (hard-surface
+      AI, mech parts). QuadriFlow built-in produce mesh quad-dominant
+      feature-aligned, manifold per costruzione. Alternativa a Voxel Remesh
+      (R007) quando voxel_size dovrebbe essere troppo piccolo per preservare
+      spigoli e ti aspetti RAM blow-up.
+
   - id: R011
     priority: 112
     when:

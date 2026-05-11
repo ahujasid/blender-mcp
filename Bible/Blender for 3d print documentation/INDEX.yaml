@@ -32,6 +32,21 @@ topics:
        degenerate_faces, dimensions_wrong, thin_walls, polycount_high]
     related: [problem_to_tool_map, preprint_validation, mesh_repair]
 
+  - id: ai_generators_field_kit
+    band: A
+    solves_symptoms: [dimensions_wrong, polycount_high, non_manifold_edges, normals_inverted]
+    related: [source_mesh_characteristics, ai_mesh_recipe, scale_detection, import_export]
+
+  - id: blender_3d_print_toolbox
+    band: A
+    solves_symptoms:
+      [non_manifold_edges, degenerate_faces, thin_walls, overhangs, self_intersection]
+    related: [mesh_repair, mesh_quality_assessment, orientation_strategy, support_strategy]
+
+  - id: blender_addons_recommended
+    band: A
+    related: [blender_3d_print_toolbox, import_export, boolean_troubleshooting, decimation_remesh]
+
   - id: analyze_to_action
     band: A
     solves_symptoms:

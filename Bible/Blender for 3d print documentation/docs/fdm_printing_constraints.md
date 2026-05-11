@@ -242,3 +242,138 @@ For the slicer to produce a valid toolpath, a mesh must satisfy a set of geometr
 | Within build volume | 256 × 256 × 256 mm hard limit |
 
 A mesh that fails any of these conditions may still be sliced — most modern slicers attempt repairs — but the result is unpredictable. Slicer auto-repair is non-deterministic and may close holes in geometrically incorrect ways. Repair should happen at the mesh level before importing into the slicer.
+
+---
+
+## Why these numbers — physical basis
+
+Le regole sopra (0.8mm wall, 45° overhang, 30mm bridge, +0.10mm hole comp, anisotropia XY/Z) non sono arbitrarie. Capirne il meccanismo permette di estrapolare a casi nuovi (es. "fin 0.6mm × 2mm regge?") invece di dipendere da tabelle.
+
+### P1 — Z-strength via reptation polimero
+
+Quando un nuovo layer si deposita sul precedente, le catene polimeriche diffondono attraverso l'interfaccia se la temperatura locale è sopra Tg (≈60°C per PLA). Il tempo di reptation `t_rep` è di Arrhenius: raddoppia per ogni ~10°C di calo. La forza del bond inter-layer scala come `(t_contact / t_rep)^(1/4)` (Perez 2021).
+
+- PLA Z tensile: 22.8 MPa vs filament bulk 43.6 MPa → **52% di bulk**. L'interfaccia da sola è ~77% bulk; il resto si perde in concentrazione di stress nei V-groove tra le linee adiacenti.
+- **Implicazione**: load tensile lungo Z dà strength ~50% rispetto allo stesso oggetto in XY. Quando orienti (vedi [orientation_strategy]), metti l'asse di stress in XY.
+- **Implicazione meno ovvia**: layer time corto (≤4s) → strato precedente ancora caldo → bond forte. Oggetti tall+thin hanno Z bond più forte di oggetti wide+short stampati con stesso volume.
+
+### P2 — 45° overhang è geometrico, 60° è termico
+
+Offset orizzontale per layer: `Δ = layer_height × tan(θ)`. Con `θ=45°` l'offset uguaglia il layer height; ogni nuovo bead si appoggia per ~50% sulla linea sottostante.
+
+```
+overlap_pct = 1 − (layer_height × tan(θ)) / line_width
+```
+
+- 45° con layer 0.20mm, line_width 0.42mm: overlap = 52% → safe.
+- 60° con layer 0.20mm: overlap = 18% → marginale, serve fan 100%.
+- 60° con layer 0.12mm: overlap = 50% → sicuro come 45° a layer 0.20mm.
+
+**Implicazione**: la regola "45°" implica `layer 0.20mm`. A layer 0.12mm puoi spingere overhang a 55–60° senza supporti.
+
+### P3 — Bridge sag scala con L⁴
+
+Il bead estruso è una trave viscoelastica con modulo `E(t)` che cresce mentre si raffredda. Sag per gravità: `δ ≈ (5·w·L⁴) / (384·E(t)·I)`. **Quadrupla la lunghezza = sag 16×**.
+
+- PLA con fan 100%, layer 0.20mm: bridge ≤30mm → sag ≈0.1mm (invisibile).
+- Bridge 60mm: sag ≈1.6mm — visibile.
+- Bridge 90mm: sag ≈8mm — fallisce strutturalmente.
+
+La soglia 30mm coincide con sag = line_width.
+
+### P4 — Wall thickness deve essere multiplo intero di line_width
+
+Lo slicer estrude beads a line_width fisso (default 0.42mm). Wall = N × 0.42 → riempita da N beads. Wall intermedia (0.6mm = 1.43×) → gap fill: estrusioni sottili che si frammentano.
+
+| Wall | Effetto |
+|---|---|
+| `0.42mm` (1 perimetro) | Solo squish-bond, no lateral bond → peel-mode failure |
+| `0.84mm` (2 perimetri) | Lateral bond + redundant load path → **non-lineare** vs 1 perimetro |
+| `1.26mm`, `1.68mm` | Incrementi lineari da qui |
+| Intermedio (`0.5–0.8mm`) | Gap-fill instabile, **evita** |
+
+### P5 — Shrinkage dei fori scala come 1/r
+
+PLA si contrae 0.2–0.3% raffreddando da 200°C. La contrazione tira il materiale **verso il centro** del foro (massa concentrata sul lato concavo dell'arco). Errore di diametro ∝ 1/r:
+
+| Diametro | Errore tipico |
+|---|---|
+| Ø2mm | ~0.35mm |
+| Ø5mm | ~0.20mm |
+| Ø10mm | ~0.10mm |
+| Ø30mm | ~0.03mm |
+
+La regola Bambu "+0.10mm hole comp" è una media buona per fori 5–10mm. Per fori più piccoli aggiungi di più al CAD.
+
+### P6 — Bedslinger anisotropy: I_eff(Z) = I_bed + m·Z²
+
+A1 è bedslinger (asse Y = piatto). Inerzia effettiva dell'asse Y dipende dall'altezza dell'oggetto (parallel-axis theorem):
+```
+I_eff(Z) = I_bed + m_part × Z²
+```
+Frequenza di risonanza `f_res = √(k/I_eff)` cala con Z. Input shaping è calibrato a Z=0; a Z=150mm con oggetto 200g, `f_res` può scendere da 50Hz a 25Hz (fuori banda dello shaper) → invece di cancellare vibrazioni le **inietta**.
+
+La tabella accel vs Z (10000 → 6000 → 4000 → 2000 mm/s² a 0/50/100/150mm) segue `√(1/I_eff)`. Su moves diagonali: accel = min(accel_X, accel_Y).
+
+### P7 — PLA brittle: fin failure quadratico in t
+
+PLA Tg ≈ 60°C → glassy a temperatura ambiente. `K_IC ≈ 3-5 MPa√m`. Notch superficiale (layer line al base di un fin) crea concentrazione di stress `σ = K_IC / √(π·a)`. Per fin altezza `h`, spessore `t`, base `b` sotto carico laterale `F`:
+```
+σ_root = 6·F·h / (b·t²)
+```
+**Quadratico in t, lineare in h**. Rompe alla base, non al centro.
+
+| Geometria | Verdetto |
+|---|---|
+| 0.6mm wall in piano | OK |
+| 0.6mm × 2mm fin (h/t=3.3) | OK |
+| 0.6mm × 5mm fin (h/t=8.3) | Marginale |
+| 0.6mm × 8mm fin (h/t=13) | Rompe al primo uso |
+
+---
+
+## Decision tree: predizione failure da metriche CAD
+
+Usa l'output di `analyze_mesh_for_print` + `measurement_toolkit` per anticipare failure mode:
+
+```
+metrica → failure prevista → mitigazione
+─────────────────────────────────────────────────────────
+aspect_ratio (max/min) > 8 AND z_height > 100mm
+    → ringing/risonanza Y (P6) → cap accel ≤4000 o ri-orienta XY
+
+cantilever h/t > 5 AND t < 1.0mm (PLA)
+    → frattura al root al primo handling (P7) → ingrossa t o aggiungi gusset
+
+wall_thickness w
+    w < 0.40 → silently dropped slicer
+    0.40 ≤ w < 0.84 → 1 perimetro fragile (P4)
+    w fuori da {0.42, 0.84, 1.26, ...} ±0.05 → gap-fill instabile
+
+overhang θ
+    ≤ 45° → safe a layer ≤0.20mm
+    45-60° → safe se fan=100% AND layer ≤0.16mm (P2)
+    > 60° → supports
+
+bridge L
+    ≤ 30mm → sag <0.1mm (P3)
+    30-60mm → riduci flow 95%, fan 100%, speed ≤30mm/s
+    > 60mm → supports
+
+hole d
+    < 5mm → +0.15-0.30mm CAD comp (P5)
+    < 2mm → stampa solido + foratura post
+
+z_load axis presente
+    → ri-orienta XY (P1: 52% strength penalty)
+
+z_height > 150mm AND aspect_ratio > 4
+    → schedule accel ramp 10k/6k/4k/2k (P6)
+```
+
+## Riferimenti
+
+- Perez, Celik & Karkkainen (2021). *Interlayer Interface Strength FDM PLA*. PMC9828590.
+- Spoerk et al. (2021). *FDM PLA Interlayer Adhesion*. Polymers 13(3) 399.
+- Verma et al. (2024). *Interlayer Time Effects on Tensile Properties*. Int. J. Adv. Manuf. Tech.
+- Klipper docs — *Resonance Compensation*.

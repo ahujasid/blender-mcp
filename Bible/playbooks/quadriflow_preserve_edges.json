@@ -1,0 +1,44 @@
+{
+  "id": "quadriflow_preserve_edges",
+  "title": "QuadriFlow remesh feature-preserving (mech parts, hard-surface AI)",
+  "when_to_use": "Mesh con spigoli netti da preservare (mech parts, scatole, chiavi, snap-fit) dove Voxel Remesh ammorbidisce troppo e Decimate non risolve i non-manifold. QuadriFlow è built-in Blender (bpy.ops.object.quadriflow_remesh) quindi zero install. Triggered da R012.",
+  "preconditions": [
+    "object_name esiste in bpy.data.objects",
+    "obj.type == 'MESH'",
+    "preferibilmente watertight (su mesh aperta usa use_preserve_boundary)"
+  ],
+  "params": {
+    "object_name": {"type": "string", "required": true},
+    "target_faces": {"type": "integer", "default": 80000, "description": "Numero target di facce post-remesh. QuadriFlow produce quad-dominant, quindi triangoli finali ~1.2-2x questo valore."},
+    "preserve_sharp": {"type": "boolean", "default": true, "description": "Preserva edge con dihedral > 30 gradi. true per mech parts, false per mesh organiche."},
+    "preserve_boundary": {"type": "boolean", "default": true, "description": "Preserva i bordi su mesh aperta. true se non sicuro."}
+  },
+  "steps": [
+    {
+      "label": "Make target active and deselect others",
+      "tool": "execute_blender_code",
+      "code": "import bpy\nfor o in bpy.context.selected_objects:\n    o.select_set(False)\nobj = bpy.data.objects['{object_name}']\nobj.select_set(True)\nbpy.context.view_layer.objects.active = obj\nprint(f'QuadriFlow target: {{obj.name}} ({{len(obj.data.polygons)}} faces)')"
+    },
+    {
+      "label": "Run QuadriFlow",
+      "tool": "execute_blender_code",
+      "code": "import bpy\nbpy.ops.object.quadriflow_remesh(\n    mode='FACES',\n    target_faces={target_faces},\n    use_preserve_sharp={preserve_sharp},\n    use_preserve_boundary={preserve_boundary},\n    smooth_normals=False,\n    seed=0,\n)\nobj = bpy.context.view_layer.objects.active\nprint(f'QuadriFlow done. Now {{len(obj.data.polygons)}} faces (quad-dominant).')"
+    },
+    {
+      "label": "Triangulate for STL export",
+      "tool": "execute_blender_code",
+      "code": "import bpy\nbpy.ops.object.mode_set(mode='EDIT')\nbpy.ops.mesh.select_all(action='SELECT')\nbpy.ops.mesh.quads_convert_to_tris(quad_method='BEAUTY', ngon_method='BEAUTY')\nbpy.ops.mesh.normals_make_consistent(inside=False)\nbpy.ops.object.mode_set(mode='OBJECT')\nobj = bpy.context.view_layer.objects.active\nprint(f'Triangulated. Now {{len(obj.data.polygons)}} tri faces.')"
+    }
+  ],
+  "verification": {
+    "tool": "analyze_mesh_for_print",
+    "args": {"object_name": "{object_name}"},
+    "expect": {
+      "watertight": true,
+      "non_manifold_edges": 0,
+      "face_count": "<= target_faces * 2.5"
+    },
+    "notes": "QuadriFlow on a watertight input produces a watertight quad-dominant mesh. After triangulation the face count is roughly 1.5-2.5x target_faces. If watertight regressed, the source had boundary loops that QuadriFlow couldn't close — chain repair_basic after this playbook."
+  },
+  "topic_refs": ["decimation_remesh", "mesh_repair"]
+}

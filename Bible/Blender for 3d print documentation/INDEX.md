@@ -26,6 +26,27 @@ File: `docs/mesh_quality_assessment.md`
 
 Contenuto: 3D Print Toolbox operators (print3d_check_solid/intersect/thick/sharp/overhang/all, print3d_clean_non_manifold/distorted, print3d_info_volume/area, print3d_scale_to_bounds), scene.print_3d properties (thickness_min, overhang_angle), bmesh inspection (non-manifold edges, boundary edges, find_doubles, zero-area faces, dimensions), tabella metriche (come estrarle, soglia, significato), verifica scale (scale_length, length_unit), ordine di priorità assessment (1.scale → 2.non-manifold → 3.dimensions → 4.wall thickness → 5.poly count → 6.overhangs → 7.surface noise).
 
+## [ai_generators_field_kit]
+**Field kit per generatori AI 2024-2026: Meshy, TripoSG, Hunyuan3D, Rodin, TRELLIS, Zero123 — output, axis, scale, artifact, playbook iniziale**
+Quando usarlo: hai ricevuto un file da un generator AI specifico (o non sai quale), devi sapere artefatti tipici, axis convention (Y-up), scale (~1.0 BU unit-cube), playbook iniziale di repair
+File: `docs/ai_generators_field_kit.md`
+
+Contenuto: pattern universali AI mesh (GLB Y-up, unit-cube normalized, MC seam artifacts, no print-aware preprocessing, texture-as-geometry), tabella per-generator (Meshy v4-v6, TripoSR/SG, Hunyuan3D 2.0/2.1, Rodin Gen-1/2 con Quad mode virtuoso, TRELLIS v1/v2 con script hole-fill, Zero123/Zero123++, Step1X-3D, UltraShape 1.0), heuristica detect-and-route (estensione + bbox + face_count + materials + topology hint), workflow consigliato per generator, ranking 2026 per print-readiness (Step1X-3D/UltraShape > Rodin Quad > Hunyuan3D 2.1 > Meshy > TripoSG > TRELLIS > TripoSR > Zero123).
+
+## [blender_3d_print_toolbox]
+**Reference completa operator object_print3d_utils: 7 check, 2 clean, transform, hollow VDB, scene properties, report._data, pattern idiomatici, quirks**
+Quando usarlo: hai 3D Print Toolbox installato e devi conoscere bl_idname esatto di ogni operator, parametri, side effects, failure modes; come leggere risultati programmatically via report._data
+File: `docs/blender_3d_print_toolbox.md`
+
+Contenuto: enable programmatico via addon_utils, lettura risultati via `from object_print3d_utils import report; report.info()`, scene.print_3d properties (thickness_min/threshold_zero/angle_distort/angle_sharp/angle_overhang/export_*), info ops (volume/area), check ops (solid/intersect/degenerate/distort/thick/sharp/overhang/all) - tutti i check NON modificano selezione, salvano in report._data globale, recuperabile via `select_report(index)`, clean_non_manifold pipeline interna (delete_loose → remove_doubles → dissolve_degenerate → fill_holes → make_normals_consistent) con bug noto T48565, clean_distorted, clean_thin STUB vuoto, transform (scale_to_volume/scale_to_bounds/align_to_xy + use_alignxy_face_area), hollow VDB pyopenvdb-based, 7 pattern idiomatici (set threshold prima di check_thick, check+select_report+edit, check_all triage, repair iterativo R005, scale to A1 bounds 256mm, auto-orient face piatta, overhang assessment per orientation), confronto con analyze_mesh_for_print (complementarità routing vs investigation), 10 quirks (check_thick undercount su mesh aperta, check_overhang object-local space, clean_non_manifold introduce nuovi non-manifold, clean_thin stub, Bad Contiguous Edges = flipped normals).
+
+## [blender_addons_recommended]
+**Addon raccomandati per print-prep workflow: 3D Print Toolbox, threemf-io, Booltron, Bool Tool, LoopTools, F2, Mesh Repair Tools, Extra Mesh Objects + install order + 3MF fork decision**
+Quando usarlo: vuoi sapere quali addon installare oltre i bundled, decidere quale fork 3MF usare (threemf-io vs LeeGillie), capire quale builtin sottoutilizzato c'è (voxel_remesh/quadriflow_remesh callable diretti, solver MANIFOLD)
+File: `docs/blender_addons_recommended.md`
+
+Contenuto: 7 addon Tier 1 con MCP API completi e workflow value (3MF I/O bambu, Booltron con solver MANIFOLD 4.5+, Bool Tool interactive, LoopTools bridge_edge_loops per buchi grandi post-decimate, F2 quad fill 3-5 vertex gap, Mesh Repair Tools fill_holes più robusto, Extra Mesh Objects round_cube per cutter); Tier 2 Extra Mesh Objects; NON raccomandati con motivo (MeasureIt pure UI, Quad Remesher ridondante con QuadriFlow built-in, MeshLint abbandonato, Tweaker-3 GPL virale); builtin sottoutilizzati (wm.stl_import/export moderni, voxel_remesh/quadriflow_remesh callable, solver MANIFOLD); decisione 3MF fork (threemf-io primary, LeeGillie per Blender 5.x, evita Korchy/shusain); install order one-shot via Extensions Platform; verifica caricamento programmatica; conflitti & coesistenza (Bool Tool + Booltron complementari); MCP wrapper consigliato (export_3mf_bambu, bridge_open_loops, safe_boolean_difference).
+
 ## [analyze_to_action]
 **Decision tree: dall'output JSON di analyze_mesh_for_print alla sequenza di azioni di cleanup**
 Quando usarlo: hai appena eseguito analyze_mesh_for_print e devi decidere cosa fare; vuoi capire le regole che il tool MCP kb_route applica; vuoi aggiungere o modificare regole di routing

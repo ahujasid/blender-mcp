@@ -242,9 +242,125 @@ Per `testa_di_moro_*.stl`: valutare inclinazione 0–20° verso l'indietro, veri
 
 ---
 
+## Migliorie 2024-2026 (deep research findings)
+
+Lo scorer base sopra è funzionale ma migliorabile. Quattro estensioni emerse dalla letteratura recente meritano integrazione:
+
+### Bridge exception nello score overhang
+
+Una face downward che spazia ≤10mm tra due edge supportati è un **bridge**, non un overhang vero — Bambu A1 PLA stampa bridge fino a 30mm con fan 100% (vedi P3 in [fdm_printing_constraints]). Includerla in `overhang_area` penalizza orientamenti che non meritano penalità.
+
+```python
+def is_bridgeable(face, bvh, max_span_mm=10.0):
+    """Una face è bridgeable se i suoi edge sono supportati da geometria
+    sottostante a distanza orizzontale ≤ max_span_mm.
+
+    Implementazione: cast ray verso -Z dai vertices della face; se
+    entrambi gli endpoint di ogni edge trovano hit entro max_span_mm
+    horizontal, l'edge è supportato e la face non è un vero overhang.
+    """
+    import mathutils
+    supported_edges = 0
+    for edge in face.edges:
+        v0, v1 = edge.verts[0].co, edge.verts[1].co
+        # Project endpoints downward, check if geometry below within span
+        for v in (v0, v1):
+            origin = v + mathutils.Vector((0, 0, 1e-6))
+            hit, _, _, dist = bvh.ray_cast(origin, mathutils.Vector((0, 0, -1)))
+            if hit is not None and (v.xy - hit.xy).length <= max_span_mm:
+                supported_edges += 0.5  # half per endpoint
+                break
+    return supported_edges >= len(face.edges)
+
+# In score_orientation, escludi bridges dal penalty:
+overhang_faces = [f for f in mesh.polygons
+                  if normal_angle_from_vertical(f) > overhang_threshold
+                  and not is_bridgeable(f, bvh)]
+```
+
+### Convex-hull stability come metrica primaria
+
+`bottom_flatness` (area face piatta a Z_min) è meno robusto di `hull_stability = bottom_contact_hull_area / bbox_xy_area`. Se i vertices a Z_min formano un convex hull esteso, l'oggetto è stabile durante print anche senza una face piatta singola (es. tripode, base con 3-4 piedi).
+
+```python
+import scipy.spatial
+zmin = min(v.co.z for v in obj.data.vertices)
+verts_at_bottom = [v for v in obj.data.vertices if v.co.z < zmin + 0.0002]
+if len(verts_at_bottom) >= 3:
+    pts_2d = [(v.co.x, v.co.y) for v in verts_at_bottom]
+    # In scipy, ConvexHull(2D).volume restituisce l'AREA del poligono 2D
+    hull_area = scipy.spatial.ConvexHull(pts_2d).volume
+    bbox_xy_area = obj.dimensions.x * obj.dimensions.y
+    hull_stability = hull_area / max(bbox_xy_area, 1e-9)  # 0..1
+```
+
+Tipico: hull_stability < 0.15 → instabile durante print, aggiungi brim.
+
+### Two-stage search invece di brute grid
+
+64 sample casuali su SO(3) sono inefficienti. Approccio migliore:
+
+1. **Stage 1 — Candidate set (~30 candidati)**: genera orientamenti da face normals weighted by area (Tweaker-3-style algorithm) + 14 cardinali (±X/±Y/±Z + 8 diagonali principali).
+2. **Stage 2 — Local refinement**: prendi i top-3 dello stage 1, applica `scipy.optimize.minimize` (Nelder-Mead) su ±15° box di ognuno.
+
+Risultato: ~50 valutazioni totali con qualità superiore a 64 sample casuali su 200k faces.
+
+### Pareto front invece di somma pesata
+
+Lo score `S = w1·overhang + w2·footprint + w3·height + w4·flatness` mescola unità incommensurabili (mm² vs mm vs adimensionale). Meglio restituire il dict di metriche separate e lasciare al chiamante (o all'utente via `kb_route(needs_user_input=true)`) scegliere dal Pareto front:
+
+```python
+def pareto_front(results):
+    """results = lista di dict metric→valore. Restituisce sotto-lista
+    di candidati non dominati."""
+    pareto = []
+    for r in results:
+        dominated = any(
+            all(other[k] <= r[k] for k in r) and any(other[k] < r[k] for k in r)
+            for other in results if other is not r
+        )
+        if not dominated:
+            pareto.append(r)
+    return pareto
+```
+
+L'utente sceglie tra "min overhang" (qualità superficie) vs "min height" (tempo + stabilità).
+
+### Heuristic thresholds per early termination
+
+Alcune orientazioni sono ovviamente buone — non vale la pena valutare alternative:
+
+```python
+if (overhang_ratio < 0.05 and hull_stability > 0.6 and z_height_mm < 150):
+    return current_orientation  # praticamente ottima, stop
+```
+
+## Tweaker-3 — perché NON wrapparlo (alert licensa)
+
+[Tweaker-3](https://github.com/ChristophSchranz/Tweaker-3) è il tool open-source più maturo per print orientation (algoritmo candidate-set + area cumulation, calibrato con EA offline). **Pure Python + NumPy**, callable come libreria via `from MeshTweaker import Tweak`.
+
+**MA è GPL-3.0**. Wrappare Tweaker-3 in `blender-mcp` forzerebbe **l'intero progetto a GPL-3.0** (clausola virale). Sconsigliato. Soluzione: **rimplementare l'idea** (candidate-set + area-cumulation scoring) — ~80 righe NumPy, license-clean.
+
+Stessa logica per Bambu Studio / OrcaSlicer auto-orient: AGPL-3.0 source, ma è C++ inaccessibile da Python comunque.
+
+## Bambu Studio ha già auto-orient nativo
+
+`Object → Auto Orient` in Bambu Studio (ed Orca). Funzione di costo: `f(overhang_area, bottom_area, convex_hull_area, appearance_area)`. **Limiti documentati**: bridge detection debole, overhang estimation rough pre-slice. Il Blender-side orient ha valore quando:
+- Multi-object scene con vincoli relativi (es. "queste 3 parti devono mantenere posa relativa")
+- Pipeline headless/MCP (no Bambu Studio open)
+- Custom load-axis constraint (es. "questa parte va caricata in compressione lungo asse X")
+- Bake della rotation nell'STL prima di handoff a tool downstream
+
+## Riferimenti academic (2022-2024)
+
+- Zhang et al. (2022). *Build orientation optimization coupled with adaptive slicing*. Int. J. Adv. Manuf. Tech. doi:10.1007/s00170-022-10237-9. → Couples orientation con adaptive layer height; fixed-layer scoring overestimates support cost ~15%.
+- Mele & Campana (2022). *Multi-Part Orientation Planning Schema*. Micromachines 13(10):1777. → NSGA-II per ottimizzare più parti su un piatto.
+- Comparative study (2024). doi:10.1515/mt-2024-0099. → Whale Optimization e Differential Evolution superano i GA per budget ≤30s.
+
 ## Relazioni con altri doc KB
 
-- `fdm_printing_constraints.md` → angoli overhang e lunghezze bridge per A1
+- `fdm_printing_constraints.md` → angoli overhang e lunghezze bridge per A1, sezione "Why these numbers — physical basis"
 - `support_strategy.md` → questo doc decide SE servono supporti, quello decide COME metterli
 - `mathutils.md` → BVHTree e Vector per calcoli geometrici
 - `mesh_quality_assessment.md` → `print3d_overhang` per analisi overhang con 3D Print Toolbox
+- `blender_3d_print_toolbox.md` → reference completa di `print3d_check_overhang` per drill-down sulla geometria critica
