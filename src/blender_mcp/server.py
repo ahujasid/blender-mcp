@@ -339,12 +339,25 @@ def analyze_mesh_for_print(ctx: Context, object_name: str) -> str:
 
     Reports: vertex/edge/face count, dimensions in millimeters, watertightness
     (non-manifold edge count), boundary loops (holes), disconnected shells,
-    inverted-normal face count, degenerate triangle count, and a "ready_to_slice"
-    boolean.
+    degenerate triangle count, normals consistency (signed volume + raycast
+    sampling for partial inversion), wall thickness statistics (p10, p50,
+    percentage under 0.8mm), and a "ready_to_slice" boolean.
+
+    Wall thickness and inverted_face_pct are populated only when the mesh is
+    watertight (raycast on open meshes returns garbage). Sampling is capped
+    at 5000 faces with a deterministic seed. On non-watertight meshes those
+    four fields are null.
+
+    `inverted_face_pct` ranges [0, 100]:
+      0     = all face normals point outward (consistent)
+      100   = all face normals point inward (covered by R002 + normals==all_inverted)
+      5-95  = partial inversion (covered by R002b) — typical Meshy output where
+              part of a closed sub-surface was reconstructed with flipped winding
 
     Use this BEFORE running cleanup ops (so you know what to fix) and AFTER
     (so you know it's done). Cheaper for the LLM than asking it to parse
-    free-text output from execute_blender_code.
+    free-text output from execute_blender_code. Feed the JSON directly into
+    `kb_route(analysis_json)` to get the next action.
 
     Parameters:
     - object_name: Name of the mesh object to analyze.

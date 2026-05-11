@@ -31,9 +31,10 @@
     "args": {"object_name": "{object_name}"},
     "expect": {
       "normals": "consistent",
-      "signed_volume_mm3": "> 0"
+      "signed_volume_mm3": "> 0",
+      "inverted_face_pct": "< 1"
     },
-    "notes": "After recalc, signed_volume_mm3 must be positive (outside-facing normals)."
+    "notes": "After recalc, signed_volume_mm3 must be positive (outside-facing normals) AND inverted_face_pct should drop near 0. If inverted_face_pct is still high (>5%) the mesh probably has disconnected_shells > 1 — recalc only propagates within a connected component."
   },
   "topic_refs": ["mesh_repair"]
 }

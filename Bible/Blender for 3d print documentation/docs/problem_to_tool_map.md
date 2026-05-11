@@ -181,3 +181,22 @@ Normals define which side of each face is the outside surface. The STL format en
 | Flipped normals | `normals_make_consistent(inside=False)` | `RemeshModifier` (always recalculates normals) |
 
 The nuclear options share a common property: `RemeshModifier VOXEL` solves topology problems unconditionally but changes the mesh fundamentally. It is appropriate when the input mesh has deep structural problems (many interacting non-manifold edges, severe noise, unusable topology) and shape fidelity is less important than printability. When shape fidelity matters, the targeted tools in the first column are always preferable.
+
+## Failure modes — quick reference
+
+Tabella di rimando: come capire che lo strumento scelto ha fallito **silenziosamente** (operatore ritorna `{'FINISHED'}` ma il risultato è sbagliato). I dettagli stanno nel topic di destinazione.
+
+| Strumento | Sintomo silent failure | Detect rapido | Rimando |
+| --- | --- | --- | --- |
+| `remove_doubles(threshold)` | False merge: vertici legittimi fusi | `n_vertices_after < 0.80 × n_vertices_before` | [mesh_repair] §Failure modes |
+| `fill_holes(sides=N)` | Buco chiuso ma con degenerate planar fill | `degenerate_faces` aumenta dopo l'op | [mesh_repair] §Failure modes |
+| `normals_make_consistent` | Funziona solo su mesh chiusa; inconsistenze residue invisibili | `normals == "unknown_open_mesh"` post-op significa mesh ancora aperta | [mesh_repair] §Failure modes |
+| `print3d_clean_non_manifold` | Risolve alcuni T-junction creandone altri | `non_manifold_edges` scende ma non a 0 | [mesh_repair] §Failure modes |
+| Decimate COLLAPSE | Triangoli sliver (aspect 10:1+, area ≈0) | `degenerate_faces > 0` dopo l'op | [decimation_remesh] §Failure modes |
+| Voxel Remesh | Feature `< voxel_size × 1.5` scompaiono | Stima `face_count ≈ 2 × area_mm² / voxel_size²`, confronta col risultato | [decimation_remesh] §Failure modes |
+| Boolean EXACT | Volume risultato off del 10–30% | Confronta `calc_volume` pre/post con stima attesa | [boolean_troubleshooting] §Failure modes |
+| Boolean FLOAT/FAST | Self-intersection silenziata, buchi nel risultato | `boundary_loops > 0` post-op (era 0) | [boolean_troubleshooting] §Failure modes |
+| `print3d_check_thick` | Falsi positivi su mesh aperta (raggi escono dai buchi) | Eseguito con `watertight == False` | [mesh_quality_assessment] §Failure modes |
+| `print3d_check_intersect` | Timeout su mesh >200k facce | `face_count` pre-check | [mesh_quality_assessment] §Failure modes |
+
+**Regola generale**: ogni operatore di repair va sandwich'ato tra due `analyze_mesh_for_print`. Il delta atteso è documentato nei playbook (`verification.expect`) e nelle routing rules (`then.expected_after`). Se il delta è peggiorato o nullo, controlla la tabella sopra prima di iterare.

@@ -365,3 +365,50 @@ mod.solver = 'EXACT'      # 'EXACT' = preciso, 'FAST' = veloce
 bpy.ops.object.modifier_apply(modifier="Bool_Union")
 bpy.data.objects.remove(obj_B, do_unlink=True)
 ```
+
+## Failure modes
+
+Le operazioni di repair possono fallire **silenziosamente** — Blender non solleva eccezioni e l'operatore ritorna `{'FINISHED'}`, ma il risultato è sbagliato. La verifica va fatta sempre con un secondo `analyze_mesh_for_print` e confronto con il delta atteso.
+
+### `remove_doubles(threshold=0.0001)` — false merge
+
+**Sintomo**: due vertici legittimamente distinti vengono fusi perché `threshold` è troppo alto rispetto alla risoluzione locale della mesh. Conseguenza: edge attorno al merge collassano, compaiono `non_manifold_edges` o `degenerate_faces` nuovi che prima non c'erano.
+
+**Detect**:
+- Conta vertici PRIMA: `n_before = len(obj.data.vertices)`. Dopo: `n_after`. Differenza attesa: pochi % (1–5%). Se `n_before - n_after > 0.20 * n_before` → threshold troppo alto.
+- `analyze_mesh_for_print` con `non_manifold_edges` o `degenerate_faces` che AUMENTANO.
+
+**Fix**: rifai con `threshold = 0.00001` (10× più stringente). Se la mesh ha `unit_settings.scale_length = 1.0` (1 BU = 1m) e dimensioni in mm, il threshold deve essere `1e-6` BU per ottenere 1µm di tolleranza, non `1e-4`.
+
+### `fill_holes(sides=N)` — degenerate planar fill
+
+**Sintomo**: un buco con perimetro complesso (>N lati) viene chiuso da una n-gon planare, che il triangolatore poi sminuzza in triangoli zero-area. Il `boundary_loops` scende a 0 ma `degenerate_faces` sale.
+
+**Detect**:
+- `analyze_mesh_for_print`: `degenerate_faces` aumenta dopo `fill_holes`.
+- Visivamente: la "patch" è piatta dove dovrebbe essere curva.
+
+**Fix**:
+1. Aumenta `sides` (es. 16, 32, 64). Costo: nessuno.
+2. Se anche con `sides=64` non si chiude → il buco è troppo grande per fill_holes planare. Passa a Voxel Remesh (R007), che ricostruisce la mesh chiusa da SDF.
+3. Su mesh AI con buchi complessi è spesso preferibile partire da Voxel Remesh e saltare `fill_holes`.
+
+### `normals_make_consistent(inside=False)` — parziale su mesh aperta
+
+**Sintomo**: la mesh ha buchi (`boundary_loops > 0`). `normals_make_consistent` raggiunge le facce connesse via edge, ma sulle isole disgiunte non propaga. Risultato: facce con normali ancora flipped, invisibili al test `signed_volume` (perché la mesh non è chiusa).
+
+**Detect**: dopo l'op, `analyze_mesh_for_print` riporta `normals == "unknown_open_mesh"` e contemporaneamente `boundary_loops > 0`. Non puoi dire se sono "tutte coerenti" o "alcune flipped".
+
+**Fix**: chiudi prima (`fill_holes` o playbook `repair_basic`), POI recalc. La rule R002 si applica solo a `normals == "all_inverted"` su mesh già chiusa proprio per questo.
+
+### `print3d_clean_non_manifold` — può introdurre nuovi non-manifold
+
+**Sintomo**: su mesh con T-junction densi (tipico Meshy con `triangle soup`), l'operatore risolve alcuni non-manifold ma ne crea altri (split di edge condivisi). Conteggio totale: diminuisce, ma non a zero.
+
+**Detect**: dopo `repair_aggressive`, `non_manifold_edges` non è 0 ma è ridotto. È il caso atteso: la rule R005 chiede `non_manifold_edges <= input / 2`, non zero.
+
+**Fix**: iterare il playbook 2-3 volte. Se a iterazione 3 il count non scende sotto 5, escalation a Voxel Remesh (R007).
+
+### Boolean UNION/DIFFERENCE — volume errato senza errore
+
+Vedi [boolean_troubleshooting] §Failure modes per la trattazione completa. Sintesi: EXACT su input non sanitizzato può restituire `{'FINISHED'}` con volume risultante off del 10-30%. Verifica sempre con `calc_volume` prima/dopo e confronta con stima attesa.

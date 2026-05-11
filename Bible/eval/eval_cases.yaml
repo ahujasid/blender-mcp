@@ -52,7 +52,8 @@ cases:
       dimensions_mm: [45, 45, 120]
       ready_to_slice: false
     expected_pipeline:
-      # The routing engine should fire R001 first (degenerate > 0).
+      # The routing engine should fire R001 first (degenerate > 0, face_count
+      # > 200_000 so R011 doesn't override).
       - rule_id: R001
         playbook: repair_basic
       - rule_id: R003
@@ -72,3 +73,79 @@ cases:
       normals: consistent
       watertight: true
       ready_to_slice: true
+
+  - name: synthetic_thin_walls
+    synthetic: true
+    description: >
+      Clean closed mesh, correct dimensions, but the AI generator produced
+      ears/fingers below the FDM-printable threshold. Triggers R010 (or R010b
+      depending on severity).
+    expected_initial_analysis:
+      vertex_count: 80000
+      edge_count: 240000
+      face_count: 160000
+      non_manifold_edges: 0
+      boundary_loops: 0
+      disconnected_shells: 1
+      degenerate_faces: 0
+      normals: consistent
+      watertight: true
+      signed_volume_mm3: 45000.0
+      dimensions_mm: [50, 40, 80]
+      wall_thickness_p10_mm: 0.6
+      wall_thickness_p50_mm: 2.1
+      wall_thickness_under_min_pct: 18.0
+      inverted_face_pct: 0.0
+      ready_to_slice: true
+    expected_pipeline:
+      # R010 priority 65; ready_to_slice is true but a thinness rule still
+      # fires because the routing engine evaluates all rules regardless.
+      - rule_id: R010
+        ask_user: true
+
+  - name: synthetic_partial_inverted_normals
+    synthetic: true
+    description: >
+      Closed mesh, signed volume positive, but ~40% of faces have flipped
+      winding (typical Meshy artifact on the inside of a closed sub-surface).
+      Should trigger R002b -> recalc_normals playbook.
+    expected_initial_analysis:
+      vertex_count: 60000
+      edge_count: 180000
+      face_count: 120000
+      non_manifold_edges: 0
+      boundary_loops: 0
+      disconnected_shells: 1
+      degenerate_faces: 0
+      normals: consistent
+      watertight: true
+      signed_volume_mm3: 30000.0
+      dimensions_mm: [40, 30, 70]
+      inverted_face_pct: 38.0
+      ready_to_slice: true
+    expected_pipeline:
+      - rule_id: R002b
+        playbook: recalc_normals
+
+  - name: synthetic_post_decimate_slivers
+    synthetic: true
+    description: >
+      After running decimate_to_target on a 600k-face mesh, the result has
+      slivers showing up as degenerate_faces. face_count is now under 200k,
+      so R011 (post_decimate_cleanup) should win over R001 (repair_basic).
+    expected_initial_analysis:
+      vertex_count: 80000
+      edge_count: 240000
+      face_count: 150000
+      non_manifold_edges: 3
+      boundary_loops: 0
+      disconnected_shells: 1
+      degenerate_faces: 14
+      normals: consistent
+      watertight: false
+      signed_volume_mm3: null
+      dimensions_mm: [45, 45, 120]
+      ready_to_slice: false
+    expected_pipeline:
+      - rule_id: R011
+        playbook: post_decimate_cleanup

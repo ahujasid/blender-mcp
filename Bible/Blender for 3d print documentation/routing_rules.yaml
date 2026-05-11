@@ -52,6 +52,27 @@ rules:
       Mesh chiusa con normali tutte invertite — fix immediato con
       normals_make_consistent(inside=False).
 
+  # R002b covers PARTIAL inversion: signed volume is positive (mesh isn't
+  # fully flipped), but a measurable percentage of faces points inward. Same
+  # playbook because normals_make_consistent on a closed mesh propagates
+  # outward orientation regardless of how many faces start flipped.
+  - id: R002b
+    priority: 98
+    when:
+      inverted_face_pct: "> 5"
+      normals: consistent
+    then:
+      topic_id: mesh_repair
+      section: recalc_normals
+      playbook: recalc_normals
+      expected_after:
+        inverted_face_pct: "< 1"
+    rationale: >
+      Tra il 5% e il 95% delle facce ha normale invertita. Caso tipico
+      Meshy/AI: sub-superficie ricostruita con winding errato (es. interno
+      collo invertito vs volto outward). normals_make_consistent(inside=False)
+      propaga la consistenza outward sull'intera mesh chiusa.
+
   - id: R009
     priority: 95
     when:
@@ -143,3 +164,53 @@ rules:
     rationale: >
       Volume Bambu A1 = 256x256x256mm. Oggetto più grande va diviso con
       registration pin per riassemblaggio.
+
+  - id: R010
+    priority: 65
+    when:
+      wall_thickness_p10_mm: "< 0.8"
+    then:
+      topic_id: wall_thickness_actionable
+      section: decision_tree
+      needs_user_input: true
+    rationale: >
+      Almeno il 10% delle facce ha spessore sotto 0.8mm (2 perimetri nozzle
+      0.4mm). Tre scenari secondo la severità: Solidify globale +0.3mm,
+      Solidify aggressivo +0.5mm con verifica visiva, o re-scale/re-design.
+      Chiede all'utente perché la decisione cambia silhouette.
+
+  - id: R010b
+    priority: 80
+    when:
+      wall_thickness_p10_mm: "< 0.45"
+    then:
+      topic_id: wall_thickness_actionable
+      section: caso_C
+      needs_user_input: true
+    rationale: >
+      Spessori sotto 0.45mm: lo slicer salterà o stamperà come parete singola
+      fragile. Priorità più alta di R010 perché blocca la stampa.
+
+  # R011 sits at priority 108, just below R001 (110). R001 catches the initial
+  # degenerate_faces > 0 case; R011 catches the SAME symptom AFTER a decimate.
+  # Same playbook target (mesh_repair) but a specialised playbook
+  # (post_decimate_cleanup) that also triangulates n-gons and merges with a
+  # higher threshold.
+  - id: R011
+    priority: 112
+    when:
+      degenerate_faces: "> 0"
+      face_count: "< 200000"
+    then:
+      topic_id: decimation_remesh
+      section: failure_modes
+      playbook: post_decimate_cleanup
+      expected_after:
+        degenerate_faces: 0
+    rationale: >
+      degenerate_faces > 0 in una mesh sotto 200k facce è il pattern tipico
+      "abbiamo appena decimato, sono comparsi sliver". Il playbook
+      post_decimate_cleanup dissolve, merge a soglia leggermente più alta del
+      repair_basic, triangola, e ricalcola normali.
+      Quando NON dovrebbe scattare: se la mesh è ancora >200k (probabilmente
+      non hai decimato ancora) il caso è R001 sul repair_basic standard.

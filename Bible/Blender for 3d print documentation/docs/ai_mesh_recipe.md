@@ -451,86 +451,28 @@ else:
 
 ---
 
-## Profilo Bambu Studio Consigliato per Mesh AI
+## Profilo Bambu Studio consigliato
 
-| Caratteristica modello | Profilo | Parametri chiave |
-|---|---|---|
-| Figurina organica / testa / busto | Profilo 1 — Estetico | 0.12mm, 4 pareti, Tree support, seam=Back |
-| Oggetto geometrico / meccanico | Profilo 2 — Funzionale | 0.20mm, 4 pareti, Grid 40% |
-| Miniatura < 50mm | Profilo 4 — Miniatura | 0.08–0.12mm, velocità 80mm/s |
-| Oggetto grande > 150mm | Profilo 5 — Grande | 0.28mm, Lightning 10%, brim 10mm |
+Per i parametri completi (layer height, walls, infill, supports, velocità) vedi `Bambu Wiki documentation/docs/slicing_profiles.md`. Non duplicarli qui — le tabelle sopra rotteranno il sync col tempo.
 
-Vedi `Bambu Wiki documentation/docs/slicing_profiles.md` per i parametri completi se la root del progetto è `Bible/`.
-
----
-
-## Sculpt Mode: Brush Reference per AI Mesh Cleanup
-
-Quando il Voxel Remesh + repair standard non bastano (superfici irregolari, gap, dettagli AI da affinare), il Sculpt Mode è il livello successivo. Non scriptabile via MCP — richiede intervento manuale. Questa tabella copre i brush più utili per AI mesh prep.
-
-| Brush | Shortcut / Nome | Comportamento | Quando usarlo su mesh AI |
-|---|---|---|---|
-| **Smooth** | Shift (mentre usi qualsiasi brush) | Leviga la geometria verso la media locale | Primo brush da usare sempre — 50% del cleanup. Elimina noise, artefatti di remesh, superfici irregolari da AI generation |
-| **Elastic Grab / Elastic Wrap** | Cerca "Elastic" in brush list | Muove la geometria come se la "tirasse" con elasticità | Correggere proporzioni, riposizionare elementi (naso, orecchie, arti) senza distruggere dettagli |
-| **Inflate / Deflate** | Tasto I | Espande (inflate) o contrae (deflate) la superficie verso l'esterno/interno delle normali | Chiudere gap tra parti separate, riempire buchi, gonfiare forme appiattite da AI. Fondamentale per fusione neck-hair gap |
-| **Blob** | Cerca "Blob" in brush list | Aggiunge volume sferico nell'area del brush | Chiudere buchi grandi, aggiungere volume su occhi/nasi piatti, ricostruire forme arrotondate |
-| **Crease Sharp** | Cerca "Crease" in brush list | Aggiunge una piega/solco netto nella geometria | Ridefinire bordi di vestiti, sopracciglia, dettagli di design che il remesh ha ammorbidito |
-| **Clay Strips** | Cerca "Clay Strips" in brush list | Aggiunge strati di "argilla" con bordi definiti | Costruire volume su aree piatte, definire muscolatura, aggiungere elementi mancanti |
-
-**Workflow tipo per AI character cleanup:**
-1. `merge_by_distance` in Edit Mode (elimina loose vertices)
-2. Voxel Remesh a voxel_size appropriato
-3. **Smooth** (Shift) su tutta la superficie → 2-3 passate
-4. **Elastic Grab** per correggere proporzioni evidenti
-5. **Inflate** su gap → Voxel Remesh → **Smooth** per unificare
-6. **Blob** per ricostruire dettagli persi (occhi, narici)
-7. **Crease Sharp** per ridefinire bordi puliti
-
-**Attivare Smooth su qualsiasi brush:** tenere premuto **Shift** durante la scultura — tutti i brush passano automaticamente alla modalità smooth senza cambiare brush.
+Quick selector (uso come orientamento, non come sostituto del topic Bambu):
+- Figurina organica / busto → `slicing_profiles#estetico` (0.12mm, 4 pareti, tree support)
+- Oggetto meccanico → `slicing_profiles#funzionale` (0.20mm, infill Grid 40%)
+- Miniatura < 50mm → `slicing_profiles#miniatura` (0.08–0.12mm, velocità ridotta)
+- Oggetto > 150mm → `slicing_profiles#grande` (0.28mm, infill Lightning 10%, brim)
 
 ---
 
-## Strategie Avanzate per Problemi AI Specifici
+## Sculpt Mode e workflow manuali
 
-### Modello con dettagli insufficienti / parti fuse
+Sculpt Mode (Inflate per chiudere gap, Smooth per asciugare Voxel Remesh, Elastic Grab per riposizionare, ecc.) non è scriptabile via MCP — richiede sessione interattiva. Se durante il workflow l'assistente arriva al limite di quello che può fare via `execute_blender_code`, deve **chiedere all'utente** di intervenire manualmente in Sculpt Mode invece di tentare workaround. Casi tipici:
 
-Quando un modello AI genera la figura completa con scarso dettaglio (mani, viso, vestiti fusi insieme), la soluzione è **generare le parti separatamente** e assemblarle in Blender:
+- Double-sided mesh interna da buco grande non chiudibile con `fill_holes` né salvabile con Voxel Remesh.
+- Dettagli persi dopo Voxel aggressivo che richiedono ricostruzione (Blob, Clay Strips).
+- Modelli AI con parti fuse che andrebbero generate separatamente e mergiate.
+- Bone heat weighting per Rigify (fuori scope FDM ma occasionalmente richiesto).
 
-1. Generare testa, corpo, vestiti come richieste AI separate (qualità nettamente migliore per parte rispetto all'intero)
-2. Importare tutte le parti in Blender
-3. Posizionare e scalare le parti per farle combaciare
-4. Join (Ctrl+J) per unirle in un unico oggetto
-5. Voxel Remesh per fonderle in un solido
-6. Sculpt Smooth per levigare le giunture
-
-### Double-sided mesh da buco nella geometria
-
-Sintomo: la Face Orientation overlay mostra rosso diffuso all'interno del modello (non solo sulla superficie). Causa: un buco nella mesh ha permesso al remesh di generare geometria interna.
-
-Fix:
-1. Sculpt Mode → **Inflate** brush sul buco → chiudere completamente l'apertura
-2. Voxel Remesh → il remesh elimina il layer interno (ora non più raggiungibile dall'esterno)
-3. Verificare con Face Orientation: solo blu (esterno) visibile = corretto
-
-### Bone heat weighting failure (Rigify)
-
-Se `Ctrl+P → With Automatic Weights` fallisce con "Bone heat weighting: failed to find solution":
-
-```python
-import bpy
-
-# Il threshold di default 0.0001 è troppo basso per mesh AI dense
-# Aumentare a un valore che rimuova vertici sovrapposti ma non danneggi il dettaglio
-obj = bpy.context.active_object
-bpy.ops.object.mode_set(mode='EDIT')
-bpy.ops.mesh.select_all(action='SELECT')
-bpy.ops.mesh.remove_doubles(threshold=0.001)  # 0.001 BU ≈ 1µm con scale_length=0.001
-bpy.ops.object.mode_set(mode='OBJECT')
-print(f"Merge completato. Verts: {len(obj.data.vertices)}")
-# Riprovare ora Ctrl+P → With Automatic Weights
-```
-
-Causa: i vertici sovrapposti nell'area delle giunture (spalle, collo) impediscono all'algoritmo di bone heat di calcolare i pesi. Il merge con threshold leggermente più alto elimina i duplicati critici senza togliere dettaglio visibile.
+Per FDM print-prep puro, Sculpt è raramente necessario: la routing engine + i playbook coprono >90% dei casi reali. Se ti trovi a invocare Sculpt spesso, è probabile che manchi una regola di routing — segnala il caso in FIELD_NOTES.
 
 ---
 
@@ -556,3 +498,20 @@ Causa: i vertici sovrapposti nell'area delle giunture (spalle, collo) impediscon
 - `decimation_remesh.md` → parametri quantitativi per Decimate e Voxel Remesh
 - `Bambu Wiki documentation/docs/slicing_profiles.md` → profili Bambu Studio completi per tipo di oggetto
 - `orientation_strategy.md` → ottimizzazione orientamento per minimizzare supporti
+
+## Failure modes — riferimenti per ogni CALL
+
+I fallimenti silenziosi delle operazioni sono documentati nei topic specifici. Ogni CALL della pipeline deve essere seguita da `analyze_mesh_for_print`; il delta atteso è specificato nel `verification.expect` del playbook corrispondente o nel `then.expected_after` della routing rule.
+
+| CALL | Operazione | Fallimento silent tipico | Topic con detect+fix |
+| --- | --- | --- | --- |
+| 2 | `remove_small_objects` | Soglia volume troppo alta rimuove parti utili | [multi_object_management] |
+| 3 | `transform_apply` post-rescale | Scale non applicata; boolean successivo fallisce | [boolean_troubleshooting] §1 |
+| 4 | `analyze` su mesh con modifier non applicati | Conta vertici/facce pre-modifier | [mesh_quality_assessment] §Failure modes |
+| 5 | `remove_doubles` + `fill_holes` + `normals_make_consistent` | False merge, degenerate planar fill, recalc parziale | [mesh_repair] §Failure modes |
+| 5b | Voxel Remesh | `voxel_size` mal calibrato, face_count esplode o feature scompaiono | [decimation_remesh] §Failure modes |
+| 6 | Decimate COLLAPSE | Sliver triangles introdotti → playbook `post_decimate_cleanup` | [decimation_remesh] §Failure modes |
+| 7 | LaplacianSmooth | Volume shrinkage 90%+ con iter alte | confronto `calc_volume` pre/post |
+| 8 | `wm.stl_export` | `global_scale` errato → STL in unità sbagliate per slicer | `import_export.md` + FIELD_NOTES [2026-04-13] |
+
+**Regola end-to-end**: ogni CALL stampa `[CALL N] op=X non_manifold_pre=A non_manifold_post=B face_count_post=C`. Se il delta non corrisponde a quanto previsto dalla routing rule, chiama `kb_route` di nuovo sul nuovo stato analysis invece di proseguire con la CALL successiva.

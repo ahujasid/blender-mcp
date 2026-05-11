@@ -484,3 +484,47 @@ Ogni operazione boolean in una CALL deve printare:
 ```
 
 Senza questo log l'agente non può diagnosticare cosa è andato storto senza rieseguire l'operazione.
+
+## Failure modes
+
+Le sezioni 1–7 sopra coprono i fallimenti **espliciti** (CANCELLED, mesh non-manifold output, flipped). Questa sezione copre i fallimenti **silenziosi**: il modifier ritorna `{'FINISHED'}` ma il risultato è geometricamente sbagliato.
+
+### EXACT — volume risultante off del 10-30%
+
+**Sintomo**: UNION/DIFFERENCE eseguita con successo apparente, ma il volume finale non corrisponde all'atteso. Tipico quando uno degli operandi ha self-intersection o `transform_apply` non eseguito.
+
+**Detect**:
+- Volume stimato pre-op vs reale post-op. Per UNION: `volume_post ≈ volume_A + volume_B − volume_intersection` (intersection ≥ 0). Per DIFFERENCE: `volume_post ≈ volume_A − volume_intersection`. Se discrepanza >5% → boolean fallita.
+- Snippet:
+  ```python
+  import bmesh, bpy
+  def vol_mm3(obj):
+      bm = bmesh.new(); bm.from_mesh(obj.data); bm.transform(obj.matrix_world)
+      v = bm.calc_volume(signed=False); bm.free()
+      mm = bpy.context.scene.unit_settings.scale_length * 1000
+      return v * mm**3
+  print("vol pre:", vol_mm3(bpy.data.objects['Base']))
+  # ... esegui boolean ...
+  print("vol post:", vol_mm3(bpy.data.objects['Base']))
+  ```
+
+**Fix**: applica `sanitize_for_boolean()` (§3) su ENTRAMBI gli operandi prima di rifare. Se l'output è ancora off, switcha al solver `MANIFOLD` (5.x) che richiede entrambi gli input chiusi ma è più rigoroso.
+
+### FAST/FLOAT solver — self-intersection silenziata
+
+**Sintomo**: solver `FAST` (rinominato `FLOAT` in 5.x) accetta input self-intersecanti senza errore ma produce buchi nel risultato (`boundary_loops > 0` post-op).
+
+**Detect**: `analyze_mesh_for_print` post-boolean: `boundary_loops > 0` o `non_manifold_edges > 0` dove prima erano 0.
+
+**Fix**: switcha a EXACT (più lento ma corretto). Se EXACT fallisce, applica `sanitize_for_boolean()` con `bmesh.ops.remove_doubles` aggressivo (threshold 0.01mm) per eliminare i tri sovrapposti che causano l'intersezione.
+
+### `use_hole_tolerant=True` su solver non-EXACT
+
+**Sintomo**: il flag esiste solo per EXACT. Su FLOAT/MANIFOLD viene ignorato silenziosamente, il modifier funziona ma senza la tolleranza ai buchi che ti aspetti.
+
+**Detect**: verifica con `print(mod.solver, mod.use_hole_tolerant)` post-set, e dopo `modifier_apply` controlla che la solver effettiva sia stata EXACT.
+
+**Fix**: assert in codice prima di apply:
+```python
+assert mod.solver == 'EXACT', f"hole_tolerant ignored on {mod.solver}"
+```

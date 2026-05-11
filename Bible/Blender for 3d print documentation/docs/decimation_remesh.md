@@ -211,3 +211,49 @@ Decimazione e remesh alterano la topologia. L'ordine rispetto ad altre operazion
 - **Dopo** Decimate COLLAPSE: verificare manifold — se ci sono nuovi non-manifold, passare a Remesh VOXEL
 - **Dopo** Remesh VOXEL: la mesh è sempre manifold ma può aver perso feature sottili → verificare wall thickness con 3D Print Toolbox
 - **Non** applicare Decimate dopo Solidify se stai usando Solidify per aggiungere spessore — il Decimate può eliminare le facce dei bordi aggiunte dal Solidify
+
+## Failure modes
+
+### Decimate COLLAPSE — sliver triangles introdotti
+
+**Sintomo**: con `ratio < 0.1` o su mesh con feature sottili, COLLAPSE produce triangoli ad ago (aspect ratio >10:1, area ≈ 0). Il `face_count` scende correttamente ma `degenerate_faces` sale e wall thickness "rumoreggia" in zone prima omogenee.
+
+**Detect**:
+- `analyze_mesh_for_print` post-decimate: `degenerate_faces > 0` (era 0 prima).
+- Snippet di check sliver:
+  ```python
+  import bmesh, bpy
+  obj = bpy.data.objects['<name>']
+  bm = bmesh.new(); bm.from_mesh(obj.data)
+  def aspect(face):
+      lens = [e.calc_length() for e in face.edges]
+      return max(lens) / max(min(lens), 1e-9)
+  slivers = sum(1 for f in bm.faces if aspect(f) > 10)
+  print(f"sliver_faces (10:1+): {slivers}/{len(bm.faces)}")
+  bm.free()
+  ```
+
+**Fix**:
+1. Chain con il playbook `post_decimate_cleanup` (rule R011): `dissolve_degenerate` + `merge_by_distance` mirato.
+2. Se persiste, riduci l'aggressività: `ratio = max(0.2, target/current)` invece di `target/current` secco.
+3. Se la mesh ha feature sotto 0.5mm, considera Voxel Remesh con `voxel_size = 0.4` invece di Decimate.
+
+### Voxel Remesh — voxel_size troppo grande / troppo piccolo
+
+**Sintomo (troppo grande)**: feature sotto `voxel_size × 1.5` scompaiono. Cap di una vite Ø3mm con `voxel_size = 0.4` diventa una bolla.
+**Sintomo (troppo piccolo)**: face_count esplode (10–50M), Blender freeza, RAM si satura.
+
+**Detect**: stima rapida `face_count ≈ 2 × surface_area_mm² / voxel_size_mm²`. Modello 50×50×50mm ≈ 15.000 mm² → con `voxel_size=0.4` ottieni ~200k facce. Se la stima dà >5M facce, AUMENTA voxel_size, non diminuirlo.
+
+**Fix**:
+- `voxel_size_mm = min_feature_to_preserve_mm / 2` (Nyquist).
+- Per FDM 0.4mm nozzle, `voxel_size = 0.3–0.5mm` è il sweet spot. Sotto 0.2mm raramente vale (slicer non lo risolve comunque).
+- Dopo Voxel: chain con un Decimate COLLAPSE leggero (ratio 0.5–0.7). Voxel produce mesh densa uniforme, Decimate la asciuga senza danneggiarla.
+
+### Decimate DISSOLVE — angolo limit troppo alto
+
+**Sintomo**: `angle_limit > 10°` su mesh organica fonde superfici curve in poligoni piatti. Silhouette degrada visibilmente.
+
+**Detect**: visivo (screenshot pre/post). Difficile da rilevare numericamente con `analyze_mesh_for_print`.
+
+**Fix**: usa DISSOLVE solo su mesh CAD-export con angoli netti (angle_limit 1°–5°). Su mesh AI/photogrammetry preferisci COLLAPSE.

@@ -36,8 +36,14 @@ topics:
     band: A
     solves_symptoms:
       [non_manifold_edges, boundary_loops, disconnected_shells, degenerate_faces,
-       normals_inverted, dimensions_wrong, polycount_high, too_large_for_bed]
-    related: [problem_to_tool_map, mesh_repair, decimation_remesh, multi_object_management]
+       normals_inverted, dimensions_wrong, polycount_high, too_large_for_bed,
+       thin_walls]
+    related: [problem_to_tool_map, mesh_repair, decimation_remesh, multi_object_management, wall_thickness_actionable]
+
+  - id: wall_thickness_actionable
+    band: A
+    solves_symptoms: [thin_walls]
+    related: [fdm_printing_constraints, measurement_toolkit, preprint_validation, bambu_a1_physical_constants]
 
   - id: problem_to_tool_map
     band: A

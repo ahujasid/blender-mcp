@@ -33,6 +33,13 @@ File: `docs/analyze_to_action.md`
 
 Contenuto: tabella chiavi dell'analysis JSON, 9 regole numerate (R001-R009) ognuna con priority/when/then/expected_after/rationale: R001 degenerate_faces→dissolve_degenerate (priority 110, primo step), R002 normals=all_inverted→recalc_normals, R003 disconnected_shells>1→split_then_decide (needs_user_input), R004 non_manifold+holes→fill_holes (playbook repair_basic), R005 non_manifold senza holes→clean_non_manifold (playbook repair_aggressive), R006 face_count>500k→decimate_collapse (playbook decimate_to_target), R007 voxel remesh fallback, R008 dimension>256mm→bisect_splitting, R009 scale errata→scale_detection. Convenzione output kb_route (input_summary, matched_rules, next_action). Le regole sono machine-readable in `routing_rules.yaml` ed eseguibili via tool MCP kb_route(analysis_json).
 
+## [wall_thickness_actionable]
+**Decision tree dimensionale: dato wall_thickness_p10_mm / under_min_pct, scegli Solidify globale / Solidify selettivo / re-scale / accetta-e-flagga**
+Quando usarlo: kb_route ha matched R010 o R010b, hai numeri di wall thickness sotto le soglie FDM A1, devi decidere se solidificare globalmente, mirato, o riprogettare
+File: `docs/wall_thickness_actionable.md`
+
+Contenuto: 4 casi A/B/C/D mappati a thresholds (>=0.8 OK, 0.45–0.8 marginale con 3 opzioni, <0.45 strutturale con 3 opzioni, null=mesh aperta), tabella conseguenze slicer (0.21/0.45/0.8/1.20mm), codice Solidify +0.3/+0.5mm con `use_even_offset`, opzioni "Solidify selettivo via vertex group" (richiede utente), "accetta-e-flagga al slicer", "re-design/split", "0.2mm nozzle hardware change". Caveat sul sampling (max 5000 face centroids, p10 vs minimo, falsi negativi su feature poco campionate, solidi convessi pieni). Rule trigger: R010 (priority 65) per p10<0.8, R010b (priority 80) per p10<0.45.
+
 ## [problem_to_tool_map]
 **Mappa problema → strumento Blender: quale tool per quale difetto, tradeoff, quando usare quale**
 Quando usarlo: hai identificato un problema specifico (non-manifold, troppi poligoni, rumore superficiale, scala sbagliata, pareti sottili, overhangs, geometria disconnessa, normali invertite) e devi scegliere lo strumento giusto

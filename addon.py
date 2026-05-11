@@ -427,6 +427,11 @@ class BlenderMCPServer:
                 signed_volume_mm3 = None
                 normals_status = "unknown_open_mesh"
 
+            wt_p10, wt_p50, wt_pct_under = self._wall_thickness_stats(
+                bm, watertight=watertight,
+            )
+            inverted_pct = self._inverted_face_pct(bm, watertight=watertight)
+
             result = {
                 "object": obj.name,
                 "vertex_count": len(bm.verts),
@@ -441,6 +446,10 @@ class BlenderMCPServer:
                 "watertight": watertight,
                 "normals": normals_status,
                 "signed_volume_mm3": signed_volume_mm3,
+                "wall_thickness_p10_mm": wt_p10,
+                "wall_thickness_p50_mm": wt_p50,
+                "wall_thickness_under_min_pct": wt_pct_under,
+                "inverted_face_pct": inverted_pct,
             }
             result["ready_to_slice"] = (
                 watertight
@@ -452,6 +461,98 @@ class BlenderMCPServer:
         finally:
             bm.free()
             eval_obj.to_mesh_clear()
+
+    def _wall_thickness_stats(self, bm, watertight, max_samples=5000):
+        """Raycast-based wall thickness distribution.
+
+        Returns (p10_mm, p50_mm, pct_under_0_8_mm) or (None, None, None) when
+        the metric is unreliable (open mesh, no faces, all rays miss).
+
+        Why these three: p10 catches the thinnest 10% of the surface (most
+        likely to be silently skipped by the slicer); p50 is the median, useful
+        as a sanity baseline; pct_under_0_8 is the share of surface below the
+        FDM 0.4mm-nozzle 2-perimeter floor.
+
+        Samples up to `max_samples` face centroids to keep timing bounded;
+        face count over 5k uses deterministic random sampling (seed=42).
+        """
+        if not watertight or len(bm.faces) == 0:
+            return None, None, None
+
+        from mathutils.bvhtree import BVHTree
+
+        bvh = BVHTree.FromBMesh(bm)
+        mm = self._mm_per_unit()
+
+        faces = list(bm.faces)
+        if len(faces) > max_samples:
+            import random
+            rng = random.Random(42)
+            faces = rng.sample(faces, max_samples)
+
+        distances_mm = []
+        epsilon = 1e-6
+        for face in faces:
+            if face.normal.length_squared <= 0:
+                continue
+            # Step inward by epsilon so the raycast doesn't hit the origin face itself.
+            origin = face.calc_center_median() + face.normal * (-epsilon)
+            direction = -face.normal
+            hit_loc, _, _, dist = bvh.ray_cast(origin, direction)
+            if hit_loc is None or dist is None:
+                continue
+            distances_mm.append(dist * mm)
+
+        if not distances_mm:
+            return None, None, None
+
+        distances_mm.sort()
+        n = len(distances_mm)
+        p10 = distances_mm[int(n * 0.10)]
+        p50 = distances_mm[int(n * 0.50)]
+        pct_under = sum(1 for d in distances_mm if d < 0.8) / n
+        return round(p10, 3), round(p50, 3), round(pct_under * 100, 1)
+
+    def _inverted_face_pct(self, bm, watertight, max_samples=5000):
+        """Percentage of faces whose normal points INTO the mesh body.
+
+        Approach: for a watertight mesh, the outward direction of any face is
+        unobstructed (the ray escapes to infinity). If a face's normal points
+        INWARD, a ray cast along it crosses the opposite wall of the mesh and
+        registers a hit. The ratio hits / sampled is the share of inverted
+        faces.
+
+        Returns a float in [0, 100], or None if the mesh isn't watertight
+        (the metric is meaningless on open meshes).
+        """
+        if not watertight or len(bm.faces) == 0:
+            return None
+
+        from mathutils.bvhtree import BVHTree
+
+        bvh = BVHTree.FromBMesh(bm)
+
+        faces = list(bm.faces)
+        if len(faces) > max_samples:
+            import random
+            rng = random.Random(43)  # different seed from wall thickness
+            faces = rng.sample(faces, max_samples)
+
+        epsilon = 1e-6
+        inverted = 0
+        valid = 0
+        for face in faces:
+            if face.normal.length_squared <= 0:
+                continue
+            origin = face.calc_center_median() + face.normal * epsilon
+            direction = face.normal
+            hit_loc, _, _, _ = bvh.ray_cast(origin, direction)
+            valid += 1
+            if hit_loc is not None:
+                inverted += 1
+        if valid == 0:
+            return None
+        return round(100.0 * inverted / valid, 1)
 
     @staticmethod
     def _count_boundary_loops(boundary_edges):

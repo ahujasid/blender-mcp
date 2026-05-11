@@ -192,3 +192,47 @@ The order of assessment matters because earlier problems can invalidate later me
 7. **Surface noise** — micro-bumps and high-frequency detail affect surface finish and slicer processing time but rarely block printing.
 
 A mesh that passes checks 1–4 is printable. Checks 5–7 affect quality and workflow, not feasibility.
+
+## Failure modes
+
+### `print3d_check_thick` — false positives on open meshes
+
+**Sintomo**: il check è raycast-based. Su mesh non chiusa (`watertight == False`), i raggi escono dal volume attraverso i buchi e ritornano "thickness = 0" per facce vicine al bordo → thin-wall warning su zone strutturalmente OK.
+
+**Detect**: `analyze_mesh_for_print` riporta `watertight == False` prima di eseguire il check. Le facce flagged thin concentrate vicino a `boundary_edges` sono il sintomo.
+
+**Fix**: esegui `print3d_check_thick` solo dopo `watertight == True`. Sequenza: repair → recalc → analyze → se watertight, allora wall thickness assessment. Su mesh aperta usa `measurement_toolkit.wall_thickness_at_point` su punti specifici (non sampling massivo).
+
+### `print3d_check_intersect` — costoso su mesh > 200k
+
+**Sintomo**: tempo di esecuzione cresce O(n²) sulle facce; oltre 200k diventa minuti. Su MCP stateless con timeout 180s va in timeout senza output.
+
+**Detect**: `face_count > 200_000` prima del check.
+
+**Fix**: decimate a <100k prima del check, poi riferisci il risultato alla mesh originale (le intersezioni che esistevano pre-decimate esistono ancora a meno di non averle proprio risolte con decimate).
+
+### `bmesh.find_doubles` — KDTree non riflette posizioni post-modifier
+
+**Sintomo**: con modifier non applicati (Decimate, Solidify, Subdivision attivi ma non baked), `find_doubles` opera sui vertici **pre-modifier** e perde duplicati introdotti dal modifier.
+
+**Detect**: `len(obj.modifiers) > 0` durante l'assessment.
+
+**Fix**: usa la mesh evaluated (è già il pattern di `analyze_mesh_for_print`):
+```python
+deps = bpy.context.evaluated_depsgraph_get()
+eval_obj = obj.evaluated_get(deps)
+mesh = eval_obj.to_mesh()
+# ... assess su mesh ...
+eval_obj.to_mesh_clear()
+```
+
+### Soglie `thickness_min`: `1.0mm` default vs `0.8mm` FDM A1
+
+**Avviso**: `scene.print_3d.thickness_min` default Blender è 1.0mm. Per Bambu A1 con nozzle 0.4mm la soglia stampabile è 0.8mm (2 perimetri) o 0.45mm (1 perimetro, parete singola). Imposta esplicitamente prima del check, altrimenti ottieni falsi negativi (mesh marcata OK con feature 0.5–0.9mm che lo slicer poi salterà):
+
+```python
+# Con scale_length=1.0 (1 BU = 1m), thickness_min va in metri
+bpy.context.scene.print_3d.thickness_min = 0.0008  # 0.8 mm
+```
+
+Su mesh `scale_length=0.001` (1 BU = 1mm) il valore va in BU: `thickness_min = 0.8`.
