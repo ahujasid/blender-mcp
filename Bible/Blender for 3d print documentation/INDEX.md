@@ -110,6 +110,13 @@ File: `docs/use_case_taxonomy.md`
 
 Contenuto: tabella sinottica completa 6 use_case × 14 aspect (priority/layer/walls/infill/support/seam/wall_order/poly/brim/pre_export_qa/thin_walls/oversize/time_bias), sezioni dettaglio per ogni use_case con priority + decisioni derivate + pitfalls (display: silhouette pulita Outer/Inner walls Gyroid 15% tree_organic scarf; mech: load XY anisotropia 4 walls Cubic 25-40%; snap_fit: preserve poly NO support tolerance critical 100% infill in load zone; container: bottom-flat Spiral Vase option brim; test: 0.28mm draft no QA; tool_print: 4-5 walls Cubic 30-50% annealing post), order of precedence (utente explicit > use_case derived > MCP fallback), custom use_case fallback (lessical match + warn), tabella playbook attivati tipicamente per use_case.
 
+## [learning_loop]
+**Protocollo learning iterativo: session log YAML auto-scritto da MCP, 3 post-mortem questions, cross-session review on-demand con pattern detection**
+Quando usarlo: stai progettando o eseguendo l'end-of-session step, vuoi fare review delle ultime N sessioni per identificare pattern (rule che sbaglia, default da aggiornare, topic gap), capire schema session log
+File: `docs/learning_loop.md`
+
+Contenuto: 3 livelli feedback (in-flight zero-overhead opzionale tag, end-of-session 3 domande post-mortem, cross-session review on-demand), schema session log YAML (who writes what), lifecycle (write at end of pipeline via execute_blender_code yaml.safe_dump, update feedback read-modify-write, private notes _private/ gitignored sidecar), review protocol cross-session (trigger su prompt esplicito, sequence: discover→load→aggregate→pattern detection→report→user decide, pattern tipici 7 categorie con detection conditions e suggested fix), esempio output review YAML con suggested_kb_updates, triage when to launch review, schema minimal vs full, storage growth + manual archive, privacy summary.
+
 ## [mcp_blind_operating_protocol]
 **Master protocol per MCP cieco: 3 sensi (analyze JSON / report._data / viewport screenshot), pre-flight, post-flight, decision matrix, anti-patterns**
 Quando usarlo: PRIMO doc da leggere quando inizi a lavorare. Spiega come ragionare senza vedere la viewport, quando usare quale sense, come compensare l'assenza di vista visiva con metriche numeriche

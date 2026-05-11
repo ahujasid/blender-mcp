@@ -1,0 +1,341 @@
+# Session log — schema completo compilato
+#
+# Questo è un esempio realistico di un session log YAML che l'MCP scrive
+# a fine sessione. Mostra TUTTI i campi possibili. Le sessioni reali avranno
+# meno step ma stesso schema. L'MCP usa questo file come reference quando
+# costruisce il dict da serializzare.
+#
+# Convenzione field:
+#   - Required: sempre presente
+#   - Optional: presente solo se applicabile, altrimenti null o omesso
+
+session:
+  id: 2026-05-11_dragon_v1
+  started: 2026-05-11T14:32:01Z
+  ended: 2026-05-11T14:35:23Z
+  duration_s: 202
+  status: completed   # completed | failed | abandoned | partial_user_required
+  blender_version: "4.5.1"
+  blender_mcp_version: "1.6.0"
+
+  # ── Input ──
+  kickoff:
+    # Echo del kickoff template compilato dall'utente, normalizzato a dict
+    object:
+      name: dragon
+      source_generator: meshy
+      source_file: ~/meshy/dragon_v3.stl
+    target:
+      use_case: display
+      dimension: { axis: height, mm: 80 }
+      orientation: auto
+      show_side_or_load: "front + 3/4"
+    printer:
+      model: bambu_a1
+      filament: pla_basic
+      nozzle: 0.4mm
+      layer_height: auto
+      build_plate: textured_pei
+      time_budget: medio
+    policies:
+      sculpt_manual_allowed: no
+      poly_count_target: auto
+      thin_walls_policy: auto_fix
+      oversize_policy: ask
+      destructive_ops_policy: ask
+    output:
+      path: ~/print_ready/dragon.stl
+      format: stl
+      pre_export_qa: si
+    notes: |
+      Il naso è il dettaglio critico, no Voxel sotto 0.4mm.
+
+  # ── Scene state pre-pipeline ──
+  scene_initial:
+    objects:
+      - { name: dragon, type: MESH, location: [0.0, 0.0, 0.0] }
+      - { name: Camera, type: CAMERA }
+      - { name: Light, type: LIGHT }
+    unit_scale_length: 1.0   # 1 BU = 1m (Blender default)
+    main_mesh_resolved: dragon
+
+  # ── Pipeline execution log ──
+  # Ogni step traccia una decisione o operazione. Sequenza ordinata.
+  # MCP scrive ogni entry append-only durante l'esecuzione.
+  steps:
+    - id: 1
+      t_offset_ms: 0
+      action: analyze_mesh_for_print
+      args: { object_name: dragon }
+      result_summary:
+        face_count: 320000
+        non_manifold_edges: 234
+        boundary_loops: 7
+        disconnected_shells: 3
+        degenerate_faces: 12
+        dimensions_mm: [1003.2, 802.1, 1501.4]
+        ready_to_slice: false
+        watertight: false
+        wall_thickness_p10_mm: null    # null perché non watertight
+        aspect_ratio_p95: 5.4
+        inverted_face_pct: null
+      duration_ms: 145
+      assessment: ok
+
+    - id: 2
+      t_offset_ms: 150
+      action: kb_route
+      args: { analysis_ref: step.1 }
+      result_summary:
+        matched_rules: [R009, R001, R003, R004]
+        priority_order: [R009, R001, R004, R003]
+        top: R009
+        next_action: { tool: ask_user, rule_id: R009 }
+      duration_ms: 23
+      assessment: ok
+
+    - id: 3
+      t_offset_ms: 173
+      action: kickoff_resolution    # MCP-internal: skip ask_user perché kickoff ha la risposta
+      rule_id: R009
+      question_skipped: "Mesh dim 1003mm fuori range, target?"
+      resolved_from: kickoff.target.dimension
+      resolution: "rescale to height=80mm"
+      duration_ms: 0
+      assessment: skipped_via_kickoff
+
+    - id: 4
+      t_offset_ms: 200
+      action: execute_blender_code
+      label: "rescale to height=80mm"
+      rule_id: R009
+      pre_metrics: { dimensions_mm: [1003.2, 802.1, 1501.4] }
+      post_metrics: { dimensions_mm: [53.4, 42.8, 80.0] }
+      duration_ms: 89
+      assessment: ok
+
+    - id: 5
+      t_offset_ms: 350
+      action: analyze_mesh_for_print
+      args: { object_name: dragon }
+      result_summary:
+        # Solo i campi cambiati significativamente vs step.1
+        dimensions_mm: [53.4, 42.8, 80.0]
+        non_manifold_edges: 234
+        ready_to_slice: false
+      duration_ms: 142
+      assessment: ok
+
+    - id: 6
+      t_offset_ms: 500
+      action: kb_route
+      result_summary:
+        matched_rules: [R001, R004, R003]
+        top: R001
+        next_action: { tool: kb_get_playbook, args: { playbook_id: repair_basic } }
+      duration_ms: 21
+      assessment: ok
+
+    - id: 7
+      t_offset_ms: 525
+      action: execute_blender_code
+      label: "playbook repair_basic"
+      playbook: repair_basic
+      rule_id: R001
+      params: { merge_distance_mm: 0.001, fill_max_sides: 8 }
+      pre_metrics:
+        non_manifold_edges: 234
+        boundary_loops: 7
+        degenerate_faces: 12
+      post_metrics:
+        non_manifold_edges: 198
+        boundary_loops: 3
+        degenerate_faces: 0
+      expected_after:
+        # da playbook.verification.expect
+        degenerate_faces: 0
+        boundary_loops: "<= 7"
+        non_manifold_edges: "<= 234"
+      actual_delta:
+        degenerate_faces: -12          # ok (atteso 0)
+        boundary_loops: -4             # ok (atteso decrease)
+        non_manifold_edges: -36        # ok (atteso decrease)
+      duration_ms: 1834
+      assessment: ok    # all expected_after met
+
+    - id: 8
+      t_offset_ms: 2400
+      action: ask_user
+      rule_id: R003
+      question: "Tre shells separate (volumi: 95% / 3% / 2%). Procedere con remove_small_objects o gestire diversamente?"
+      options: ["remove_small (auto)", "union all", "keep all separate"]
+      user_response: "remove_small"
+      duration_ms: 4500     # tempo user ha impiegato
+      assessment: user_answered
+      user_tag: null         # campo per future-use (in-flight feedback opzionale)
+
+    - id: 9
+      t_offset_ms: 7000
+      action: execute_blender_code
+      label: "remove_small_objects, kept main shell"
+      rule_id: R003
+      pre_metrics: { disconnected_shells: 3 }
+      post_metrics: { disconnected_shells: 1 }
+      duration_ms: 412
+      assessment: ok
+
+    - id: 10
+      t_offset_ms: 7450
+      action: execute_blender_code
+      label: "playbook repair_basic (post-shells)"
+      playbook: repair_basic
+      rule_id: R004
+      pre_metrics: { non_manifold_edges: 198, boundary_loops: 3 }
+      post_metrics: { non_manifold_edges: 0, boundary_loops: 0 }
+      expected_after:
+        boundary_loops: 0
+      actual_delta:
+        boundary_loops: -3
+        non_manifold_edges: -198
+      duration_ms: 1156
+      assessment: ok
+
+    - id: 11
+      t_offset_ms: 8650
+      action: analyze_mesh_for_print
+      result_summary:
+        face_count: 318000
+        watertight: true
+        ready_to_slice: true
+        wall_thickness_p10_mm: 1.4
+        inverted_face_pct: 0.0
+      duration_ms: 198
+      assessment: ok
+
+    - id: 12
+      t_offset_ms: 8900
+      action: kb_route
+      result_summary:
+        matched_rules: [R006]      # face_count > 500k? no, 318k. R006 trigger > 500k
+                                   # but use_case=display target poly = 200k → kickoff override
+        top_after_kickoff_override: "decimate_to_target with target_faces=200000"
+      duration_ms: 18
+      assessment: ok
+
+    - id: 13
+      t_offset_ms: 8950
+      action: execute_blender_code
+      label: "playbook decimate_to_target"
+      playbook: decimate_to_target
+      params: { target_faces: 200000 }
+      pre_metrics: { face_count: 318000, aspect_ratio_p95: 5.4 }
+      post_metrics: { face_count: 198432, aspect_ratio_p95: 7.1 }
+      expected_after: { face_count: "<= 210000" }
+      actual_delta: { face_count: -119568 }
+      duration_ms: 967
+      assessment: ok
+
+    - id: 14
+      t_offset_ms: 9950
+      action: kb_route
+      result_summary:
+        matched_rules: []   # nessuna rule triggera, mesh pulita
+        next_action: { tool: ready }
+      duration_ms: 12
+      assessment: ok
+
+    - id: 15
+      t_offset_ms: 9980
+      action: get_viewport_screenshot     # pre-export QA (kickoff.output.pre_export_qa = si)
+      args: { max_size: 800 }
+      result_summary:
+        recipe: R5_pre_export_sanity
+        screenshot_bytes: 142933
+      duration_ms: 567
+      assessment: ok
+
+    - id: 16
+      t_offset_ms: 10570
+      action: export_stl
+      args:
+        object_name: dragon
+        filepath: ~/print_ready/dragon.stl
+        apply_modifiers: true
+      result_summary:
+        success: true
+        file_size_bytes: 2843921
+        triangle_count: 198432
+      duration_ms: 612
+      assessment: ok
+
+  # ── Output snapshot finale ──
+  final_analysis:
+    face_count: 198432
+    non_manifold_edges: 0
+    boundary_loops: 0
+    disconnected_shells: 1
+    degenerate_faces: 0
+    dimensions_mm: [53.4, 42.8, 80.0]
+    ready_to_slice: true
+    watertight: true
+    wall_thickness_p10_mm: 1.2
+    wall_thickness_p50_mm: 4.8
+    wall_thickness_under_min_pct: 1.8
+    inverted_face_pct: 0.0
+    aspect_ratio_p95: 7.1
+    dihedral_angle_p90_deg: 47.3
+    bottom_contact_area_mm2: 412.1
+    convex_hull_volume_ratio: 0.34
+    surface_area_mm2: 18452.3
+    center_of_mass_mm: [26.7, 21.4, 38.2]
+
+  output:
+    files:
+      - path: ~/print_ready/dragon.stl
+        size_bytes: 2843921
+        triangle_count: 198432
+        format: stl
+    estimates:
+      pla_mass_g: 18.4              # surface_area_mm2 * 0.0008mm wall * 1.24 g/cm3
+      print_time_h: 2.3             # da face_count + layer_height (rough)
+    slicer_profile_reco:
+      profile: "estetico (display)"
+      layer_height: 0.16mm
+      walls: 3
+      infill: 15
+      pattern: Gyroid
+      support: tree_organic
+      seam: scarf
+      wall_order: Outer/Inner       # vedi hidden_bambu_studio_settings
+
+  # ── User feedback (post-mortem) ──
+  # 3 campi, tutti opzionali. Se l'utente non risponde → satisfaction: unanswered.
+  feedback:
+    satisfaction: positive          # positive | neutral | negative | unanswered
+    flagged_steps: []               # es. [8, 13] se l'utente vuole flaggare problemi
+    notes: ""                       # free text breve. Note lunghe vanno in _private/<id>.md
+    private_notes_ref: null         # es. "_private/2026-05-11_dragon_v1.md" se l'utente ha scritto note private
+
+  # ── Introspection (generata da MCP, può essere arricchita da cross-session review) ──
+  introspection:
+    metrics:
+      all_expected_after_met: true
+      ask_user_count: 1
+      ask_user_resolved_via_kickoff: 1     # R009 evitato grazie a kickoff
+      error_count: 0
+      undo_count: 0
+      total_playbook_steps: 3              # repair_basic x2 + decimate_to_target
+      total_rule_matches: 8
+      pipeline_efficiency: 0.92             # (rule matched - ask_user) / rule matched
+
+    observations:
+      - "Pipeline pulita end-to-end con solo 1 ask_user (shells multiple)."
+      - "R009 risolto via kickoff (target.dimension già compilato) — kickoff template ha funzionato."
+      - "R013 NON matched (aspect_ratio_p95=7.1 post-decimate, sotto soglia 10) — buon parameter."
+      - "wall_thickness_under_min_pct=1.8% accettato senza fix (auto_fix non scattato perché sotto 5% threshold)."
+
+    suggested_kb_updates: []      # Vuoto su singola sessione. Popolato da cross-session review.
+
+    # Future use: per cross-session review l'MCP può aggiungere qui pattern detection
+    # quando questa sessione è inclusa in un batch di review.
+    # cross_session_tags: ["display", "meshy", "pla_basic"]   # opzionale, per filtering

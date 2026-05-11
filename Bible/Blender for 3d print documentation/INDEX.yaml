@@ -82,7 +82,11 @@ topics:
 
   - id: mcp_blind_operating_protocol
     band: A
-    related: [analyze_to_action, camera_verification, blender_3d_print_toolbox, error_handling_mcp, mcp_tools, problem_to_tool_map, session_kickoff_template, use_case_taxonomy]
+    related: [analyze_to_action, camera_verification, blender_3d_print_toolbox, error_handling_mcp, mcp_tools, problem_to_tool_map, session_kickoff_template, use_case_taxonomy, learning_loop]
+
+  - id: learning_loop
+    band: A
+    related: [mcp_blind_operating_protocol, session_kickoff_template, use_case_taxonomy, analyze_to_action]
 
   - id: session_kickoff_template
     band: A

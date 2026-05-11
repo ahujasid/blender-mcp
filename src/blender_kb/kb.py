@@ -49,7 +49,7 @@ PLAYBOOKS_DIR = "playbooks"
 MAX_WALK_UP = 6
 
 # Folders skipped by sub-KB discovery (archived / hidden / package metadata)
-_SKIP_DIRS = {"playbooks", "eval", "scripts", "templates"}
+_SKIP_DIRS = {"playbooks", "eval", "scripts", "templates", "sessions"}
 _SKIP_PREFIXES = ("_", ".")
 
 # "## [topic_id]" anchor, lowercase + digits + underscore

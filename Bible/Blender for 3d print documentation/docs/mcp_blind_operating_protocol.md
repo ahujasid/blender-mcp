@@ -320,6 +320,23 @@ Se mancano campi vitali O routing rules hanno `needs_user_input=True`:
 
 Vai al "workflow standard end-to-end" sopra.
 
+### Step 8 — End-of-session log (learning loop)
+
+Dopo `export_stl` (o failure), SEMPRE:
+
+1. **Write session log YAML** in `Bible/sessions/<id>.yaml`. Schema completo in `Bible/templates/session_log_example.yaml`. L'MCP accumula i dati durante l'esecuzione (un dict in memoria con `kickoff`, `scene_initial`, `steps[]`, `final_analysis`, `output`, `introspection.metrics`) e li serializza a yaml.safe_dump a fine.
+
+2. **Ask post-mortem (3 domande max, in 1 messaggio)**:
+   - Soddisfatto? (positive/neutral/negative, default positive)
+   - Step problematici? (vuoto OK)
+   - Note brevi? (vuoto OK)
+
+   Se l'utente non risponde, mantieni `feedback.satisfaction: unanswered`. Non insistere.
+
+3. **NON proporre review automatico**. Il review cross-sessione è on-demand. L'utente sa che esiste e lo lancia quando vuole.
+
+Dettagli completi in [learning_loop].
+
 ### Esempio sessione completa
 
 User: `[paste session_kickoff.md compilato per dragon, use_case display, height 80mm]`

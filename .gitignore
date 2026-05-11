@@ -23,3 +23,9 @@ Bible/Bambu Wiki documentation/clusters.json
 Bible/Blender for 3d print documentation/clusters.json
 Bible/Scraping/
 Bible/Research materials/
+
+# Session logs — free-text personal notes (gitignored).
+# Technical YAML logs in Bible/sessions/*.yaml are versioned for traceability;
+# only the _private/ sidecar with personal notes is ignored.
+Bible/sessions/_private/*
+!Bible/sessions/_private/.gitkeep
