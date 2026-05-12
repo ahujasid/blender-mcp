@@ -16,6 +16,8 @@ caricarla tutta nel context.
 | `kb_route(analysis_json)` | **Decision tree** sopra l'output di `analyze_mesh_for_print`. Restituisce le regole matchate (ordinate per priority) e `next_action` direttamente eseguibile (`kb_get_playbook`, `kb_get_topic`, `ask_user`, `ready`). Vedi `Blender for 3d print documentation/docs/analyze_to_action.md` per l'elenco completo delle 9 regole R001-R009. |
 | `kb_list_playbooks()` | Elenca i playbook disponibili (`repair_basic`, `recalc_normals`, `repair_aggressive`, `decimate_to_target`) con `step_count` e `when_to_use`. |
 | `kb_get_playbook(playbook_id)` | Restituisce il JSON completo di un playbook: `params`, `steps[]` (con `tool`+`code`), `verification` (re-analyze + expected delta), `topic_refs`. L'**esecuzione** spetta all'assistente tramite `blender-mcp` (`execute_blender_code`); il server `blender-kb` non esegue nulla. |
+| `kb_list_sessions(limit=10, with_summary=False)` | Lista delle session log YAML in `Bible/sessions/`, ordinate dalla più recente. Ogni entry: `id, file, started, duration_s, status, use_case, satisfaction`. Con `with_summary=True` aggiunge `step_count, rules_fired, final_ready_to_slice, final_face_count`. Per **review cross-sessione on-demand**: l'utente chiede "review ultime 10 sessioni", l'assistente chiama questo + `kb_get_session` per ognuna. |
+| `kb_get_session(session_id)` | Restituisce il YAML completo di una session log come JSON. `session_id` = filename stem (es. `2026-05-11_dragon_v1`). Drill-down su una sessione specifica. |
 
 ## Prompt
 
@@ -98,7 +100,7 @@ BLENDER_KB_PATH="$PWD/Bible" uv run --python 3.12 blender-kb
 
 Output atteso nel log:
 ```
-KB loaded: root=.../Bible, sub-KBs=['Bambu Wiki documentation', 'Blender for 3d print documentation'], topics=60
+KB loaded: root=.../Bible, sub-KBs=['Bambu Wiki documentation', 'Blender for 3d print documentation'], topics=81
 ```
 
 Poi il server resta in attesa su stdio.

@@ -324,16 +324,58 @@ Vai al "workflow standard end-to-end" sopra.
 
 Dopo `export_stl` (o failure), SEMPRE:
 
-1. **Write session log YAML** in `Bible/sessions/<id>.yaml`. Schema completo in `Bible/templates/session_log_example.yaml`. L'MCP accumula i dati durante l'esecuzione (un dict in memoria con `kickoff`, `scene_initial`, `steps[]`, `final_analysis`, `output`, `introspection.metrics`) e li serializza a yaml.safe_dump a fine.
+**1. Recupera il KB root absolute path**
 
-2. **Ask post-mortem (3 domande max, in 1 messaggio)**:
-   - Soddisfatto? (positive/neutral/negative, default positive)
-   - Step problematici? (vuoto OK)
-   - Note brevi? (vuoto OK)
+```python
+# kb_status ritorna {root: "/abs/path/to/Bible", ...}
+import json
+status = json.loads(kb_status())   # via blender-kb MCP server
+kb_root = status["root"]            # es. "/home/user/blender-mcp/Bible"
+```
 
-   Se l'utente non risponde, mantieni `feedback.satisfaction: unanswered`. Non insistere.
+**2. Serializza il dict accumulato + write il file**
 
-3. **NON proporre review automatico**. Il review cross-sessione è on-demand. L'utente sa che esiste e lo lancia quando vuole.
+```python
+# Via execute_blender_code sul server blender-mcp. L'assistente passa
+# kb_root come parametro inline nel codice (è disponibile dalla risposta
+# di kb_status sopra).
+
+import yaml, datetime, pathlib, re
+
+# session_dict è accumulato durante la pipeline come variabile in memoria
+# Schema: vedi Bible/templates/session_log_example.yaml
+
+# Naming: <YYYY-MM-DD>_<short_name>.yaml
+date_str = datetime.date.today().isoformat()
+short = re.sub(r'[^a-z0-9_-]+', '_', (session_dict.get('session', {})
+                .get('kickoff', {}).get('object', {}).get('name', 'mesh')).lower())
+session_id = f"{date_str}_{short}"
+session_dict["session"]["id"] = session_id
+
+out_path = pathlib.Path("<KB_ROOT_INLINE>") / "sessions" / f"{session_id}.yaml"
+out_path.parent.mkdir(parents=True, exist_ok=True)
+with open(out_path, "w", encoding="utf-8") as f:
+    yaml.safe_dump(session_dict, f, sort_keys=False, allow_unicode=True,
+                   default_flow_style=False)
+print(f"Session log written: {out_path}")
+```
+
+Sostituisci `<KB_ROOT_INLINE>` con il valore concreto ricavato da `kb_status`. NB: alcuni Blender Python non hanno PyYAML built-in. Se `import yaml` fallisce, fallback a `json.dump` con suffisso `.json`:
+
+```python
+import json
+out_path = ... .with_suffix('.json')
+out_path.write_text(json.dumps(session_dict, indent=2, ensure_ascii=False, default=str))
+```
+
+**3. Ask post-mortem (3 domande max, in 1 messaggio)**:
+- Soddisfatto? (positive/neutral/negative, default positive)
+- Step problematici? (vuoto OK)
+- Note brevi? (vuoto OK)
+
+Se l'utente non risponde, mantieni `feedback.satisfaction: unanswered`. Non insistere. Se risponde, **read-modify-write** lo stesso file YAML aggiornando `session.feedback.*`.
+
+**4. NON proporre review automatico**. Il review cross-sessione è on-demand. L'utente sa che esiste e lo lancia quando vuole (vedi `kb_list_sessions` + `kb_get_session`).
 
 Dettagli completi in [learning_loop].
 

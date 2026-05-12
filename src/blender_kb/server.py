@@ -9,6 +9,8 @@ Tools:
   kb_route(analysis_json)                                  -> action routing
   kb_list_playbooks()                                      -> available playbooks
   kb_get_playbook(playbook_id)                             -> single playbook
+  kb_list_sessions(limit?, with_summary?)                  -> recent session logs
+  kb_get_session(session_id)                               -> full session log
 
 Prompts:
   kb_bootstrap()  -> CLAUDE.md + SYSTEM_PROMPT.md + INDEX summaries, intended as
@@ -334,6 +336,57 @@ def kb_get_playbook(playbook_id: str) -> str:
     return json.dumps(data, indent=2, ensure_ascii=False)
 
 
+# --------------------------------- sessions ----------------------------------
+
+@mcp.tool()
+def kb_list_sessions(limit: int = 10, with_summary: bool = False) -> str:
+    """List the most recent session logs in Bible/sessions/, newest first.
+
+    Sessions are written automatically by the MCP at the end of every
+    print-prep workflow (see learning_loop.md). They are the input to
+    cross-session pattern review.
+
+    Parameters:
+    - limit: how many recent sessions to return (default 10).
+    - with_summary: if True, also include step_count, rules_fired list,
+      final_ready_to_slice, final_face_count for each session. Useful for
+      a richer overview at the cost of a bit more JSON.
+
+    Returns JSON list of session entries with id, file, started, duration_s,
+    status, use_case, satisfaction (and the summary fields if requested).
+    """
+    try:
+        kb = _get_kb()
+    except KBError as e:
+        return f"Error: {e}"
+    sessions = kb.list_sessions(limit=max(1, limit), with_summary=with_summary)
+    return json.dumps(sessions, indent=2, ensure_ascii=False)
+
+
+@mcp.tool()
+def kb_get_session(session_id: str) -> str:
+    """Return the full parsed session log YAML as JSON.
+
+    Use this after `kb_list_sessions` to drill into a specific session
+    (e.g. for cross-session review or comparison).
+
+    Parameters:
+    - session_id: filename stem of a session log under Bible/sessions/,
+      e.g. "2026-05-11_dragon_v1".
+
+    Returns the session dict (kickoff, scene_initial, steps[],
+    final_analysis, output, feedback, introspection) as JSON.
+    """
+    try:
+        kb = _get_kb()
+        data = kb.get_session(session_id)
+    except KBNotFound as e:
+        return f"Error: {e}"
+    except KBError as e:
+        return f"Error: {e}"
+    return json.dumps(data, indent=2, ensure_ascii=False)
+
+
 # --------------------------------- prompt ------------------------------------
 
 @mcp.prompt()
@@ -351,9 +404,19 @@ def kb_bootstrap() -> str:
         f"KB root: `{kb.root}`\n"
         f"Sub-KBs: {', '.join(kb.list_kbs())}\n"
         f"Indexed topics: {len(kb.topics)}\n\n"
-        "Use the tools `kb_list_topics`, `kb_get_topic`, `kb_search`, `kb_read` "
-        "to access the documentation on demand. Do not write Blender code without "
-        "first reading the relevant topic.\n"
+        "**Read FIRST**: `kb_get_topic('mcp_blind_operating_protocol')` — "
+        "explains how to operate without viewport access (you are blind!), "
+        "the 4 senses available (analyze JSON / Toolbox report / screenshot / "
+        "Python introspection), and the T+0 session kickoff sequence.\n\n"
+        "Then read in order:\n"
+        "1. `session_kickoff_template` — parsing user kickoff input\n"
+        "2. `use_case_taxonomy` — defaults per use_case (display/mech/.../tool_print)\n"
+        "3. `analyze_to_action` — decision tree from analyze_mesh_for_print JSON\n"
+        "4. `learning_loop` — write session log + post-mortem at end\n\n"
+        "Core tools: `kb_list_topics`, `kb_get_topic`, `kb_search`, `kb_read`, "
+        "`kb_route` (routing), `kb_get_playbook` (executable sequences), "
+        "`kb_list_sessions`/`kb_get_session` (cross-session review on demand).\n"
+        "Do not write Blender code without first reading the relevant topic.\n"
     )
     for fname in ("CLAUDE.md", "SYSTEM_PROMPT.md"):
         try:

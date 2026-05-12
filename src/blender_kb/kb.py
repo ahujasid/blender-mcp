@@ -231,6 +231,69 @@ class KnowledgeBase:
                 return json.loads(pf.read_text(encoding="utf-8"))
         raise KBNotFound(f"Unknown playbook_id '{playbook_id}'. Use kb_list_playbooks.")
 
+    # ---- sessions (learning loop) -------------------------------------------
+
+    def list_sessions(self, limit: int = 10, with_summary: bool = False) -> list[dict]:
+        """List YAML session logs in <root>/sessions/, newest first.
+
+        Each entry: {id, file, started, duration_s, status, use_case,
+                     satisfaction}. If with_summary=True, also include
+                     pipeline_executed counts and final_analysis snippet.
+
+        Returns empty list if sessions/ doesn't exist.
+        """
+        sdir = self.root / "sessions"
+        if not sdir.is_dir():
+            return []
+        files = sorted(
+            (p for p in sdir.glob("*.yaml") if p.is_file()),
+            key=lambda p: p.name,
+            reverse=True,
+        )[:max(1, limit)]
+
+        out: list[dict] = []
+        for f in files:
+            try:
+                data = yaml.safe_load(f.read_text(encoding="utf-8")) or {}
+            except (OSError, yaml.YAMLError):
+                continue
+            s = data.get("session") or {}
+            entry = {
+                "id": s.get("id", f.stem),
+                "file": f.name,
+                "started": s.get("started"),
+                "duration_s": s.get("duration_s"),
+                "status": s.get("status"),
+                "use_case": ((s.get("kickoff") or {}).get("target") or {}).get("use_case"),
+                "satisfaction": (s.get("feedback") or {}).get("satisfaction"),
+            }
+            if with_summary:
+                steps = s.get("steps") or []
+                entry["step_count"] = len(steps)
+                rule_ids = []
+                for step in steps:
+                    rid = step.get("rule_id")
+                    if rid and rid not in rule_ids:
+                        rule_ids.append(rid)
+                entry["rules_fired"] = rule_ids
+                final = s.get("final_analysis") or {}
+                entry["final_ready_to_slice"] = final.get("ready_to_slice")
+                entry["final_face_count"] = final.get("face_count")
+            out.append(entry)
+        return out
+
+    def get_session(self, session_id: str) -> dict:
+        """Return the full parsed YAML of a session log by id (filename stem)."""
+        sdir = self.root / "sessions"
+        candidates = [sdir / f"{session_id}.yaml"]
+        for sf in candidates:
+            if sf.is_file():
+                data = yaml.safe_load(sf.read_text(encoding="utf-8")) or {}
+                return data
+        raise KBNotFound(
+            f"Unknown session_id '{session_id}'. Use kb_list_sessions to discover."
+        )
+
 
 # ----------------------------- discovery -------------------------------------
 
