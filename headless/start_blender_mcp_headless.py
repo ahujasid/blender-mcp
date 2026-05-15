@@ -86,49 +86,12 @@ signal.signal(signal.SIGTERM, _shutdown)
 signal.signal(signal.SIGINT, _shutdown)
 
 # ---------------------------------------------------------------------------
-# Keep the Blender process alive via a modal timer operator
+# Keep the Blender process alive via headless-safe persistent timer
+# (modal operators require a window; --background has none)
 # ---------------------------------------------------------------------------
+from headless.headless_socket_mode import install_headless_keepalive  # BMA_PATCH
 
-class BMA_OT_HeadlessKeepAlive(bpy.types.Operator):
-    """Modal operator that keeps the headless Blender process running."""
-
-    bl_idname = "bma.headless_keep_alive"
-    bl_label = "BMA Headless Keep-Alive"
-
-    _timer = None
-
-    def modal(self, context, event):
-        if event.type == "TIMER":
-            if _shutdown_requested or not bpy.types.blendermcp_server.running:
-                self.cancel(context)
-                # Quit Blender cleanly
-                bpy.ops.wm.quit_blender()
-                return {"CANCELLED"}
-        return {"PASS_THROUGH"}
-
-    def execute(self, context):
-        wm = context.window_manager
-        self._timer = wm.event_timer_add(0.5, window=context.window)
-        wm.modal_handler_add(self)
-        return {"RUNNING_MODAL"}
-
-    def cancel(self, context):
-        if self._timer is not None:
-            context.window_manager.event_timer_remove(self._timer)
-            self._timer = None
-        if hasattr(bpy.types, "blendermcp_server"):
-            bpy.types.blendermcp_server.stop()
-            del bpy.types.blendermcp_server
-        scene.blendermcp_server_running = False
-        print("[BMA headless] Shutdown complete.")
-
-
-bpy.utils.register_class(BMA_OT_HeadlessKeepAlive)
-
-
-def _start_keepalive():
-    bpy.ops.bma.headless_keep_alive("INVOKE_DEFAULT")
-
-
-# Schedule the operator to run after Blender finishes its startup sequence.
-bpy.app.timers.register(_start_keepalive, first_interval=0.1)
+install_headless_keepalive(
+    server=bpy.types.blendermcp_server,
+    shutdown_flag_getter=lambda: _shutdown_requested,
+)
