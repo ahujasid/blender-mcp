@@ -127,6 +127,21 @@ _PROFILES: dict[str, _ProfileDef] = {
 
 _FALLBACK_PROFILE = "minimal"
 
+# Profiles where execute_blender_code is UNCONDITIONALLY disabled.
+# No env-variable override can lift this restriction.
+# BMA_PATCH: explicit safety contract — do not remove.
+PYTHON_SAFE_PROFILES: frozenset[str] = frozenset({
+    "minimal",
+    "no_python",
+    "inspection_enabled",
+})
+
+# Profiles where execute_blender_code is permitted.
+PYTHON_ALLOWED_PROFILES: frozenset[str] = frozenset({
+    "python_enabled",
+    "full",
+})
+
 
 # ---------------------------------------------------------------------------
 # Public API
@@ -146,8 +161,15 @@ def is_tool_enabled(tool_name: str, profile: _ProfileDef | str | None = None) ->
 
     If *profile* is None the active env profile is used.
     Extra tools disabled via BMA_DISABLED_TOOLS are always excluded.
+
+    execute_blender_code is unconditionally blocked for PYTHON_SAFE_PROFILES
+    regardless of any env-variable override.
     """
     p = _resolve(profile)
+
+    # Absolute restriction: execute_blender_code is never enabled for safe profiles.
+    if tool_name == "execute_blender_code" and p.name in PYTHON_SAFE_PROFILES:
+        return False
 
     # Explicit env-level override: BMA_DISABLED_TOOLS
     if tool_name in _env_disabled_tools():
@@ -161,11 +183,15 @@ def is_tool_enabled(tool_name: str, profile: _ProfileDef | str | None = None) ->
 def is_python_allowed(profile: _ProfileDef | str | None = None) -> bool:
     """Return True if Python execution (execute_blender_code) is permitted.
 
-    Respects BMA_ALLOW_PYTHON_EXECUTION env override.
+    For PYTHON_SAFE_PROFILES (minimal, no_python, inspection_enabled) the
+    restriction is absolute — BMA_ALLOW_PYTHON_EXECUTION cannot override it.
+    For python_enabled and full, BMA_ALLOW_PYTHON_EXECUTION is respected.
     """
-    if _env_python_allowed():
-        return True
-    return _resolve(profile).python
+    p = _resolve(profile)
+    # Absolute restriction for safe profiles — no env override allowed.
+    if p.name in PYTHON_SAFE_PROFILES:
+        return False
+    return _env_python_allowed() or p.python
 
 
 def is_external_asset_allowed(profile: _ProfileDef | str | None = None) -> bool:
