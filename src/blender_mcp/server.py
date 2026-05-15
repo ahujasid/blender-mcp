@@ -281,6 +281,196 @@ def get_blender_connection():
     return _blender_connection
 
 
+# ---------------------------------------------------------------------------
+# BMA_PATCH: benchmark-meta and benchmark-safe tools (tasks 5.18, 5.19)
+# ---------------------------------------------------------------------------
+
+@_bma_gated("get_bma_profile_info")  # BMA_PATCH
+@mcp.tool()
+def get_bma_profile_info(ctx: Context) -> str:
+    """Return the active BMA benchmark profile and the tool allow/deny lists."""
+    from .tool_profiles import (
+        get_profile as _tp_get_profile,
+        get_enabled_tools,
+        get_disabled_tools,
+        is_python_allowed,
+        is_external_asset_allowed,
+    )
+    from .bma_env import is_external_assets_enabled, is_python_execution_allowed
+    import os as _os
+
+    profile = _tp_get_profile()
+    telemetry_disabled = _os.environ.get("BMA_ENABLE_TELEMETRY", "false").lower() not in ("1", "true", "yes")
+    result = {
+        "active_profile": profile.name,
+        "enabled_tools": sorted(get_enabled_tools(profile)),
+        "disabled_tools": sorted(get_disabled_tools(profile)),
+        "allow_python_execution": is_python_allowed(profile),
+        "allow_external_assets": is_external_asset_allowed(profile),
+        "telemetry_disabled": telemetry_disabled,
+    }
+    return json.dumps(result, indent=2)
+
+
+@_bma_gated("bma_get_scene_info")  # BMA_PATCH
+@mcp.tool()
+def bma_get_scene_info(ctx: Context) -> str:
+    """Return scene info as strict JSON without arbitrary Python. Safe in minimal/no_python."""
+    try:
+        blender = get_blender_connection()
+        result = blender.send_command("get_scene_info")
+        return json.dumps(result, indent=2)
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
+@_bma_gated("bma_create_object")  # BMA_PATCH
+@mcp.tool()
+def bma_create_object(
+    ctx: Context,
+    type: str,
+    name: str = "",
+    location: list[float] | None = None,
+    rotation: list[float] | None = None,
+    scale: list[float] | None = None,
+) -> str:
+    """Create a primitive object. type: MESH_CUBE|MESH_SPHERE|MESH_CYLINDER|MESH_PLANE|MESH_CONE|EMPTY."""
+    try:
+        blender = get_blender_connection()
+        params: dict = {"type": type}
+        if name:
+            params["name"] = name
+        if location:
+            params["location"] = location
+        if rotation:
+            params["rotation"] = rotation
+        if scale:
+            params["scale"] = scale
+        result = blender.send_command("create_object", params)
+        return json.dumps(result, indent=2)
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
+@_bma_gated("bma_set_transform")  # BMA_PATCH
+@mcp.tool()
+def bma_set_transform(
+    ctx: Context,
+    object_name: str,
+    location: list[float] | None = None,
+    rotation: list[float] | None = None,
+    scale: list[float] | None = None,
+) -> str:
+    """Set location/rotation/scale of a named object using strict JSON params."""
+    try:
+        blender = get_blender_connection()
+        params: dict = {"object_name": object_name}
+        if location is not None:
+            params["location"] = location
+        if rotation is not None:
+            params["rotation"] = rotation
+        if scale is not None:
+            params["scale"] = scale
+        result = blender.send_command("set_transform", params)
+        return json.dumps(result, indent=2)
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
+@_bma_gated("bma_set_material")  # BMA_PATCH
+@mcp.tool()
+def bma_set_material(
+    ctx: Context,
+    object_name: str,
+    color: list[float],
+    metallic: float = 0.0,
+    roughness: float = 0.5,
+) -> str:
+    """Assign a simple BSDF material (RGBA color + metallic/roughness) to an object."""
+    try:
+        blender = get_blender_connection()
+        params = {
+            "object_name": object_name,
+            "color": color,
+            "metallic": metallic,
+            "roughness": roughness,
+        }
+        result = blender.send_command("set_material", params)
+        return json.dumps(result, indent=2)
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
+@_bma_gated("bma_create_light")  # BMA_PATCH
+@mcp.tool()
+def bma_create_light(
+    ctx: Context,
+    type: str,
+    name: str = "",
+    location: list[float] | None = None,
+    energy: float = 1000.0,
+    color: list[float] | None = None,
+) -> str:
+    """Create a light. type: POINT|SUN|SPOT|AREA."""
+    try:
+        blender = get_blender_connection()
+        params: dict = {"type": type, "energy": energy}
+        if name:
+            params["name"] = name
+        if location:
+            params["location"] = location
+        if color:
+            params["color"] = color
+        result = blender.send_command("create_light", params)
+        return json.dumps(result, indent=2)
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
+@_bma_gated("bma_create_camera")  # BMA_PATCH
+@mcp.tool()
+def bma_create_camera(
+    ctx: Context,
+    name: str = "Camera",
+    location: list[float] | None = None,
+    rotation: list[float] | None = None,
+    lens: float = 50.0,
+) -> str:
+    """Create a camera object with optional lens focal length (mm)."""
+    try:
+        blender = get_blender_connection()
+        params: dict = {"name": name, "lens": lens}
+        if location:
+            params["location"] = location
+        if rotation:
+            params["rotation"] = rotation
+        result = blender.send_command("create_camera", params)
+        return json.dumps(result, indent=2)
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
+@_bma_gated("bma_export_scene")  # BMA_PATCH
+@mcp.tool()
+def bma_export_scene(
+    ctx: Context,
+    filepath: str,
+    format: str = "GLB",
+) -> str:
+    """Export the current scene. format: GLB|GLTF|OBJ|FBX|USD."""
+    try:
+        blender = get_blender_connection()
+        params = {"filepath": filepath, "format": format}
+        result = blender.send_command("export_scene", params)
+        return json.dumps(result, indent=2)
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
+# ---------------------------------------------------------------------------
+# Upstream tools (proxied through blender-mcp)
+# ---------------------------------------------------------------------------
+
 @telemetry_tool("get_scene_info")
 @_bma_gated("get_scene_info")  # BMA_PATCH
 @mcp.tool()

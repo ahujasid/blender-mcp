@@ -27,6 +27,14 @@ _ALL_TOOLS: frozenset[str] = frozenset({
     "get_viewport_screenshot",
     # Python execution
     "execute_blender_code",
+    # BMA_PATCH: benchmark-safe structured tools (task 5.18)
+    "bma_get_scene_info",
+    "bma_create_object",
+    "bma_set_transform",
+    "bma_set_material",
+    "bma_create_light",
+    "bma_create_camera",
+    "bma_export_scene",
     # Poly Haven
     "get_polyhaven_status",
     "get_polyhaven_categories",
@@ -100,13 +108,21 @@ class _ProfileDef:
 
 
 _PROFILES: dict[str, _ProfileDef] = {
-    # minimal — only the three safe read-only core tools.
+    # minimal — safe read-only + structured bma_* tools (no Python, no external assets).
     "minimal": _ProfileDef(
         name="minimal",
         allowed=frozenset({
             "get_bma_profile_info",
             "get_scene_info",
             "get_object_info",
+            # BMA_PATCH: benchmark-safe structured tools allowed in minimal (task 5.18)
+            "bma_get_scene_info",
+            "bma_create_object",
+            "bma_set_transform",
+            "bma_set_material",
+            "bma_create_light",
+            "bma_create_camera",
+            "bma_export_scene",
         }),
         python=False,
         external_assets=False,

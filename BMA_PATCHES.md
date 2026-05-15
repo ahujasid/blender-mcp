@@ -125,13 +125,14 @@ python -m pytest tests/ -v
 | Переменная | Значение по умолчанию | Описание |
 |------------|-----------------------|----------|
 | `BMA_MCP_PROFILE` | `full` | Активный профиль tool-gating |
-| `DISABLE_TELEMETRY` | `true` (в fork) | Отключить отправку telemetry |
-| `BMA_FORCE_TELEMETRY` | не задана | Принудительно включить telemetry (переопределяет `DISABLE_TELEMETRY`) |
+| `DISABLE_TELEMETRY` | `true` (в fork) | Прямое отключение telemetry; всегда выставляется в `true` через `build_mcp_env()` |
+| `BMA_ENABLE_TELEMETRY` | не задана | **Единственный** способ включить telemetry в benchmark-среде; устанавливайте `BMA_ENABLE_TELEMETRY=true` |
 | `BMA_HEADLESS` | `0` | Запустить add-on в headless-режиме (`1` = включён) |
 | `BMA_SOCKET_HOST` | `localhost` | Хост socket-сервера Blender add-on |
 | `BMA_SOCKET_PORT` | `9876` | Порт socket-сервера Blender add-on |
 
-Переменные `BLENDER_MCP_DISABLE_TELEMETRY` и `MCP_DISABLE_TELEMETRY` из upstream также поддерживаются для обратной совместимости.
+Telemetry отключена **по умолчанию** и включается только явным opt-in через `BMA_ENABLE_TELEMETRY=true`.
+Переменные `BLENDER_MCP_DISABLE_TELEMETRY` и `MCP_DISABLE_TELEMETRY` из upstream также поддерживаются для обратной совместимости, но в benchmark-среде предпочтителен `BMA_ENABLE_TELEMETRY`.
 
 ---
 
