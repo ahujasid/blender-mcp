@@ -41,3 +41,11 @@ package-dir = {"" = "src"}
 [project.urls]
 "Homepage" = "https://github.com/yourusername/blender-mcp"
 "Bug Tracker" = "https://github.com/yourusername/blender-mcp/issues"
+
+# BMA_PATCH: pytest configuration — run without -m mcp to skip real-server tests.
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+markers = [
+    "mcp: tests requiring a running MCP server / Blender with blender-mcp addon",
+]
