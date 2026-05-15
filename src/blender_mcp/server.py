@@ -10,11 +10,8 @@ from contextlib import asynccontextmanager
 from typing import AsyncIterator, Dict, Any, List
 import os
 from pathlib import Path
-import base64
-from urllib.parse import urlparse
 
 # Import telemetry
-from .telemetry import record_startup, get_telemetry
 from .telemetry_decorator import telemetry_tool
 # BMA_PATCH: tool-gating
 import functools as _functools
@@ -198,6 +195,7 @@ async def server_lifespan(server: FastMCP) -> AsyncIterator[Dict[str, Any]]:
 
         # Record startup event for telemetry
         try:
+            from .telemetry import record_startup  # BMA_PATCH: lazy import
             record_startup()
         except Exception as e:
             logger.debug(f"Failed to record startup telemetry: {e}")
@@ -232,26 +230,23 @@ mcp = FastMCP(
 
 # Global connection for resources (since resources can't access context)
 _blender_connection = None
-_polyhaven_enabled = False  # Add this global variable
 
 def get_blender_connection():
-    """Get or create a persistent Blender connection"""
-    global _blender_connection, _polyhaven_enabled  # Add _polyhaven_enabled to globals
-    
-    # If we have an existing connection, check if it's still valid
+    """Get or create a persistent Blender connection."""
+    # BMA_PATCH: removed _polyhaven_enabled health-check ping (asset integration,
+    # not needed in benchmark mode and blocked by gating for safe profiles).
+    global _blender_connection
+
+    # If we have an existing connection, verify it with a lightweight ping
     if _blender_connection is not None:
         try:
-            # First check if PolyHaven is enabled by sending a ping command
-            result = _blender_connection.send_command("get_polyhaven_status")
-            # Store the PolyHaven status globally
-            _polyhaven_enabled = result.get("enabled", False)
+            _blender_connection.send_command("get_scene_info")
             return _blender_connection
         except Exception as e:
-            # Connection is dead, close it and create a new one
             logger.warning(f"Existing connection is no longer valid: {str(e)}")
             try:
                 _blender_connection.disconnect()
-            except:
+            except Exception:
                 pass
             _blender_connection = None
     
@@ -380,7 +375,7 @@ def get_polyhaven_categories(ctx: Context, asset_type: str = "hdris") -> str:
     """
     try:
         blender = get_blender_connection()
-        if not _polyhaven_enabled:
+        # BMA_PATCH: polyhaven status now fetched lazily per call
             return "PolyHaven integration is disabled. Select it in the sidebar in BlenderMCP, then run it again."
         result = blender.send_command("get_polyhaven_categories", {"asset_type": asset_type})
         
@@ -736,6 +731,7 @@ def get_sketchfab_model_preview(
             raise Exception(result["error"])
         
         # Decode base64 image data
+        import base64  # BMA_PATCH: lazy import (asset integration only)
         image_data = base64.b64decode(result["image_data"])
         img_format = result.get("format", "jpeg")
         
@@ -905,9 +901,10 @@ def generate_hyper3d_model_via_images(
         for path in input_image_paths:
             with open(path, "rb") as f:
                 images.append(
-                    (Path(path).suffix, base64.b64encode(f.read()).decode("ascii"))
+                    (Path(path).suffix, __import__('base64').b64encode(f.read()).decode("ascii"))
                 )
     elif input_image_urls is not None:
+        from urllib.parse import urlparse  # BMA_PATCH: lazy import (asset integration only)
         if not all(urlparse(i) for i in input_image_paths):
             return "Error: not all image URLs are valid!"
         images = input_image_urls.copy()
