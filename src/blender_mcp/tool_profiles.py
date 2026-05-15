@@ -16,43 +16,68 @@ from .bma_env import (
 )
 
 # ---------------------------------------------------------------------------
-# Complete tool catalogue (mirrors upstream blender-mcp tools)
+# Complete tool catalogue (all upstream blender-mcp tools)
 # ---------------------------------------------------------------------------
 
 _ALL_TOOLS: frozenset[str] = frozenset({
+    # Core scene inspection
     "get_bma_profile_info",
     "get_scene_info",
     "get_object_info",
     "get_viewport_screenshot",
+    # Python execution
     "execute_blender_code",
+    # Poly Haven
+    "get_polyhaven_status",
     "get_polyhaven_categories",
     "search_polyhaven_assets",
     "download_polyhaven_asset",
     "set_texture",
-    "get_polyhaven_status",
-    "get_hyper3d_status",
+    # Sketchfab
     "get_sketchfab_status",
     "search_sketchfab_models",
     "download_sketchfab_model",
+    # Hyper3D Rodin
+    "get_hyper3d_status",
     "generate_hyper3d_model_via_text",
     "generate_hyper3d_model_via_images",
+    "poll_rodin_job_status",
+    "import_generated_asset",
+    # Hunyuan3D
+    "get_hunyuan3d_status",
+    "generate_hunyuan3d_model",
+    "poll_hunyuan_job_status",
+    "import_generated_asset_hunyuan",
 })
 
-_PYTHON_TOOLS: frozenset[str] = frozenset({"execute_blender_code"})
-
+# All Poly Haven + Sketchfab + Hyper3D Rodin + Hunyuan3D tools.
+# BMA_PATCH: explicit safety contract — do not add items to safe profiles.
 _EXTERNAL_ASSET_TOOLS: frozenset[str] = frozenset({
+    # Poly Haven
+    "get_polyhaven_status",
     "get_polyhaven_categories",
     "search_polyhaven_assets",
     "download_polyhaven_asset",
     "set_texture",
-    "get_polyhaven_status",
+    # Sketchfab
+    "get_sketchfab_status",
     "search_sketchfab_models",
     "download_sketchfab_model",
+    # Hyper3D Rodin
+    "get_hyper3d_status",
     "generate_hyper3d_model_via_text",
     "generate_hyper3d_model_via_images",
-    "get_hyper3d_status",
-    "get_sketchfab_status",
+    "poll_rodin_job_status",
+    "import_generated_asset",
+    # Hunyuan3D
+    "get_hunyuan3d_status",
+    "generate_hunyuan3d_model",
+    "poll_hunyuan_job_status",
+    "import_generated_asset_hunyuan",
 })
+
+# Core tools that are safe in every profile.
+_CORE_TOOLS: frozenset[str] = _ALL_TOOLS - _EXTERNAL_ASSET_TOOLS - {"execute_blender_code"}
 
 # ---------------------------------------------------------------------------
 # Profile data
@@ -75,6 +100,7 @@ class _ProfileDef:
 
 
 _PROFILES: dict[str, _ProfileDef] = {
+    # minimal — only the three safe read-only core tools.
     "minimal": _ProfileDef(
         name="minimal",
         allowed=frozenset({
@@ -85,6 +111,7 @@ _PROFILES: dict[str, _ProfileDef] = {
         python=False,
         external_assets=False,
     ),
+    # inspection_enabled — scene inspection + viewport screenshot; no Python, no external.
     "inspection_enabled": _ProfileDef(
         name="inspection_enabled",
         allowed=frozenset({
@@ -96,27 +123,21 @@ _PROFILES: dict[str, _ProfileDef] = {
         python=False,
         external_assets=False,
     ),
+    # no_python — all core tools; no Python, no external assets.
     "no_python": _ProfileDef(
         name="no_python",
-        allowed=_ALL_TOOLS - {"execute_blender_code"},
+        allowed=_CORE_TOOLS,
         python=False,
-        external_assets=True,
+        external_assets=False,
     ),
+    # python_enabled — core tools + execute_blender_code; no external assets.
     "python_enabled": _ProfileDef(
         name="python_enabled",
-        allowed=frozenset({
-            "get_bma_profile_info",
-            "get_scene_info",
-            "get_object_info",
-            "get_viewport_screenshot",
-            "execute_blender_code",
-            "get_polyhaven_status",
-            "get_hyper3d_status",
-            "get_sketchfab_status",
-        }),
+        allowed=_CORE_TOOLS | {"execute_blender_code"},
         python=True,
         external_assets=False,
     ),
+    # full — all tools, no restrictions.
     "full": _ProfileDef(
         name="full",
         allowed=None,
@@ -142,6 +163,19 @@ PYTHON_ALLOWED_PROFILES: frozenset[str] = frozenset({
     "full",
 })
 
+# Profiles where ALL external asset tools are UNCONDITIONALLY disabled.
+# BMA_PATCH: explicit safety contract — do not remove.
+EXTERNAL_ASSET_SAFE_PROFILES: frozenset[str] = frozenset({
+    "minimal",
+    "no_python",
+    "inspection_enabled",
+})
+
+# Profiles where external asset tools are permitted.
+EXTERNAL_ASSET_ALLOWED_PROFILES: frozenset[str] = frozenset({
+    "full",
+})
+
 
 # ---------------------------------------------------------------------------
 # Public API
@@ -159,16 +193,20 @@ def get_profile(name: str | None = None) -> _ProfileDef:
 def is_tool_enabled(tool_name: str, profile: _ProfileDef | str | None = None) -> bool:
     """Return True if *tool_name* is permitted by *profile*.
 
-    If *profile* is None the active env profile is used.
-    Extra tools disabled via BMA_DISABLED_TOOLS are always excluded.
+    Absolute restrictions (cannot be overridden by env vars):
+    - execute_blender_code is blocked for PYTHON_SAFE_PROFILES.
+    - all _EXTERNAL_ASSET_TOOLS are blocked for EXTERNAL_ASSET_SAFE_PROFILES.
 
-    execute_blender_code is unconditionally blocked for PYTHON_SAFE_PROFILES
-    regardless of any env-variable override.
+    Additional tools can be disabled via BMA_DISABLED_TOOLS.
     """
     p = _resolve(profile)
 
-    # Absolute restriction: execute_blender_code is never enabled for safe profiles.
+    # Absolute restriction: execute_blender_code blocked for safe profiles.
     if tool_name == "execute_blender_code" and p.name in PYTHON_SAFE_PROFILES:
+        return False
+
+    # Absolute restriction: external asset tools blocked for safe profiles.
+    if tool_name in _EXTERNAL_ASSET_TOOLS and p.name in EXTERNAL_ASSET_SAFE_PROFILES:
         return False
 
     # Explicit env-level override: BMA_DISABLED_TOOLS
@@ -183,12 +221,9 @@ def is_tool_enabled(tool_name: str, profile: _ProfileDef | str | None = None) ->
 def is_python_allowed(profile: _ProfileDef | str | None = None) -> bool:
     """Return True if Python execution (execute_blender_code) is permitted.
 
-    For PYTHON_SAFE_PROFILES (minimal, no_python, inspection_enabled) the
-    restriction is absolute — BMA_ALLOW_PYTHON_EXECUTION cannot override it.
-    For python_enabled and full, BMA_ALLOW_PYTHON_EXECUTION is respected.
+    Restriction is absolute for PYTHON_SAFE_PROFILES — env override cannot lift it.
     """
     p = _resolve(profile)
-    # Absolute restriction for safe profiles — no env override allowed.
     if p.name in PYTHON_SAFE_PROFILES:
         return False
     return _env_python_allowed() or p.python
@@ -197,11 +232,13 @@ def is_python_allowed(profile: _ProfileDef | str | None = None) -> bool:
 def is_external_asset_allowed(profile: _ProfileDef | str | None = None) -> bool:
     """Return True if external asset tools are permitted.
 
-    Respects BMA_ENABLE_EXTERNAL_ASSETS env override.
+    Restriction is absolute for EXTERNAL_ASSET_SAFE_PROFILES.
+    For other profiles, BMA_ENABLE_EXTERNAL_ASSETS env override is respected.
     """
-    if _env_external_assets():
-        return True
-    return _resolve(profile).external_assets
+    p = _resolve(profile)
+    if p.name in EXTERNAL_ASSET_SAFE_PROFILES:
+        return False
+    return _env_external_assets() or p.external_assets
 
 
 def get_disabled_tools(profile: _ProfileDef | str | None = None) -> list[str]:
@@ -210,7 +247,6 @@ def get_disabled_tools(profile: _ProfileDef | str | None = None) -> list[str]:
     env_disabled = set(_env_disabled_tools())
 
     if p.allowed is None:
-        # full profile: only env-level disabled tools apply
         return sorted(env_disabled)
 
     disabled = (_ALL_TOOLS - p.allowed) | env_disabled
