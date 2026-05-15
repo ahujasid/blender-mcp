@@ -16,6 +16,24 @@ from urllib.parse import urlparse
 # Import telemetry
 from .telemetry import record_startup, get_telemetry
 from .telemetry_decorator import telemetry_tool
+# BMA_PATCH: tool-gating
+import functools as _functools
+from .tool_profiles import get_profile as _bma_get_profile, is_tool_enabled as _bma_is_tool_enabled
+
+def _bma_gated(tool_name: str):
+    """Decorator: raise if tool is disabled by the active BMA profile."""
+    def _decorator(func):
+        @_functools.wraps(func)
+        def _wrapper(*args, **kwargs):
+            _profile = _bma_get_profile()
+            if not _bma_is_tool_enabled(tool_name, _profile):
+                raise RuntimeError(
+                    f"Tool '{tool_name}' is disabled by benchmark profile '{_profile.name}'."
+                )
+            return func(*args, **kwargs)
+        return _wrapper
+    return _decorator
+
 
 # Configure logging
 logging.basicConfig(level=logging.INFO,
@@ -252,6 +270,7 @@ def get_blender_connection():
 
 
 @telemetry_tool("get_scene_info")
+@_bma_gated("get_scene_info")  # BMA_PATCH
 @mcp.tool()
 def get_scene_info(ctx: Context) -> str:
     """Get detailed information about the current Blender scene"""
@@ -266,6 +285,7 @@ def get_scene_info(ctx: Context) -> str:
         return f"Error getting scene info: {str(e)}"
 
 @telemetry_tool("get_object_info")
+@_bma_gated("get_object_info")  # BMA_PATCH
 @mcp.tool()
 def get_object_info(ctx: Context, object_name: str) -> str:
     """
@@ -285,6 +305,7 @@ def get_object_info(ctx: Context, object_name: str) -> str:
         return f"Error getting object info: {str(e)}"
 
 @telemetry_tool("get_viewport_screenshot")
+@_bma_gated("get_viewport_screenshot")  # BMA_PATCH
 @mcp.tool()
 def get_viewport_screenshot(ctx: Context, max_size: int = 800) -> Image:
     """
@@ -329,6 +350,7 @@ def get_viewport_screenshot(ctx: Context, max_size: int = 800) -> Image:
 
 
 @telemetry_tool("execute_blender_code")
+@_bma_gated("execute_blender_code")  # BMA_PATCH
 @mcp.tool()
 def execute_blender_code(ctx: Context, code: str) -> str:
     """
@@ -347,6 +369,7 @@ def execute_blender_code(ctx: Context, code: str) -> str:
         return f"Error executing code: {str(e)}"
 
 @telemetry_tool("get_polyhaven_categories")
+@_bma_gated("get_polyhaven_categories")  # BMA_PATCH
 @mcp.tool()
 def get_polyhaven_categories(ctx: Context, asset_type: str = "hdris") -> str:
     """
@@ -380,6 +403,7 @@ def get_polyhaven_categories(ctx: Context, asset_type: str = "hdris") -> str:
         return f"Error getting Polyhaven categories: {str(e)}"
 
 @telemetry_tool("search_polyhaven_assets")
+@_bma_gated("search_polyhaven_assets")  # BMA_PATCH
 @mcp.tool()
 def search_polyhaven_assets(
     ctx: Context,
@@ -430,6 +454,7 @@ def search_polyhaven_assets(
         return f"Error searching Polyhaven assets: {str(e)}"
 
 @telemetry_tool("download_polyhaven_asset")
+@_bma_gated("download_polyhaven_asset")  # BMA_PATCH
 @mcp.tool()
 def download_polyhaven_asset(
     ctx: Context,
@@ -482,6 +507,7 @@ def download_polyhaven_asset(
         return f"Error downloading Polyhaven asset: {str(e)}"
 
 @telemetry_tool("set_texture")
+@_bma_gated("set_texture")  # BMA_PATCH
 @mcp.tool()
 def set_texture(
     ctx: Context,
@@ -542,6 +568,7 @@ def set_texture(
         return f"Error applying texture: {str(e)}"
 
 @telemetry_tool("get_polyhaven_status")
+@_bma_gated("get_polyhaven_status")  # BMA_PATCH
 @mcp.tool()
 def get_polyhaven_status(ctx: Context) -> str:
     """
@@ -561,6 +588,7 @@ def get_polyhaven_status(ctx: Context) -> str:
         return f"Error checking PolyHaven status: {str(e)}"
 
 @telemetry_tool("get_hyper3d_status")
+@_bma_gated("get_hyper3d_status")  # BMA_PATCH
 @mcp.tool()
 def get_hyper3d_status(ctx: Context) -> str:
     """
@@ -582,6 +610,7 @@ def get_hyper3d_status(ctx: Context) -> str:
         return f"Error checking Hyper3D status: {str(e)}"
 
 @telemetry_tool("get_sketchfab_status")
+@_bma_gated("get_sketchfab_status")  # BMA_PATCH
 @mcp.tool()
 def get_sketchfab_status(ctx: Context) -> str:
     """
@@ -601,6 +630,7 @@ def get_sketchfab_status(ctx: Context) -> str:
         return f"Error checking Sketchfab status: {str(e)}"
 
 @telemetry_tool("search_sketchfab_models")
+@_bma_gated("search_sketchfab_models")  # BMA_PATCH
 @mcp.tool()
 def search_sketchfab_models(
     ctx: Context,
@@ -678,6 +708,7 @@ def search_sketchfab_models(
         return f"Error searching Sketchfab models: {str(e)}"
 
 @telemetry_tool("download_sketchfab_model")
+@_bma_gated("download_sketchfab_model")  # BMA_PATCH
 @mcp.tool()
 def get_sketchfab_model_preview(
     ctx: Context,
@@ -720,6 +751,7 @@ def get_sketchfab_model_preview(
         raise Exception(f"Failed to get preview: {str(e)}")
 
 
+@_bma_gated("download_sketchfab_model")  # BMA_PATCH
 @mcp.tool()
 def download_sketchfab_model(
     ctx: Context,
@@ -803,6 +835,7 @@ def _process_bbox(original_bbox: list[float] | list[int] | None) -> list[int] | 
     return [int(float(i) / max(original_bbox) * 100) for i in original_bbox] if original_bbox else None
 
 @telemetry_tool("generate_hyper3d_model_via_text")
+@_bma_gated("generate_hyper3d_model_via_text")  # BMA_PATCH
 @mcp.tool()
 def generate_hyper3d_model_via_text(
     ctx: Context,
@@ -840,6 +873,7 @@ def generate_hyper3d_model_via_text(
         return f"Error generating Hyper3D task: {str(e)}"
 
 @telemetry_tool("generate_hyper3d_model_via_images")
+@_bma_gated("generate_hyper3d_model_via_images")  # BMA_PATCH
 @mcp.tool()
 def generate_hyper3d_model_via_images(
     ctx: Context,
@@ -897,6 +931,7 @@ def generate_hyper3d_model_via_images(
         return f"Error generating Hyper3D task: {str(e)}"
 
 @telemetry_tool("poll_rodin_job_status")
+@_bma_gated("poll_rodin_job_status")  # BMA_PATCH
 @mcp.tool()
 def poll_rodin_job_status(
     ctx: Context,
@@ -941,6 +976,7 @@ def poll_rodin_job_status(
         return f"Error generating Hyper3D task: {str(e)}"
 
 @telemetry_tool("import_generated_asset")
+@_bma_gated("import_generated_asset")  # BMA_PATCH
 @mcp.tool()
 def import_generated_asset(
     ctx: Context,
@@ -974,6 +1010,7 @@ def import_generated_asset(
         logger.error(f"Error generating Hyper3D task: {str(e)}")
         return f"Error generating Hyper3D task: {str(e)}"
 
+@_bma_gated("get_hunyuan3d_status")  # BMA_PATCH
 @mcp.tool()
 def get_hunyuan3d_status(ctx: Context) -> str:
     """
@@ -991,6 +1028,7 @@ def get_hunyuan3d_status(ctx: Context) -> str:
         logger.error(f"Error checking Hunyuan3D status: {str(e)}")
         return f"Error checking Hunyuan3D status: {str(e)}"
     
+@_bma_gated("generate_hunyuan3d_model")  # BMA_PATCH
 @mcp.tool()
 def generate_hunyuan3d_model(
     ctx: Context,
@@ -1028,6 +1066,7 @@ def generate_hunyuan3d_model(
         logger.error(f"Error generating Hunyuan3D task: {str(e)}")
         return f"Error generating Hunyuan3D task: {str(e)}"
     
+@_bma_gated("poll_hunyuan_job_status")  # BMA_PATCH
 @mcp.tool()
 def poll_hunyuan_job_status(
     ctx: Context,
@@ -1057,6 +1096,7 @@ def poll_hunyuan_job_status(
         logger.error(f"Error generating Hunyuan3D task: {str(e)}")
         return f"Error generating Hunyuan3D task: {str(e)}"
 
+@_bma_gated("import_generated_asset_hunyuan")  # BMA_PATCH
 @mcp.tool()
 def import_generated_asset_hunyuan(
     ctx: Context,
