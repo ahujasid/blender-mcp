@@ -15,8 +15,17 @@ classifiers = [
 ]
 dependencies = [
     "mcp[cli]>=1.3.0",
+]
+
+# BMA_PATCH: asset-integration deps are optional — server runs in benchmark
+# mode without them. Install the 'telemetry' extra to enable usage reporting.
+[project.optional-dependencies]
+telemetry = [
     "supabase>=2.0.0",
     "tomli>=2.0.0",
+]
+full = [
+    "blender-mcp[telemetry]",
 ]
 
 [project.scripts]

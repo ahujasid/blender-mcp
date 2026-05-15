@@ -2,8 +2,13 @@
 
 __version__ = "0.1.0"
 
-# Expose key classes and functions for easier imports
-from .server import BlenderConnection, get_blender_connection
+# BMA_PATCH: lazy import server so benchmark code can load bma_env / tool_profiles
+# without requiring the 'mcp' package.
+try:
+    from .server import BlenderConnection, get_blender_connection  # noqa: F401
+except ImportError:
+    BlenderConnection = None  # type: ignore[assignment, misc]
+    get_blender_connection = None  # type: ignore[assignment]
 
 # BMA_PATCH: expose env-variable accessors for tool-gating
 from .bma_env import (  # noqa: F401

@@ -11,8 +11,25 @@ from typing import AsyncIterator, Dict, Any, List
 import os
 from pathlib import Path
 
-# Import telemetry
-from .telemetry_decorator import telemetry_tool
+# BMA_PATCH: lazy import telemetry so the server starts without optional deps
+# (supabase, tomli). Falls back to no-op decorator when unavailable.
+try:
+    from .telemetry_decorator import telemetry_tool as _telemetry_tool_impl
+except Exception:  # ImportError or any dep chain failure
+    _telemetry_tool_impl = None
+
+if _telemetry_tool_impl is not None:
+    telemetry_tool = _telemetry_tool_impl
+else:
+    import functools as _ft_noop
+    def telemetry_tool(name: str):  # type: ignore[misc]
+        """No-op fallback when telemetry deps are unavailable."""
+        def _dec(func):
+            @_ft_noop.wraps(func)
+            def _wrap(*a, **kw):
+                return func(*a, **kw)
+            return _wrap
+        return _dec
 # BMA_PATCH: tool-gating
 import functools as _functools
 from .tool_profiles import get_profile as _bma_get_profile, is_tool_enabled as _bma_is_tool_enabled
@@ -375,8 +392,6 @@ def get_polyhaven_categories(ctx: Context, asset_type: str = "hdris") -> str:
     """
     try:
         blender = get_blender_connection()
-        # BMA_PATCH: polyhaven status now fetched lazily per call
-            return "PolyHaven integration is disabled. Select it in the sidebar in BlenderMCP, then run it again."
         result = blender.send_command("get_polyhaven_categories", {"asset_type": asset_type})
         
         if "error" in result:
