@@ -1,4 +1,14 @@
 
+> **BMA Benchmark Fork** — This is `blender-mcp-bma`, a fork of upstream
+> [ahujasid/blender-mcp](https://github.com/ahujasid/blender-mcp) maintained
+> for the [BMA_Bench](https://github.com/yourorg/BMA_Bench) project.
+> It adds tool-gating profiles, benchmark-safe `bma_*` tools, telemetry-off
+> defaults, and headless mode. It is **not intended for general use** outside
+> BMA_Bench. For the unmodified upstream server, see the original repo.
+>
+> Branch: `bma-benchmark-profile-support` | Patch marker: `# BMA_PATCH`
+
+---
 
 # BlenderMCP - Blender Model Context Protocol Integration
 
@@ -285,3 +295,122 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 ## Disclaimer
 
 This is a third-party integration and not made by Blender. Made by [Siddharth](https://x.com/sidahuj)
+
+---
+
+## BMA Benchmark Fork
+
+This section documents the benchmark-specific additions made by the BMA_Bench project. Everything below is exclusive to this fork and does not exist in upstream blender-mcp.
+
+### What this fork is
+
+`blender-mcp-bma` is a controlled benchmark environment built on top of upstream blender-mcp. It does not replace or compete with the upstream project — it restricts and extends it for reproducible, automated AI-agent evaluation in Blender. Key additions:
+
+- **Tool-gating profiles** — five named profiles restricting which MCP tools an agent can call.
+- **Benchmark-safe `bma_*` tools** — structured tools that do not require `execute_blender_code` (no arbitrary Python).
+- **`get_bma_profile_info` tool** — lets any caller inspect the active profile and allowed tools at runtime.
+- **Telemetry off by default** — `DISABLE_TELEMETRY=true` is the default in this fork; opt-in is required to re-enable.
+- **Headless mode** — `blender --background` support via `bpy.app.timers` (modal operators require a window).
+
+### Supported profiles
+
+Set via `BMA_MCP_PROFILE` environment variable (default: `minimal`).
+
+| Profile | `execute_blender_code` | External assets | `bma_*` tools | Extra |
+|---|---|---|---|---|
+| `minimal` | No | No | Yes | Safest; read + structured mutations |
+| `inspection_enabled` | No | No | No | Adds `get_viewport_screenshot` |
+| `no_python` | No | No | Yes | All core tools, no Python |
+| `python_enabled` | **Yes** | No | Yes | Python allowed, no external assets |
+| `full` | **Yes** | **Yes** | Yes | Identical to upstream; no restrictions |
+
+`execute_blender_code` and all external asset tools are **unconditionally blocked** in `minimal`, `inspection_enabled`, and `no_python`. No env override can lift this.
+
+### Running in full / upstream-like mode
+
+`full` restores all upstream tool access with no restrictions:
+
+```bash
+BMA_MCP_PROFILE=full DISABLE_TELEMETRY=true uvx --from . blender-mcp
+```
+
+Or with the BMA_Bench CLI:
+
+```bash
+bma-mcp --config configs/mcp/full.yaml start-server
+```
+
+### Running in no_python mode
+
+`no_python` allows all core tools except `execute_blender_code` and external asset tools:
+
+```bash
+BMA_MCP_PROFILE=no_python DISABLE_TELEMETRY=true uvx --from . blender-mcp
+```
+
+Agents in this mode can use `bma_create_object`, `bma_set_transform`, `bma_set_material`, and similar structured tools to modify the scene without arbitrary Python access.
+
+### Running in headless mode
+
+Headless mode runs Blender without a graphical interface. Use the launcher in the main project:
+
+```bash
+# Via BMA_Bench CLI (recommended):
+bma-mcp --config configs/mcp/minimal.yaml start-headless-blender --wait
+
+# Manually (blender must be on PATH):
+blender --background --factory-startup \
+    --python benchmark/mcp/headless/start_blender_mcp_headless.py \
+    -- \
+    --addon /path/to/blender-mcp-bma/addon.py \
+    --host localhost \
+    --port 9876 \
+    --disable-external-assets
+```
+
+The fork replaces modal operators (which require a UI window) with a `bpy.app.timers`-based keep-alive registered with `persistent=True`. SIGTERM and SIGINT are handled and trigger a clean shutdown.
+
+### Checking get_bma_profile_info
+
+`get_bma_profile_info` is available in every profile (including `minimal`) and returns the active profile plus the allow/deny tool lists.
+
+**Via the BMA_Bench CLI:**
+
+```bash
+# Returns JSON including "get_bma_profile_info" in tool_results:
+bma-mcp --config configs/mcp/minimal.yaml smoke
+```
+
+**Via direct socket (low-level):**
+
+```python
+from benchmark.mcp.headless.healthcheck import send_blender_socket_command
+
+info = send_blender_socket_command(
+    "localhost", 9876, "get_bma_profile_info", timeout_sec=5.0
+)
+print(info["active_profile"])      # e.g. "minimal"
+print(info["allow_python_execution"])  # False
+print(info["enabled_tools"])       # list of allowed tool names
+```
+
+**Expected response fields:**
+
+```json
+{
+  "active_profile": "minimal",
+  "enabled_tools": ["bma_create_camera", "bma_create_light", "..."],
+  "disabled_tools": ["execute_blender_code", "download_polyhaven_asset", "..."],
+  "allow_python_execution": false,
+  "allow_external_assets": false,
+  "telemetry_disabled": true
+}
+```
+
+### Running fork tests
+
+```bash
+cd blender-mcp-bma
+python -m pytest tests/ -v
+# All 31 tests pass without Blender or MCP server.
+```
