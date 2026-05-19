@@ -166,8 +166,14 @@ class BlenderMCPServer:
                                     pass
                             return None
 
-                        # Schedule execution in main thread
-                        bpy.app.timers.register(execute_wrapper, first_interval=0.0)
+                        # Schedule execution in main thread.
+                        # In `blender -b` (background) mode, bpy.app.timers
+                        # never fire because there's no event loop, so we
+                        # execute synchronously in this worker thread instead.
+                        if bpy.app.background:
+                            execute_wrapper()
+                        else:
+                            bpy.app.timers.register(execute_wrapper, first_interval=0.0)
                     except json.JSONDecodeError:
                         # Incomplete data, wait for more
                         pass
