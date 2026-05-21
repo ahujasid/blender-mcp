@@ -2480,6 +2480,12 @@ def register():
         default=False
     )
 
+    bpy.types.Scene.blendermcp_auto_start_server = bpy.props.BoolProperty(
+        name="Auto-Start Server",
+        description="Automatically start the MCP server when Blender loads",
+        default=True
+    )
+
     bpy.types.Scene.blendermcp_use_polyhaven = bpy.props.BoolProperty(
         name="Use Poly Haven",
         description="Enable Poly Haven asset integration",
@@ -2597,12 +2603,20 @@ def register():
     bpy.utils.register_class(BLENDERMCP_OT_OpenTerms)
 
     # Auto-start the server so the MCP client can connect without manual UI interaction
-    if not hasattr(bpy.types, "blendermcp_server") or not bpy.types.blendermcp_server:
-        bpy.types.blendermcp_server = BlenderMCPServer(port=9876)
-    if not bpy.types.blendermcp_server.running:
+    try:
+        scene = bpy.context.scene
+        port = scene.blendermcp_port
+        auto_start = scene.blendermcp_auto_start_server
+    except AttributeError:
+        port = 9876
+        auto_start = True
+
+    if auto_start and (not hasattr(bpy.types, "blendermcp_server") or not bpy.types.blendermcp_server):
+        bpy.types.blendermcp_server = BlenderMCPServer(port=port)
+    if auto_start and not bpy.types.blendermcp_server.running:
         bpy.types.blendermcp_server.start()
         try:
-            bpy.context.scene.blendermcp_server_running = True
+            bpy.context.scene.blendermcp_server_running = bpy.types.blendermcp_server.running
         except AttributeError:
             pass
 
