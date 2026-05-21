@@ -2596,6 +2596,16 @@ def register():
     bpy.utils.register_class(BLENDERMCP_OT_StopServer)
     bpy.utils.register_class(BLENDERMCP_OT_OpenTerms)
 
+    # Auto-start the server so the MCP client can connect without manual UI interaction
+    if not hasattr(bpy.types, "blendermcp_server") or not bpy.types.blendermcp_server:
+        bpy.types.blendermcp_server = BlenderMCPServer(port=9876)
+    if not bpy.types.blendermcp_server.running:
+        bpy.types.blendermcp_server.start()
+        try:
+            bpy.context.scene.blendermcp_server_running = True
+        except AttributeError:
+            pass
+
     print("BlenderMCP addon registered")
 
 def unregister():
