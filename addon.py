@@ -2603,11 +2603,11 @@ def register():
     bpy.utils.register_class(BLENDERMCP_OT_OpenTerms)
 
     # Auto-start the server so the MCP client can connect without manual UI interaction
-    try:
-        scene = bpy.context.scene
+    scene = getattr(bpy.context, 'scene', None)
+    if scene is not None:
         port = scene.blendermcp_port
         auto_start = scene.blendermcp_auto_start_server
-    except AttributeError:
+    else:
         port = 9876
         auto_start = True
 
@@ -2637,6 +2637,7 @@ def unregister():
 
     del bpy.types.Scene.blendermcp_port
     del bpy.types.Scene.blendermcp_server_running
+    del bpy.types.Scene.blendermcp_auto_start_server
     del bpy.types.Scene.blendermcp_use_polyhaven
     del bpy.types.Scene.blendermcp_use_hyper3d
     del bpy.types.Scene.blendermcp_hyper3d_mode
