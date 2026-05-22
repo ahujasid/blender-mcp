@@ -32,8 +32,10 @@ _ALL_TOOLS: frozenset[str] = frozenset({
     "bma_create_object",
     "bma_set_transform",
     "bma_set_material",
+    "bma_assign_material",
     "bma_create_light",
     "bma_create_camera",
+    "bma_create_camera_look_at",
     "bma_export_scene",
     # Poly Haven
     "get_polyhaven_status",
@@ -120,8 +122,10 @@ _PROFILES: dict[str, _ProfileDef] = {
             "bma_create_object",
             "bma_set_transform",
             "bma_set_material",
+            "bma_assign_material",
             "bma_create_light",
             "bma_create_camera",
+            "bma_create_camera_look_at",
             "bma_export_scene",
         }),
         python=False,
@@ -130,12 +134,7 @@ _PROFILES: dict[str, _ProfileDef] = {
     # inspection_enabled — scene inspection + viewport screenshot; no Python, no external.
     "inspection_enabled": _ProfileDef(
         name="inspection_enabled",
-        allowed=frozenset({
-            "get_bma_profile_info",
-            "get_scene_info",
-            "get_object_info",
-            "get_viewport_screenshot",
-        }),
+        allowed=_CORE_TOOLS | {"get_viewport_screenshot"},
         python=False,
         external_assets=False,
     ),

@@ -312,6 +312,19 @@ def get_bma_profile_info(ctx: Context) -> str:
     return json.dumps(result, indent=2)
 
 
+def _bma_json(tool: str, result=None, error: Exception | None = None) -> str:
+    payload = {
+        "ok": error is None,
+        "tool": tool,
+        "result": result if error is None else None,
+        "error": None if error is None else {
+            "type": type(error).__name__,
+            "message": str(error),
+        },
+    }
+    return json.dumps(payload, indent=2)
+
+
 @_bma_gated("bma_get_scene_info")  # BMA_PATCH
 @mcp.tool()
 def bma_get_scene_info(ctx: Context) -> str:
@@ -319,9 +332,9 @@ def bma_get_scene_info(ctx: Context) -> str:
     try:
         blender = get_blender_connection()
         result = blender.send_command("get_scene_info")
-        return json.dumps(result, indent=2)
+        return _bma_json("bma_get_scene_info", result=result)
     except Exception as e:
-        return json.dumps({"error": str(e)})
+        return _bma_json("bma_get_scene_info", error=e)
 
 
 @_bma_gated("bma_create_object")  # BMA_PATCH
@@ -333,6 +346,7 @@ def bma_create_object(
     location: list[float] | None = None,
     rotation: list[float] | None = None,
     scale: list[float] | None = None,
+    dimensions: list[float] | None = None,
 ) -> str:
     """Create a primitive object. type: MESH_CUBE|MESH_SPHERE|MESH_CYLINDER|MESH_PLANE|MESH_CONE|EMPTY."""
     try:
@@ -346,10 +360,12 @@ def bma_create_object(
             params["rotation"] = rotation
         if scale:
             params["scale"] = scale
+        if dimensions:
+            params["dimensions"] = dimensions
         result = blender.send_command("create_object", params)
-        return json.dumps(result, indent=2)
+        return _bma_json("bma_create_object", result=result)
     except Exception as e:
-        return json.dumps({"error": str(e)})
+        return _bma_json("bma_create_object", error=e)
 
 
 @_bma_gated("bma_set_transform")  # BMA_PATCH
@@ -360,8 +376,9 @@ def bma_set_transform(
     location: list[float] | None = None,
     rotation: list[float] | None = None,
     scale: list[float] | None = None,
+    dimensions: list[float] | None = None,
 ) -> str:
-    """Set location/rotation/scale of a named object using strict JSON params."""
+    """Set location/rotation/scale/dimensions of a named object using strict JSON params."""
     try:
         blender = get_blender_connection()
         params: dict = {"object_name": object_name}
@@ -371,10 +388,12 @@ def bma_set_transform(
             params["rotation"] = rotation
         if scale is not None:
             params["scale"] = scale
+        if dimensions is not None:
+            params["dimensions"] = dimensions
         result = blender.send_command("set_transform", params)
-        return json.dumps(result, indent=2)
+        return _bma_json("bma_set_transform", result=result)
     except Exception as e:
-        return json.dumps({"error": str(e)})
+        return _bma_json("bma_set_transform", error=e)
 
 
 @_bma_gated("bma_set_material")  # BMA_PATCH
@@ -382,9 +401,12 @@ def bma_set_transform(
 def bma_set_material(
     ctx: Context,
     object_name: str,
-    color: list[float],
+    color: list[float] | None = None,
     metallic: float = 0.0,
     roughness: float = 0.5,
+    material_name: str | None = None,
+    base_color: list[float] | None = None,
+    create_if_missing: bool = True,
 ) -> str:
     """Assign a simple BSDF material (RGBA color + metallic/roughness) to an object."""
     try:
@@ -392,13 +414,48 @@ def bma_set_material(
         params = {
             "object_name": object_name,
             "color": color,
+            "base_color": base_color,
             "metallic": metallic,
             "roughness": roughness,
+            "create_if_missing": create_if_missing,
         }
+        if material_name:
+            params["material_name"] = material_name
         result = blender.send_command("set_material", params)
-        return json.dumps(result, indent=2)
+        return _bma_json("bma_set_material", result=result)
     except Exception as e:
-        return json.dumps({"error": str(e)})
+        return _bma_json("bma_set_material", error=e)
+
+
+@_bma_gated("bma_assign_material")  # BMA_PATCH
+@mcp.tool()
+def bma_assign_material(
+    ctx: Context,
+    object_name: str,
+    material_name: str | None = None,
+    base_color: list[float] | None = None,
+    color: list[float] | None = None,
+    roughness: float = 0.5,
+    metallic: float = 0.0,
+    create_if_missing: bool = True,
+) -> str:
+    """Create/update and assign a material to an object in one benchmark-safe action."""
+    try:
+        blender = get_blender_connection()
+        params: dict = {
+            "object_name": object_name,
+            "color": color,
+            "base_color": base_color,
+            "metallic": metallic,
+            "roughness": roughness,
+            "create_if_missing": create_if_missing,
+        }
+        if material_name:
+            params["material_name"] = material_name
+        result = blender.send_command("set_material", params)
+        return _bma_json("bma_assign_material", result=result)
+    except Exception as e:
+        return _bma_json("bma_assign_material", error=e)
 
 
 @_bma_gated("bma_create_light")  # BMA_PATCH
@@ -408,6 +465,7 @@ def bma_create_light(
     type: str,
     name: str = "",
     location: list[float] | None = None,
+    rotation: list[float] | None = None,
     energy: float = 1000.0,
     color: list[float] | None = None,
 ) -> str:
@@ -419,12 +477,14 @@ def bma_create_light(
             params["name"] = name
         if location:
             params["location"] = location
+        if rotation:
+            params["rotation"] = rotation
         if color:
             params["color"] = color
         result = blender.send_command("create_light", params)
-        return json.dumps(result, indent=2)
+        return _bma_json("bma_create_light", result=result)
     except Exception as e:
-        return json.dumps({"error": str(e)})
+        return _bma_json("bma_create_light", error=e)
 
 
 @_bma_gated("bma_create_camera")  # BMA_PATCH
@@ -435,19 +495,61 @@ def bma_create_camera(
     location: list[float] | None = None,
     rotation: list[float] | None = None,
     lens: float = 50.0,
+    target: list[float] | None = None,
+    focal_length: float | None = None,
+    make_active: bool = True,
 ) -> str:
     """Create a camera object with optional lens focal length (mm)."""
     try:
         blender = get_blender_connection()
-        params: dict = {"name": name, "lens": lens}
+        params: dict = {"name": name, "lens": lens, "make_active": make_active}
+        if focal_length is not None:
+            params["focal_length"] = focal_length
         if location:
             params["location"] = location
+        if target:
+            params["target"] = target
         if rotation:
             params["rotation"] = rotation
         result = blender.send_command("create_camera", params)
-        return json.dumps(result, indent=2)
+        return _bma_json("bma_create_camera", result=result)
     except Exception as e:
-        return json.dumps({"error": str(e)})
+        return _bma_json("bma_create_camera", error=e)
+
+
+@_bma_gated("bma_create_camera_look_at")  # BMA_PATCH
+@mcp.tool()
+def bma_create_camera_look_at(
+    ctx: Context,
+    name: str,
+    location: list[float],
+    target: list[float],
+    focal_length: float = 35.0,
+    make_active: bool = True,
+    sensor_width: float | None = None,
+    clip_start: float | None = None,
+    clip_end: float | None = None,
+) -> str:
+    """Create a camera and orient it toward a target point using Blender look-at logic."""
+    try:
+        blender = get_blender_connection()
+        params: dict = {
+            "name": name,
+            "location": location,
+            "target": target,
+            "focal_length": focal_length,
+            "make_active": make_active,
+        }
+        if sensor_width is not None:
+            params["sensor_width"] = sensor_width
+        if clip_start is not None:
+            params["clip_start"] = clip_start
+        if clip_end is not None:
+            params["clip_end"] = clip_end
+        result = blender.send_command("create_camera_look_at", params)
+        return _bma_json("bma_create_camera_look_at", result=result)
+    except Exception as e:
+        return _bma_json("bma_create_camera_look_at", error=e)
 
 
 @_bma_gated("bma_export_scene")  # BMA_PATCH
@@ -462,9 +564,9 @@ def bma_export_scene(
         blender = get_blender_connection()
         params = {"filepath": filepath, "format": format}
         result = blender.send_command("export_scene", params)
-        return json.dumps(result, indent=2)
+        return _bma_json("bma_export_scene", result=result)
     except Exception as e:
-        return json.dumps({"error": str(e)})
+        return _bma_json("bma_export_scene", error=e)
 
 
 # ---------------------------------------------------------------------------

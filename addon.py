@@ -144,11 +144,18 @@ class BlenderMCPServer:
                         command = json.loads(buffer.decode('utf-8'))
                         buffer = b''
 
-                        # Execute command in Blender's main thread
-                        def execute_wrapper():
+                        # BMA_PATCH: in headless mode bpy.app.timers never fire
+                        # because the GUI event loop is not running.  Execute
+                        # directly in the socket thread; bpy.context is accessible
+                        # from non-main threads in --background mode.
+                        import os as _os
+                        if _os.environ.get("BMA_HEADLESS") == "1":
                             try:
                                 response = self.execute_command(command)
-                                response_json = json.dumps(response)
+                                try:
+                                    response_json = json.dumps(response)
+                                except (TypeError, ValueError) as _je:
+                                    response_json = json.dumps({"status": "error", "message": f"JSON serialisation failed: {_je}"})
                                 try:
                                     client.sendall(response_json.encode('utf-8'))
                                 except:
@@ -164,10 +171,34 @@ class BlenderMCPServer:
                                     client.sendall(json.dumps(error_response).encode('utf-8'))
                                 except:
                                     pass
-                            return None
+                        else:
+                            # Execute command in Blender's main thread (GUI mode)
+                            def execute_wrapper():
+                                try:
+                                    response = self.execute_command(command)
+                                    try:
+                                        response_json = json.dumps(response)
+                                    except (TypeError, ValueError) as _je:
+                                        response_json = json.dumps({"status": "error", "message": f"JSON serialisation failed: {_je}"})
+                                    try:
+                                        client.sendall(response_json.encode('utf-8'))
+                                    except:
+                                        print("Failed to send response - client disconnected")
+                                except Exception as e:
+                                    print(f"Error executing command: {str(e)}")
+                                    traceback.print_exc()
+                                    try:
+                                        error_response = {
+                                            "status": "error",
+                                            "message": str(e)
+                                        }
+                                        client.sendall(json.dumps(error_response).encode('utf-8'))
+                                    except:
+                                        pass
+                                return None
 
-                        # Schedule execution in main thread
-                        bpy.app.timers.register(execute_wrapper, first_interval=0.0)
+                            # Schedule execution in main thread
+                            bpy.app.timers.register(execute_wrapper, first_interval=0.0)
                     except json.JSONDecodeError:
                         # Incomplete data, wait for more
                         pass
@@ -213,6 +244,14 @@ class BlenderMCPServer:
             "get_hyper3d_status": self.get_hyper3d_status,
             "get_sketchfab_status": self.get_sketchfab_status,
             "get_hunyuan3d_status": self.get_hunyuan3d_status,
+            # BMA_PATCH: structured scene-manipulation commands used by bma_* MCP tools
+            "create_object": self.create_object,
+            "set_transform": self.set_transform,
+            "set_material": self.set_material,
+            "create_light": self.create_light,
+            "create_camera": self.create_camera,
+            "create_camera_look_at": self.create_camera_look_at,
+            "export_scene": self.export_scene,
         }
 
         # Add Polyhaven handlers only if enabled
@@ -267,6 +306,394 @@ class BlenderMCPServer:
             return {"status": "error", "message": f"Unknown command type: {cmd_type}"}
 
 
+
+    # BMA_PATCH: structured scene-manipulation handlers -------------------------
+
+    @staticmethod
+    def _bma_primitive_hint(obj_type):
+        return {
+            "MESH_CUBE": "cube",
+            "MESH_SPHERE": "sphere",
+            "MESH_CYLINDER": "cylinder",
+            "MESH_PLANE": "plane",
+            "MESH_CONE": "cone",
+            "EMPTY": "empty",
+        }.get(obj_type.upper())
+
+    def create_object(self, type="MESH_CUBE", name="", location=None, rotation=None, scale=None, dimensions=None, **_ignored):
+        """Create a primitive mesh object or empty using bpy.data (headless-safe)."""
+        try:
+            return self._create_object_impl(type=type, name=name, location=location, rotation=rotation, scale=scale, dimensions=dimensions)
+        except Exception as exc:
+            return {"ok": False, "tool": "bma_create_object", "error": {"type": "CreateObjectFailed", "message": str(exc)}}
+
+    def _create_object_impl(self, type="MESH_CUBE", name="", location=None, rotation=None, scale=None, dimensions=None):
+        loc = location or [0, 0, 0]
+        scl = scale or [1, 1, 1]
+        obj_type = type.upper()
+
+        if obj_type == "EMPTY":
+            obj = bpy.data.objects.new(name or "Empty", None)
+            bpy.context.collection.objects.link(obj)
+        else:
+            prim_map = {
+                "MESH_CUBE": lambda m: bpy.ops.mesh.primitive_cube_add(size=1),
+                "MESH_SPHERE": lambda m: bpy.ops.mesh.primitive_uv_sphere_add(),
+                "MESH_CYLINDER": lambda m: bpy.ops.mesh.primitive_cylinder_add(),
+                "MESH_PLANE": lambda m: bpy.ops.mesh.primitive_plane_add(),
+                "MESH_CONE": lambda m: bpy.ops.mesh.primitive_cone_add(),
+            }
+            mesh = bpy.data.meshes.new(name or obj_type)
+            obj = bpy.data.objects.new(name or obj_type, mesh)
+            bpy.context.collection.objects.link(obj)
+            # Build geometry via bmesh (headless-safe, no context needed)
+            import bmesh as _bmesh
+            bm = _bmesh.new()
+            if obj_type == "MESH_CUBE":
+                _bmesh.ops.create_cube(bm, size=1.0)
+            elif obj_type == "MESH_SPHERE":
+                _bmesh.ops.create_uvsphere(bm, u_segments=16, v_segments=8, radius=1.0)
+            elif obj_type == "MESH_CYLINDER":
+                _bmesh.ops.create_cone(bm, segments=16, radius1=1.0, radius2=1.0, depth=2.0)
+            elif obj_type == "MESH_PLANE":
+                _bmesh.ops.create_grid(bm, x_segments=1, y_segments=1, size=1.0)
+            elif obj_type == "MESH_CONE":
+                _bmesh.ops.create_cone(bm, segments=16, radius1=1.0, radius2=0.0, depth=2.0)
+            bm.to_mesh(mesh)
+            bm.free()
+
+        obj.location = loc
+        obj.scale = scl
+        obj["bma_primitive_hint"] = self._bma_primitive_hint(obj_type)
+        if dimensions is not None:
+            obj.dimensions = dimensions
+            bpy.context.view_layer.update()
+        if rotation is not None:
+            import math
+            obj.rotation_euler = [math.radians(r) if abs(r) > 2 * math.pi else r for r in rotation]
+        return {
+            "ok": True,
+            "tool": "bma_create_object",
+            "name": obj.name,
+            "type": obj.type,
+            "location": list(obj.location),
+            "scale": list(obj.scale),
+            "dimensions": list(obj.dimensions),
+            "primitive_hint": obj.get("bma_primitive_hint"),
+        }
+
+    def set_transform(self, object_name, location=None, rotation=None, scale=None, dimensions=None, **_ignored):
+        """Set location/rotation/scale/dimensions of an object."""
+        import math
+        obj = bpy.data.objects.get(object_name)
+        if obj is None:
+            raise ValueError(f"Object not found: {object_name!r}")
+        if location is not None:
+            obj.location = location
+        if rotation is not None:
+            obj.rotation_euler = [math.radians(r) if abs(r) > 2 * math.pi else r for r in rotation]
+        if scale is not None:
+            obj.scale = scale
+        if dimensions is not None:
+            obj.dimensions = dimensions
+            bpy.context.view_layer.update()
+        return {
+            "name": obj.name,
+            "location": list(obj.location),
+            "scale": list(obj.scale),
+            "dimensions": list(obj.dimensions),
+        }
+
+    def set_material(
+        self,
+        object_name,
+        color=None,
+        metallic=0.0,
+        roughness=0.5,
+        material_name=None,
+        base_color=None,
+        create_if_missing=True,
+        **_ignored,
+    ):
+        """Assign a Principled BSDF material with given RGBA color to an object."""
+        obj = bpy.data.objects.get(object_name)
+        if obj is None:
+            raise ValueError(f"Object not found: {object_name!r}")
+        rgba = list(base_color if base_color is not None else color if color is not None else [1.0, 1.0, 1.0, 1.0])
+        while len(rgba) < 4:
+            rgba.append(1.0)
+        rgba = [float(v) for v in rgba[:4]]
+        mat_name = material_name or f"BMA_{object_name}_mat"
+        mat = bpy.data.materials.get(mat_name)
+        material_created = False
+        if mat is None:
+            if not create_if_missing:
+                raise ValueError(f"Material not found: {mat_name!r}")
+            mat = bpy.data.materials.new(name=mat_name)
+            material_created = True
+        mat.use_nodes = True
+        nodes = mat.node_tree.nodes
+        nodes.clear()
+        bsdf = nodes.new(type="ShaderNodeBsdfPrincipled")
+        r, g, b, a = rgba
+        bsdf.inputs["Base Color"].default_value = (r, g, b, a)
+        bsdf.inputs["Metallic"].default_value = float(metallic)
+        bsdf.inputs["Roughness"].default_value = float(roughness)
+        out = nodes.new(type="ShaderNodeOutputMaterial")
+        mat.node_tree.links.new(bsdf.outputs["BSDF"], out.inputs["Surface"])
+        if obj.data.materials:
+            obj.data.materials[0] = mat
+        else:
+            obj.data.materials.append(mat)
+        return {
+            "object_name": obj.name,
+            "material_name": mat.name,
+            "material_created": material_created,
+            "assigned": True,
+            "material_slots": [slot.name for slot in obj.data.materials if slot is not None],
+            "base_color": rgba,
+            "metallic": float(metallic),
+            "roughness": float(roughness),
+        }
+
+    def create_light(self, type="POINT", energy=1000, color=None, location=None, rotation=None, name="", **_ignored):
+        """Add a light to the scene."""
+        import math
+        light_data = bpy.data.lights.new(name=name or type, type=type.upper())
+        light_data.energy = energy
+        if color:
+            light_data.color = color[:3]
+        light_obj = bpy.data.objects.new(name=name or type, object_data=light_data)
+        bpy.context.collection.objects.link(light_obj)
+        if location:
+            light_obj.location = location
+        if rotation:
+            light_obj.rotation_euler = [math.radians(r) if abs(r) > 2 * math.pi else r for r in rotation]
+        return {"name": light_obj.name, "type": type}
+
+    def create_camera(
+        self,
+        location=None,
+        rotation=None,
+        name="Camera",
+        lens=50.0,
+        target=None,
+        focal_length=None,
+        make_active=True,
+        **_ignored,
+    ):
+        """Add a camera to the scene."""
+        import math
+        from mathutils import Vector
+        cam_data = bpy.data.cameras.new(name=name)
+        resolved_lens = focal_length if focal_length is not None else lens
+        if resolved_lens is not None:
+            cam_data.lens = float(resolved_lens)
+        cam_obj = bpy.data.objects.new(name=name, object_data=cam_data)
+        bpy.context.collection.objects.link(cam_obj)
+        if location:
+            cam_obj.location = Vector(location)
+        if target is not None:
+            direction = Vector(target) - cam_obj.location
+            if direction.length == 0:
+                raise ValueError("Camera look_at target must differ from location")
+            cam_obj.rotation_euler = direction.to_track_quat("-Z", "Y").to_euler()
+        elif rotation:
+            cam_obj.rotation_euler = [math.radians(r) if abs(r) > 2 * math.pi else r for r in rotation]
+        if make_active:
+            bpy.context.scene.camera = cam_obj
+        return {
+            "name": cam_obj.name,
+            "location": [float(v) for v in cam_obj.location],
+            "target": [float(v) for v in target] if target is not None else None,
+            "rotation_euler": [float(v) for v in cam_obj.rotation_euler],
+            "focal_length": float(cam_data.lens),
+            "is_active": bpy.context.scene.camera is cam_obj,
+        }
+
+    def create_camera_look_at(
+        self,
+        location,
+        target,
+        name="Camera",
+        focal_length=35.0,
+        make_active=True,
+        sensor_width=None,
+        clip_start=None,
+        clip_end=None,
+        **_ignored,
+    ):
+        """Add a camera and orient it toward a target point."""
+        from mathutils import Vector
+
+        cam_data = bpy.data.cameras.new(name=name)
+        if focal_length is not None:
+            cam_data.lens = float(focal_length)
+        if sensor_width is not None:
+            cam_data.sensor_width = float(sensor_width)
+        if clip_start is not None:
+            cam_data.clip_start = float(clip_start)
+        if clip_end is not None:
+            cam_data.clip_end = float(clip_end)
+
+        cam_obj = bpy.data.objects.new(name=name, object_data=cam_data)
+        bpy.context.collection.objects.link(cam_obj)
+        cam_obj.location = Vector(location)
+        direction = Vector(target) - cam_obj.location
+        if direction.length == 0:
+            raise ValueError("Camera look_at target must differ from location")
+        cam_obj.rotation_euler = direction.to_track_quat("-Z", "Y").to_euler()
+        if make_active:
+            bpy.context.scene.camera = cam_obj
+
+        return {
+            "name": cam_obj.name,
+            "location": [float(v) for v in cam_obj.location],
+            "target": [float(v) for v in target],
+            "rotation_euler": [float(v) for v in cam_obj.rotation_euler],
+            "focal_length": float(cam_data.lens),
+            "is_active": bpy.context.scene.camera is cam_obj,
+        }
+
+    def export_scene(self, format="GLB", filepath="/tmp/bma_export.glb", filename=None):
+        """Export the current scene to a file (headless-safe).
+
+        Parameters:
+          format   – export format: BLEND | GLB | GLTF (default GLB)
+          filepath – absolute destination path (takes precedence over filename)
+          filename – basename used to construct filepath when filepath is default;
+                     accepted so callers that pass filename= do not get TypeError
+
+        GLB/GLTF export is performed by launching a child Blender process with
+        --background so the GLTF operator has the context it needs (window manager
+        etc.).  BLEND export uses the in-process operator which always works.
+
+        Always returns a dict with ok/exists/file_size_bytes so the socket layer
+        can serialise a valid JSON response in all code paths.
+        """
+        import os, subprocess, sys, tempfile
+        try:
+            fmt = format.upper() if isinstance(format, str) else "GLB"
+
+            # Resolve filepath: if caller supplied only filename, build an absolute path
+            # from a safe writable directory rather than defaulting to /tmp.
+            _is_default_fp = (filepath == "/tmp/bma_export.glb")
+            if filename is not None and _is_default_fp:
+                _base_dir = os.environ.get("BMA_EXPORT_DIR") or tempfile.gettempdir()
+                filepath = os.path.join(_base_dir, os.path.basename(str(filename)))
+
+            filepath = os.path.abspath(str(filepath))
+            os.makedirs(os.path.dirname(filepath), exist_ok=True)
+
+            if fmt in ("BLEND", "BLEND_FILE"):
+                if os.path.exists(filepath):
+                    os.remove(filepath)
+                bpy.ops.wm.save_as_mainfile(filepath=filepath)
+                _exists = os.path.exists(filepath)
+                _size = os.stat(filepath).st_size if _exists else 0
+                return {
+                    "ok": True,
+                    "tool": "bma_export_scene",
+                    "format": "blend",
+                    "filepath": filepath,
+                    "exists": _exists,
+                    "file_size_bytes": _size,
+                }
+
+            if fmt not in ("GLB", "GLTF"):
+                return {
+                    "ok": False,
+                    "tool": "bma_export_scene",
+                    "format": fmt.lower(),
+                    "filepath": filepath,
+                    "exists": False,
+                    "file_size_bytes": 0,
+                    "error": {
+                        "type": "UnsupportedFormat",
+                        "message": f"Unsupported export format: {format!r}. Use GLB or BLEND.",
+                        "format": fmt.lower(),
+                        "filepath": filepath,
+                    },
+                }
+
+            # GLB/GLTF: spawn a child Blender process with a proper window manager context.
+            with tempfile.NamedTemporaryFile(suffix=".blend", delete=False) as tf:
+                blend_path = tf.name
+            try:
+                if os.path.exists(filepath):
+                    os.remove(filepath)
+                bpy.ops.wm.save_as_mainfile(filepath=blend_path, copy=True)
+                exp_fmt = "GLB" if fmt == "GLB" else "GLTF_SEPARATE"
+                script = (
+                    f"import bpy\n"
+                    f"bpy.ops.wm.open_mainfile(filepath={blend_path!r})\n"
+                    f"bpy.ops.export_scene.gltf(filepath={filepath!r}, export_format={exp_fmt!r})\n"
+                )
+                blender_bin = os.environ.get("BMA_BLENDER_BIN", "blender")
+                result = subprocess.run(
+                    [blender_bin, "--background", "--factory-startup", "--python-expr", script],
+                    capture_output=True, text=True, timeout=120,
+                )
+                if not os.path.exists(filepath):
+                    # Fallback: try sys.executable (in case BMA_BLENDER_BIN is not set)
+                    blender_fallback = sys.executable if "blender" in sys.executable.lower() else blender_bin
+                    result2 = subprocess.run(
+                        [blender_fallback, "--background", "--factory-startup", "--python-expr", script],
+                        capture_output=True, text=True, timeout=120,
+                    )
+                    if not os.path.exists(filepath):
+                        _stderr = (result.stderr or "")[-300:] + (result2.stderr or "")[-200:]
+                        return {
+                            "ok": False,
+                            "tool": "bma_export_scene",
+                            "format": "glb",
+                            "filepath": filepath,
+                            "exists": False,
+                            "file_size_bytes": 0,
+                            "error": {
+                                "type": "ExportFailed",
+                                "message": f"GLB export subprocess did not create {filepath}. stderr={_stderr!r}",
+                                "format": "glb",
+                                "filepath": filepath,
+                            },
+                        }
+            finally:
+                try:
+                    os.unlink(blend_path)
+                except OSError:
+                    pass
+
+            _exists = os.path.exists(filepath)
+            _size = os.stat(filepath).st_size if _exists else 0
+            return {
+                "ok": True,
+                "tool": "bma_export_scene",
+                "format": "glb",
+                "filepath": filepath,
+                "exists": _exists,
+                "file_size_bytes": _size,
+            }
+
+        except Exception as _exc:
+            # Catch-all: return a well-formed error dict so the socket handler
+            # can always serialise a valid JSON response.
+            _fmt_lower = (format or "").lower() if isinstance(format, str) else "unknown"
+            return {
+                "ok": False,
+                "tool": "bma_export_scene",
+                "format": _fmt_lower,
+                "filepath": str(filepath) if filepath else "",
+                "exists": False,
+                "file_size_bytes": 0,
+                "error": {
+                    "type": "ExportFailed",
+                    "message": str(_exc),
+                    "format": _fmt_lower,
+                    "filepath": str(filepath) if filepath else "",
+                },
+            }
+
+    # --------------------------------------------------------------------------
 
     def get_scene_info(self):
         """Get information about the current Blender scene"""
