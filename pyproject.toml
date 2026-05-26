@@ -21,6 +21,7 @@ dependencies = [
 
 [project.scripts]
 blender-mcp = "blender_mcp.server:main"
+blender-cli = "blender_mcp.cli:main"
 
 [build-system]
 requires = ["setuptools>=61.0", "wheel"]

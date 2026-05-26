@@ -2,5 +2,7 @@
 
 __version__ = "0.1.0"
 
-# Expose key classes and functions for easier imports
-from .server import BlenderConnection, get_blender_connection
+# Keep package imports lightweight (the MCP server depends on `mcp`).
+# Import `blender_mcp.server` explicitly when you need server functionality.
+
+from .blender_connection import BlenderConnection
