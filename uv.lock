@@ -28,7 +28,7 @@ wheels = [
 
 [[package]]
 name = "blender-mcp"
-version = "1.5.6"
+version = "1.6.0"
 source = { editable = "." }
 dependencies = [
     { name = "mcp", extra = ["cli"] },
