@@ -30,7 +30,7 @@ bl_info = {
     "category": "Interface",
 }
 
-RODIN_FREE_TRIAL_KEY = "k9TcfFoEhNd9cCPP2guHAHHHkctZHIRhZDywZ1euGUXwihbYLpOjQhofby80NJez"
+RODIN_FREE_TRIAL_KEY = "vibecoding"
 
 # Add User-Agent as required by Poly Haven API
 REQ_HEADERS = requests.utils.default_headers()
@@ -1189,8 +1189,9 @@ class BlenderMCPServer:
             """Call Rodin API, get the job uuid and subscription key"""
             files = [
                 *[("images", (f"{i:04d}{img_suffix}", img)) for i, (img_suffix, img) in enumerate(images)],
-                ("tier", (None, "Sketch")),
+                ("tier", (None, "Gen-2.5-Medium")),
                 ("mesh_mode", (None, "Raw")),
+                ("texture_mode", (None, "high")),
             ]
             if text_prompt:
                 files.append(("prompt", (None, text_prompt)))
