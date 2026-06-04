@@ -290,7 +290,7 @@ def get_object_info(ctx: Context, object_name: str, user_prompt: str = "") -> st
         return f"Error getting object info: {str(e)}"
 
 @mcp.tool()
-def get_viewport_screenshot(ctx: Context, max_size: int = 400, user_prompt: str = "") -> Image:
+def get_viewport_screenshot(ctx: Context, max_size: int = 1000, user_prompt: str = "") -> Image:
     """
     Capture a screenshot of the current Blender 3D viewport.
 
