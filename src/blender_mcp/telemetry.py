@@ -110,7 +110,7 @@ class TelemetryCollector:
         )
         self._worker.start()
 
-        logger.warning(f"Telemetry initialized (enabled={self.config.enabled}, has_supabase={HAS_SUPABASE}, customer_uuid={self._customer_uuid})")
+        logger.debug(f"Telemetry initialized (enabled={self.config.enabled}, has_supabase={HAS_SUPABASE})")
 
     def _is_disabled(self) -> bool:
         """Check if telemetry is disabled via environment variables"""
@@ -168,10 +168,11 @@ class TelemetryCollector:
             # Import here to avoid circular dependency
             from .server import get_blender_connection
             blender = get_blender_connection()
-            result = blender.send_command("get_telemetry_consent", {})
+            result = blender.send_command("get_telemetry_consent")
             consent = result.get("consent", False)
             return consent
         except Exception as e:
+            logger.debug(f"Could not check telemetry consent: {e}")
             # Default to False if we can't check (user hasn't given consent or Blender not connected)
             return False
 
@@ -188,13 +189,9 @@ class TelemetryCollector:
     ):
         """Record a telemetry event (non-blocking)"""
         if not self.config.enabled:
-            logger.warning(f"Telemetry disabled, skipping event: {event_type}")
             return
         if not HAS_SUPABASE:
-            logger.warning(f"Supabase not available, skipping event: {event_type}")
             return
-
-        logger.warning(f"Recording telemetry event: {event_type}, tool={tool_name}")
 
         # Check user consent for private data collection
         user_consent = self._check_user_consent()
@@ -291,12 +288,59 @@ class TelemetryCollector:
                 "event_timestamp": int(event.timestamp),
             }
 
-            response = supabase.table("telemetry_events").insert(data, returning="minimal").execute()
+            supabase.table("telemetry_events").insert(data, returning="minimal").execute()
             logger.debug(f"Telemetry sent: {event.event_type}")
 
         except Exception as e:
             logger.debug(f"Failed to send telemetry: {e}")
 
+    def upload_screenshot(self, image_bytes: bytes, prefix: str) -> str:
+        """Upload screenshot to Supabase Storage.
+        
+        Args:
+            image_bytes: PNG image data
+            prefix: Filename prefix (e.g., 'screenshot')
+            
+        Returns:
+            Storage path reference (storage:bucket/filename) or empty string on failure
+        """
+        if not self.config.enabled or not HAS_SUPABASE:
+            return ""
+        
+        # Only upload screenshots with user consent
+        if not self._check_user_consent():
+            logger.debug("User has not consented to telemetry, skipping screenshot upload")
+            return ""
+            
+        try:
+            from supabase import ClientOptions
+            
+            options = ClientOptions(
+                auto_refresh_token=False,
+                persist_session=False
+            )
+            
+            supabase: Client = create_client(
+                self.config.supabase_url,
+                self.config.supabase_anon_key,
+                options=options
+            )
+            
+            # Generate unique filename
+            timestamp = int(time.time() * 1000)
+            filename = f"{prefix}_{self._session_id}_{timestamp}.png"
+            
+            # Upload to storage bucket
+            bucket = self.config.supabase_bucket
+            supabase.storage.from_(bucket).upload(
+                filename,
+                image_bytes,
+                {"content-type": "image/png"}
+            )
+            
+            return f"storage:{bucket}/{filename}"
+        except Exception:
+            return ""
 
 # Global telemetry instance
 _telemetry_collector: TelemetryCollector | None = None
