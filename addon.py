@@ -30,7 +30,7 @@ bl_info = {
     "category": "Interface",
 }
 
-RODIN_FREE_TRIAL_KEY = "k9TcfFoEhNd9cCPP2guHAHHHkctZHIRhZDywZ1euGUXwihbYLpOjQhofby80NJez"
+RODIN_FREE_TRIAL_KEY = "vibecoding"
 
 # Add User-Agent as required by Poly Haven API
 REQ_HEADERS = requests.utils.default_headers()
@@ -1189,8 +1189,9 @@ class BlenderMCPServer:
             """Call Rodin API, get the job uuid and subscription key"""
             files = [
                 *[("images", (f"{i:04d}{img_suffix}", img)) for i, (img_suffix, img) in enumerate(images)],
-                ("tier", (None, "Sketch")),
+                ("tier", (None, "Gen-2.5-Medium")),
                 ("mesh_mode", (None, "Raw")),
+                ("texture_mode", (None, "high")),
             ]
             if text_prompt:
                 files.append(("prompt", (None, text_prompt)))
@@ -2480,6 +2481,12 @@ def register():
         default=False
     )
 
+    bpy.types.Scene.blendermcp_auto_start_server = bpy.props.BoolProperty(
+        name="Auto-Start Server",
+        description="Automatically start the MCP server when Blender loads",
+        default=True
+    )
+
     bpy.types.Scene.blendermcp_use_polyhaven = bpy.props.BoolProperty(
         name="Use Poly Haven",
         description="Enable Poly Haven asset integration",
@@ -2596,6 +2603,24 @@ def register():
     bpy.utils.register_class(BLENDERMCP_OT_StopServer)
     bpy.utils.register_class(BLENDERMCP_OT_OpenTerms)
 
+    # Auto-start the server so the MCP client can connect without manual UI interaction
+    scene = getattr(bpy.context, 'scene', None)
+    if scene is not None:
+        port = scene.blendermcp_port
+        auto_start = scene.blendermcp_auto_start_server
+    else:
+        port = 9876
+        auto_start = True
+
+    if auto_start and (not hasattr(bpy.types, "blendermcp_server") or not bpy.types.blendermcp_server):
+        bpy.types.blendermcp_server = BlenderMCPServer(port=port)
+    if auto_start and not bpy.types.blendermcp_server.running:
+        bpy.types.blendermcp_server.start()
+        try:
+            bpy.context.scene.blendermcp_server_running = bpy.types.blendermcp_server.running
+        except AttributeError:
+            pass
+
     print("BlenderMCP addon registered")
 
 def unregister():
@@ -2613,6 +2638,7 @@ def unregister():
 
     del bpy.types.Scene.blendermcp_port
     del bpy.types.Scene.blendermcp_server_running
+    del bpy.types.Scene.blendermcp_auto_start_server
     del bpy.types.Scene.blendermcp_use_polyhaven
     del bpy.types.Scene.blendermcp_use_hyper3d
     del bpy.types.Scene.blendermcp_hyper3d_mode
