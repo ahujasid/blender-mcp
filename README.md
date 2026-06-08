@@ -4,7 +4,7 @@
 
 BlenderMCP connects Blender to Claude AI through the Model Context Protocol (MCP), allowing Claude to directly interact with and control Blender. This integration enables prompt assisted 3D modeling, scene creation, and manipulation.
 
-**We have no official website. Any website you see online is unofficial and has no affiliation with this project. Use them at your own risk.**
+**[Official website](https://blendermcp.org/)**
 
 [Full tutorial](https://www.youtube.com/watch?v=lCyQ717DuzQ)
 
