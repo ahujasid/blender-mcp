@@ -15,8 +15,19 @@ classifiers = [
 ]
 dependencies = [
     "mcp[cli]>=1.3.0",
-    "supabase>=2.0.0",
     "tomli>=2.0.0",
+]
+
+[project.optional-dependencies]
+# `supabase` is the network transport for the (anonymous, opt-out) telemetry
+# module; it is NOT required to run the server. telemetry.py guards the import
+# behind `HAS_SUPABASE` and no-ops without it. Keeping it out of the default
+# install drops the heaviest transitive chain, so the default `uvx blender-mcp`
+# resolves a smaller dependency set that installs from prebuilt wheels on
+# supported interpreters. Add the transport with:
+#   uvx --from "blender-mcp[telemetry]" blender-mcp
+telemetry = [
+    "supabase>=2.0.0",
 ]
 
 [project.scripts]
