@@ -20,7 +20,10 @@ Give feedback, get inspired, and build on top of the MCP: [Discord](https://disc
 
 [Support this project](https://github.com/sponsors/ahujasid)
 
-## Current version(1.5.5)
+## Highlights
+
+For the current version and changelog, see the [releases page](https://github.com/ahujasid/blender-mcp/releases).
+
 - Added Hunyuan3D support
 - View screenshots for Blender viewport to better understand the scene
 - Search and download Sketchfab models
@@ -29,7 +32,7 @@ Give feedback, get inspired, and build on top of the MCP: [Discord](https://disc
 - Run Blender MCP on a remote host
 - Telemetry for tools executed (completely anonymous)
 
-### Installating a new version (existing users)
+### Installing a new version (existing users)
 - For newcomers, you can go straight to Installation. For existing users, see the points below
 - Download the latest addon.py file and replace the older one, then add it to Blender
 - Delete the MCP server from Claude and add it back again, and you should be good to go!
