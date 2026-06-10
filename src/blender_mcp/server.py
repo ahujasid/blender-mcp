@@ -9,9 +9,70 @@ from dataclasses import dataclass
 from contextlib import asynccontextmanager
 from typing import AsyncIterator, Dict, Any, List
 import os
+import ipaddress
 from pathlib import Path
 import base64
 from urllib.parse import urlparse
+
+# Allowed image file extensions for local path validation
+ALLOWED_IMAGE_EXTENSIONS = {
+    '.png', '.jpg', '.jpeg', '.gif', '.bmp', '.tiff', '.tif',
+    '.webp', '.svg', '.ico', '.heic', '.heif',
+}
+
+# Maximum local image file size (10 MB)
+MAX_LOCAL_IMAGE_BYTES = 10 * 1024 * 1024
+
+
+def _validate_image_path(path: str) -> str | None:
+    """Validate that a local file path points to an image file.
+
+    Returns None if the path is valid, or an error message string otherwise.
+    """
+    resolved = os.path.realpath(path)
+    ext = os.path.splitext(resolved)[1].lower()
+    if ext not in ALLOWED_IMAGE_EXTENSIONS:
+        return (
+            f"Invalid image file type '{ext}'. "
+            f"Allowed types: {', '.join(sorted(ALLOWED_IMAGE_EXTENSIONS))}"
+        )
+    if not os.path.isfile(resolved):
+        return f"File not found: {resolved}"
+    try:
+        size = os.path.getsize(resolved)
+    except OSError as e:
+        return f"Cannot read file size: {e}"
+    if size > MAX_LOCAL_IMAGE_BYTES:
+        return (
+            f"Image file too large ({size} bytes). "
+            f"Maximum allowed size is {MAX_LOCAL_IMAGE_BYTES} bytes"
+        )
+    return None
+
+
+def _validate_url_not_internal(url: str) -> tuple[None, list[str]] | tuple[str, None]:
+    """Check that a URL does not target private/loopback/link-local addresses.
+
+    Returns (None, validated_ips) if the URL is safe, where validated_ips are
+    the resolved IP strings that should be pinned for the actual request to
+    prevent DNS rebinding (TOCTOU) attacks.
+    Returns (error_message, None) otherwise.
+    """
+    parsed = urlparse(url)
+    hostname = parsed.hostname
+    if not hostname:
+        return ("URL has no hostname", None)
+    try:
+        addr_infos = socket.getaddrinfo(hostname, parsed.port or 443)
+    except socket.gaierror:
+        return (f"Could not resolve hostname: {hostname}", None)
+    validated_ips = []
+    for family, _, _, _, sockaddr in addr_infos:
+        ip = ipaddress.ip_address(sockaddr[0])
+        if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved:
+            return (f"URL resolves to a non-public address ({ip}), request blocked", None)
+        validated_ips.append(sockaddr[0])
+    return (None, validated_ips)
 
 # Import telemetry
 from .telemetry import record_startup, get_telemetry, EventType
@@ -1050,6 +1111,12 @@ def generate_hunyuan3d_model(
     - Returns error message if the operation fails
     """
     try:
+        # Validate local image paths to prevent arbitrary file reads
+        if input_image_url and not input_image_url.startswith(("http://", "https://")):
+            err = _validate_image_path(input_image_url)
+            if err:
+                return f"Error: {err}"
+
         blender = get_blender_connection()
         result = blender.send_command("create_hunyuan_job", {
             "text_prompt": text_prompt,
@@ -1065,7 +1132,7 @@ def generate_hunyuan3d_model(
     except Exception as e:
         logger.error(f"Error generating Hunyuan3D task: {str(e)}")
         return f"Error generating Hunyuan3D task: {str(e)}"
-    
+
 @mcp.tool()
 def poll_hunyuan_job_status(
     ctx: Context,
@@ -1112,6 +1179,12 @@ def import_generated_asset_hunyuan(
     Return if the asset has been imported successfully.
     """
     try:
+        # Block requests to private/internal networks (SSRF protection)
+        if zip_file_url:
+            ssrf_err, _validated_ips = _validate_url_not_internal(zip_file_url)
+            if ssrf_err:
+                return f"Error: {ssrf_err}"
+
         blender = get_blender_connection()
         kwargs = {
             "name": name
