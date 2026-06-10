@@ -45,6 +45,11 @@ class BlenderMCPServer:
         self.server_thread = None
 
     def start(self):
+        if bpy.app.background:
+            print("BlenderMCP: cannot start server in background mode (blender -b) - commands would never execute\n"
+                  "BlenderMCP: run Blender with a GUI, or use a virtual display: xvfb-run -a blender")
+            return
+
         if self.running:
             print("Server is already running")
             return
@@ -2426,7 +2431,7 @@ class BLENDERMCP_OT_StartServer(bpy.types.Operator):
 
         # Start the server
         bpy.types.blendermcp_server.start()
-        scene.blendermcp_server_running = True
+        scene.blendermcp_server_running = bpy.types.blendermcp_server.running
 
         return {'FINISHED'}
 
