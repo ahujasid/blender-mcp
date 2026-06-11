@@ -4,7 +4,7 @@
 
 BlenderMCP connects Blender to Claude AI through the Model Context Protocol (MCP), allowing Claude to directly interact with and control Blender. This integration enables prompt assisted 3D modeling, scene creation, and manipulation.
 
-**We have no official website. Any website you see online is unofficial and has no affiliation with this project. Use them at your own risk.**
+**[Official website](https://blendermcp.org/)**
 
 [Full tutorial](https://www.youtube.com/watch?v=lCyQ717DuzQ)
 
@@ -20,7 +20,10 @@ Give feedback, get inspired, and build on top of the MCP: [Discord](https://disc
 
 [Support this project](https://github.com/sponsors/ahujasid)
 
-## Current version(1.5.5)
+## Highlights
+
+For the current version and changelog, see the [releases page](https://github.com/ahujasid/blender-mcp/releases).
+
 - Added Hunyuan3D support
 - View screenshots for Blender viewport to better understand the scene
 - Search and download Sketchfab models
@@ -29,7 +32,7 @@ Give feedback, get inspired, and build on top of the MCP: [Discord](https://disc
 - Run Blender MCP on a remote host
 - Telemetry for tools executed (completely anonymous)
 
-### Installating a new version (existing users)
+### Installing a new version (existing users)
 - For newcomers, you can go straight to Installation. For existing users, see the points below
 - Download the latest addon.py file and replace the older one, then add it to Blender
 - Delete the MCP server from Claude and add it back again, and you should be good to go!
@@ -76,7 +79,46 @@ $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
 
 Otherwise installation instructions are on their website: [Install uv](https://docs.astral.sh/uv/getting-started/installation/)
 
+**Linux:** install uv with `curl -LsSf https://astral.sh/uv/install.sh | sh` (it lands in `~/.local/bin`; open a new shell so it's on your PATH). On every OS, use uv's **official installer above — not `pip install uv`**, which may not create the `uvx` command and can hide uv inside an environment your client can't see.
+
 **⚠️ Do not proceed before installing UV**
+
+### Make your client find uvx
+
+MCP clients started from a GUI (Claude Desktop, Cursor, VS Code from the Dock/Start menu) do **not** inherit your terminal's PATH, so a bare `"command": "uvx"` can fail with **`spawn uvx ENOENT`** even though `uvx` works in your terminal. If that happens:
+
+- Find uvx's full path — `which uvx` (macOS/Linux) or `where uvx` (Windows) — and use it as `"command"`, e.g. `/opt/homebrew/bin/uvx` or `C:\Users\<you>\.local\bin\uvx.exe`.
+- On Windows you can instead wrap it: `"command": "cmd", "args": ["/c", "uvx", "blender-mcp"]`.
+- After any PATH or config change, **fully quit and relaunch** the client (Windows: quit from the system tray, not just the window; macOS: Cmd-Q).
+
+### Pin the Python version (avoid conda / pyenv / version conflicts)
+
+uv chooses which Python runs the server. On machines with conda (auto-activated base), pyenv, or asdf — or with a newer CPython release that some dependencies do not have wheels for yet — uv can grab an interpreter that makes installation fail. Pin Python 3.11 and prefer uv-managed interpreters to avoid using whatever is on your PATH:
+
+```json
+{
+    "mcpServers": {
+        "blender": {
+            "command": "uvx",
+            "args": ["--python", "3.11", "blender-mcp"],
+            "env": { "UV_PYTHON_PREFERENCE": "only-managed" }
+        }
+    }
+}
+```
+
+`--python 3.11` still satisfies this package's `requires-python >=3.10`, and `UV_PYTHON_PREFERENCE=only-managed` keeps uv from selecting conda, pyenv, asdf, or system Python first. (The repo's `.python-version` is only a hint for contributors and does **not** affect `uvx`.) If a previous failed attempt keeps replaying after a fix, clear the cache: `uv cache clean blender-mcp && uvx --refresh blender-mcp`.
+
+### If uv won't work: install without uv
+
+On locked-down machines you can skip uvx entirely with [`pipx`](https://pipx.pypa.io), then point your client at the installed command:
+
+```bash
+pipx install blender-mcp
+pipx ensurepath          # then restart your shell / client
+```
+
+Use the resulting absolute path as `"command"` (find it with `which blender-mcp` / `where blender-mcp`) and omit `args`.
 
 ### Environment Variables
 
@@ -169,6 +211,24 @@ _Prerequisites_: Make sure you have [Visual Studio Code](https://code.visualstud
 
 [![Install in VS Code](https://img.shields.io/badge/VS_Code-Install_blender--mcp_server-0098FF?style=flat-square&logo=visualstudiocode&logoColor=ffffff)](vscode:mcp/install?%7B%22name%22%3A%22blender-mcp%22%2C%22type%22%3A%22stdio%22%2C%22command%22%3A%22uvx%22%2C%22args%22%3A%5B%22blender-mcp%22%5D%7D)
 
+### OpenCode integration
+
+```json
+{
+  "mcp": {
+    "blender-mcp": {
+      "type": "local",
+      "command": ["uvx", "blender-mcp"],
+      "enabled": true,
+      "environment": {
+        "BLENDER_HOST": "localhost",
+        "BLENDER_PORT": "9876"
+      }   
+    }
+  }
+}
+```
+
 ### Installing the Blender Addon
 
 1. Download the `addon.py` file from this repo
@@ -222,6 +282,27 @@ Here are some examples of what you can ask Claude to do:
 ## Hyper3D integration
 
 Hyper3D's free trial key allows you to generate a limited number of models per day. If the daily limit is reached, you can wait for the next day's reset or obtain your own key from hyper3d.ai and fal.ai.
+
+## Persistent API credentials
+
+BlenderMCP supports persistent credentials via Blender Add-on Preferences:
+
+`Edit -> Preferences -> Add-ons -> Blender MCP`
+
+You can store these values there so they survive Blender restarts:
+
+- Sketchfab API Key
+- Hyper3D API Key
+- Hunyuan3D SecretId / SecretKey
+- Hunyuan3D API URL
+
+For headless setups or CI, credentials can also be injected by environment variables:
+
+- `BLENDERMCP_SKETCHFAB_API_KEY`
+- `BLENDERMCP_HYPER3D_API_KEY`
+- `BLENDERMCP_HUNYUAN3D_SECRET_ID`
+- `BLENDERMCP_HUNYUAN3D_SECRET_KEY`
+- `BLENDERMCP_HUNYUAN3D_API_URL`
 
 ## Troubleshooting
 

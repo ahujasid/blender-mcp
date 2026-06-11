@@ -4,7 +4,6 @@ Tracks tool usage, DAU/MAU, and performance metrics
 """
 
 import contextlib
-import json
 import logging
 import os
 import platform
@@ -15,38 +14,21 @@ import time
 import uuid
 from dataclasses import dataclass
 from enum import Enum
+from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from typing import Any
 
-try:
-    from supabase import create_client, Client
-    HAS_SUPABASE = True
-except ImportError:
-    HAS_SUPABASE = False
-
-try:
-    import tomli
-except ImportError:
-    try:
-        import tomllib as tomli
-    except ImportError:
-        tomli = None
+import httpx
 
 logger = logging.getLogger("blender-mcp-telemetry")
 
 
 def get_package_version() -> str:
-    """Get version from pyproject.toml"""
+    """Get the installed package version"""
     try:
-        pyproject_path = Path(__file__).parent.parent.parent.parent / "pyproject.toml"
-        if pyproject_path.exists():
-            if tomli:
-                with open(pyproject_path, "rb") as f:
-                    data = tomli.load(f)
-                    return data["project"]["version"]
-    except Exception:
-        pass
-    return "unknown"
+        return version("blender-mcp")
+    except PackageNotFoundError:
+        return "unknown"
 
 
 MCP_VERSION = get_package_version()
@@ -110,7 +92,7 @@ class TelemetryCollector:
         )
         self._worker.start()
 
-        logger.warning(f"Telemetry initialized (enabled={self.config.enabled}, has_supabase={HAS_SUPABASE}, customer_uuid={self._customer_uuid})")
+        logger.debug(f"Telemetry initialized (enabled={self.config.enabled})")
 
     def _is_disabled(self) -> bool:
         """Check if telemetry is disabled via environment variables"""
@@ -168,10 +150,11 @@ class TelemetryCollector:
             # Import here to avoid circular dependency
             from .server import get_blender_connection
             blender = get_blender_connection()
-            result = blender.send_command("get_telemetry_consent", {})
+            result = blender.send_command("get_telemetry_consent")
             consent = result.get("consent", False)
             return consent
         except Exception as e:
+            logger.debug(f"Could not check telemetry consent: {e}")
             # Default to False if we can't check (user hasn't given consent or Blender not connected)
             return False
 
@@ -188,13 +171,7 @@ class TelemetryCollector:
     ):
         """Record a telemetry event (non-blocking)"""
         if not self.config.enabled:
-            logger.warning(f"Telemetry disabled, skipping event: {event_type}")
             return
-        if not HAS_SUPABASE:
-            logger.warning(f"Supabase not available, skipping event: {event_type}")
-            return
-
-        logger.warning(f"Recording telemetry event: {event_type}, tool={tool_name}")
 
         # Check user consent for private data collection
         user_consent = self._check_user_consent()
@@ -254,27 +231,16 @@ class TelemetryCollector:
                 with contextlib.suppress(Exception):
                     self._queue.task_done()
 
+    def _auth_headers(self) -> dict[str, str]:
+        """Headers for Supabase REST/Storage API requests"""
+        return {
+            "apikey": self.config.supabase_anon_key,
+            "Authorization": f"Bearer {self.config.supabase_anon_key}",
+        }
+
     def _send_event(self, event: TelemetryEvent):
-        """Send event to Supabase"""
-        if not HAS_SUPABASE:
-            return
-
+        """Send event to Supabase via the PostgREST API"""
         try:
-            # Create Supabase client with explicit options
-            from supabase import ClientOptions
-
-            options = ClientOptions(
-                auto_refresh_token=False,
-                persist_session=False
-            )
-
-            supabase: Client = create_client(
-                self.config.supabase_url,
-                self.config.supabase_anon_key,
-                options=options
-            )
-
-            # Prepare data for insertion
             data = {
                 "customer_uuid": event.customer_uuid,
                 "session_id": event.session_id,
@@ -291,12 +257,54 @@ class TelemetryCollector:
                 "event_timestamp": int(event.timestamp),
             }
 
-            response = supabase.table("telemetry_events").insert(data, returning="minimal").execute()
+            response = httpx.post(
+                f"{self.config.supabase_url}/rest/v1/telemetry_events",
+                json=data,
+                headers={**self._auth_headers(), "Prefer": "return=minimal"},
+                timeout=self.config.timeout,
+            )
+            response.raise_for_status()
             logger.debug(f"Telemetry sent: {event.event_type}")
 
         except Exception as e:
             logger.debug(f"Failed to send telemetry: {e}")
 
+    def upload_screenshot(self, image_bytes: bytes, prefix: str) -> str:
+        """Upload screenshot to Supabase Storage.
+        
+        Args:
+            image_bytes: PNG image data
+            prefix: Filename prefix (e.g., 'screenshot')
+            
+        Returns:
+            Storage path reference (storage:bucket/filename) or empty string on failure
+        """
+        if not self.config.enabled:
+            return ""
+
+        # Only upload screenshots with user consent
+        if not self._check_user_consent():
+            logger.debug("User has not consented to telemetry, skipping screenshot upload")
+            return ""
+
+        try:
+            # Generate unique filename
+            timestamp = int(time.time() * 1000)
+            filename = f"{prefix}_{self._session_id}_{timestamp}.png"
+
+            bucket = self.config.supabase_bucket
+            response = httpx.post(
+                f"{self.config.supabase_url}/storage/v1/object/{bucket}/{filename}",
+                content=image_bytes,
+                headers={**self._auth_headers(), "Content-Type": "image/png"},
+                # Image uploads need more headroom than the event timeout
+                timeout=10.0,
+            )
+            response.raise_for_status()
+
+            return f"storage:{bucket}/{filename}"
+        except Exception:
+            return ""
 
 # Global telemetry instance
 _telemetry_collector: TelemetryCollector | None = None
