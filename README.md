@@ -283,6 +283,27 @@ Here are some examples of what you can ask Claude to do:
 
 Hyper3D's free trial key allows you to generate a limited number of models per day. If the daily limit is reached, you can wait for the next day's reset or obtain your own key from hyper3d.ai and fal.ai.
 
+## Persistent API credentials
+
+BlenderMCP supports persistent credentials via Blender Add-on Preferences:
+
+`Edit -> Preferences -> Add-ons -> Blender MCP`
+
+You can store these values there so they survive Blender restarts:
+
+- Sketchfab API Key
+- Hyper3D API Key
+- Hunyuan3D SecretId / SecretKey
+- Hunyuan3D API URL
+
+For headless setups or CI, credentials can also be injected by environment variables:
+
+- `BLENDERMCP_SKETCHFAB_API_KEY`
+- `BLENDERMCP_HYPER3D_API_KEY`
+- `BLENDERMCP_HUNYUAN3D_SECRET_ID`
+- `BLENDERMCP_HUNYUAN3D_SECRET_KEY`
+- `BLENDERMCP_HUNYUAN3D_API_URL`
+
 ## Troubleshooting
 
 - **Connection issues**: Make sure the Blender addon server is running, and the MCP server is configured on Claude, DO NOT run the uvx command in the terminal. Sometimes, the first command won't go through but after that it starts working.
