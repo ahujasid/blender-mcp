@@ -76,7 +76,46 @@ $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
 
 Otherwise installation instructions are on their website: [Install uv](https://docs.astral.sh/uv/getting-started/installation/)
 
+**Linux:** install uv with `curl -LsSf https://astral.sh/uv/install.sh | sh` (it lands in `~/.local/bin`; open a new shell so it's on your PATH). On every OS, use uv's **official installer above — not `pip install uv`**, which may not create the `uvx` command and can hide uv inside an environment your client can't see.
+
 **⚠️ Do not proceed before installing UV**
+
+### Make your client find uvx
+
+MCP clients started from a GUI (Claude Desktop, Cursor, VS Code from the Dock/Start menu) do **not** inherit your terminal's PATH, so a bare `"command": "uvx"` can fail with **`spawn uvx ENOENT`** even though `uvx` works in your terminal. If that happens:
+
+- Find uvx's full path — `which uvx` (macOS/Linux) or `where uvx` (Windows) — and use it as `"command"`, e.g. `/opt/homebrew/bin/uvx` or `C:\Users\<you>\.local\bin\uvx.exe`.
+- On Windows you can instead wrap it: `"command": "cmd", "args": ["/c", "uvx", "blender-mcp"]`.
+- After any PATH or config change, **fully quit and relaunch** the client (Windows: quit from the system tray, not just the window; macOS: Cmd-Q).
+
+### Pin the Python version (avoid conda / pyenv / version conflicts)
+
+uv chooses which Python runs the server. On machines with conda (auto-activated base), pyenv, or asdf — or with a newer CPython release that some dependencies do not have wheels for yet — uv can grab an interpreter that makes installation fail. Pin Python 3.11 and prefer uv-managed interpreters to avoid using whatever is on your PATH:
+
+```json
+{
+    "mcpServers": {
+        "blender": {
+            "command": "uvx",
+            "args": ["--python", "3.11", "blender-mcp"],
+            "env": { "UV_PYTHON_PREFERENCE": "only-managed" }
+        }
+    }
+}
+```
+
+`--python 3.11` still satisfies this package's `requires-python >=3.10`, and `UV_PYTHON_PREFERENCE=only-managed` keeps uv from selecting conda, pyenv, asdf, or system Python first. (The repo's `.python-version` is only a hint for contributors and does **not** affect `uvx`.) If a previous failed attempt keeps replaying after a fix, clear the cache: `uv cache clean blender-mcp && uvx --refresh blender-mcp`.
+
+### If uv won't work: install without uv
+
+On locked-down machines you can skip uvx entirely with [`pipx`](https://pipx.pypa.io), then point your client at the installed command:
+
+```bash
+pipx install blender-mcp
+pipx ensurepath          # then restart your shell / client
+```
+
+Use the resulting absolute path as `"command"` (find it with `which blender-mcp` / `where blender-mcp`) and omit `args`.
 
 ### Environment Variables
 
