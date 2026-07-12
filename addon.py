@@ -1064,18 +1064,26 @@ class BlenderMCPServer:
 
             # Handle ARM texture (Ambient Occlusion, Roughness, Metallic)
             if 'arm' in texture_nodes:
-                separate_rgb = nodes.new(type='ShaderNodeSeparateRGB')
-                separate_rgb.location = (-200, -100)
-                links.new(texture_nodes['arm'].outputs['Color'], separate_rgb.inputs['Image'])
+                # Blender 4.0 removed ShaderNodeSeparateRGB (renamed to
+                # ShaderNodeSeparateColor, added in 3.3). Branch on the running
+                # Blender version so pre-4.0 behavior is untouched.
+                if bpy.app.version >= (4, 0):
+                    sep = nodes.new(type='ShaderNodeSeparateColor')  # defaults to mode='RGB'
+                    in_socket, ch_r, ch_g, ch_b = 'Color', 'Red', 'Green', 'Blue'
+                else:
+                    sep = nodes.new(type='ShaderNodeSeparateRGB')
+                    in_socket, ch_r, ch_g, ch_b = 'Image', 'R', 'G', 'B'
+                sep.location = (-200, -100)
+                links.new(texture_nodes['arm'].outputs['Color'], sep.inputs[in_socket])
 
                 # Connect Roughness (G) if no dedicated roughness map
                 if not any(map_name in texture_nodes for map_name in ['roughness', 'rough']):
-                    links.new(separate_rgb.outputs['G'], principled.inputs['Roughness'])
+                    links.new(sep.outputs[ch_g], principled.inputs['Roughness'])
                     print("Connected ARM.G to Roughness")
 
                 # Connect Metallic (B) if no dedicated metallic map
                 if not any(map_name in texture_nodes for map_name in ['metallic', 'metalness', 'metal']):
-                    links.new(separate_rgb.outputs['B'], principled.inputs['Metallic'])
+                    links.new(sep.outputs[ch_b], principled.inputs['Metallic'])
                     print("Connected ARM.B to Metallic")
 
                 # For AO (R channel), multiply with base color if we have one
@@ -1098,7 +1106,7 @@ class BlenderMCPServer:
 
                     # Connect through the mix node
                     links.new(base_color_node.outputs['Color'], mix_node.inputs[1])
-                    links.new(separate_rgb.outputs['R'], mix_node.inputs[2])
+                    links.new(sep.outputs[ch_r], mix_node.inputs[2])
                     links.new(mix_node.outputs['Color'], principled.inputs['Base Color'])
                     print("Connected ARM.R to AO mix with Base Color")
 
