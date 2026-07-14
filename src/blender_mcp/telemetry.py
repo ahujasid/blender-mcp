@@ -1,5 +1,4 @@
-"""
-Privacy-focused, anonymous telemetry for Blender MCP
+"""Privacy-focused, anonymous telemetry for Blender MCP
 Tracks tool usage, DAU/MAU, and performance metrics
 """
 
@@ -36,6 +35,7 @@ MCP_VERSION = get_package_version()
 
 class EventType(str, Enum):
     """Types of telemetry events"""
+
     STARTUP = "startup"
     TOOL_EXECUTION = "tool_execution"
     PROMPT_SENT = "prompt_sent"
@@ -46,6 +46,7 @@ class EventType(str, Enum):
 @dataclass
 class TelemetryEvent:
     """Structure for telemetry events"""
+
     event_type: EventType
     customer_uuid: str
     session_id: str
@@ -70,6 +71,7 @@ class TelemetryCollector:
         """Initialize telemetry collector"""
         # Import config here to avoid circular imports
         from .config import telemetry_config
+
         self.config = telemetry_config
 
         # Check if disabled via environment variables
@@ -86,9 +88,9 @@ class TelemetryCollector:
         self._rate_limit_lock = threading.Lock()
 
         # Background queue and worker
-        self._queue: "queue.Queue[TelemetryEvent]" = queue.Queue(maxsize=1000)
+        self._queue: queue.Queue[TelemetryEvent] = queue.Queue(maxsize=1000)
         self._worker: threading.Thread = threading.Thread(
-            target=self._worker_loop, daemon=True
+            target=self._worker_loop, daemon=True,
         )
         self._worker.start()
 
@@ -99,7 +101,7 @@ class TelemetryCollector:
         disable_vars = [
             "DISABLE_TELEMETRY",
             "BLENDER_MCP_DISABLE_TELEMETRY",
-            "MCP_DISABLE_TELEMETRY"
+            "MCP_DISABLE_TELEMETRY",
         ]
 
         for var in disable_vars:
@@ -110,13 +112,17 @@ class TelemetryCollector:
     def _get_data_directory(self) -> Path:
         """Get directory for storing telemetry data"""
         if sys.platform == "win32":
-            base_dir = Path(os.environ.get('APPDATA', Path.home() / 'AppData' / 'Roaming'))
+            base_dir = Path(
+                os.environ.get("APPDATA", Path.home() / "AppData" / "Roaming"),
+            )
         elif sys.platform == "darwin":
-            base_dir = Path.home() / 'Library' / 'Application Support'
+            base_dir = Path.home() / "Library" / "Application Support"
         else:  # Linux
-            base_dir = Path(os.environ.get('XDG_DATA_HOME', Path.home() / '.local' / 'share'))
+            base_dir = Path(
+                os.environ.get("XDG_DATA_HOME", Path.home() / ".local" / "share"),
+            )
 
-        data_dir = base_dir / 'BlenderMCP'
+        data_dir = base_dir / "BlenderMCP"
         data_dir.mkdir(parents=True, exist_ok=True)
         return data_dir
 
@@ -149,6 +155,7 @@ class TelemetryCollector:
         try:
             # Import here to avoid circular dependency
             from .server import get_blender_connection
+
             blender = get_blender_connection()
             result = blender.send_command("get_telemetry_consent")
             consent = result.get("consent", False)
@@ -167,7 +174,7 @@ class TelemetryCollector:
         duration_ms: float | None = None,
         error_message: str | None = None,
         blender_version: str | None = None,
-        metadata: dict[str, Any] | None = None
+        metadata: dict[str, Any] | None = None,
     ):
         """Record a telemetry event (non-blocking)"""
         if not self.config.enabled:
@@ -175,7 +182,7 @@ class TelemetryCollector:
 
         # Check user consent for private data collection
         user_consent = self._check_user_consent()
-        
+
         if not user_consent:
             # Without consent, only collect minimal anonymous usage data:
             # - Session startup events
@@ -191,7 +198,7 @@ class TelemetryCollector:
 
         # Truncate prompt if needed (only if consent was given)
         if prompt_text and len(prompt_text) > self.config.max_prompt_length:
-            prompt_text = prompt_text[:self.config.max_prompt_length] + "..."
+            prompt_text = prompt_text[: self.config.max_prompt_length] + "..."
 
         # Truncate error messages (only if consent was given and not already sanitized)
         if error_message and user_consent and len(error_message) > 200:
@@ -210,7 +217,7 @@ class TelemetryCollector:
             duration_ms=duration_ms,
             error_message=error_message,
             blender_version=blender_version,
-            metadata=metadata
+            metadata=metadata,
         )
 
         # Enqueue for background worker
@@ -271,20 +278,23 @@ class TelemetryCollector:
 
     def upload_screenshot(self, image_bytes: bytes, prefix: str) -> str:
         """Upload screenshot to Supabase Storage.
-        
+
         Args:
             image_bytes: PNG image data
             prefix: Filename prefix (e.g., 'screenshot')
-            
+
         Returns:
             Storage path reference (storage:bucket/filename) or empty string on failure
+
         """
         if not self.config.enabled:
             return ""
 
         # Only upload screenshots with user consent
         if not self._check_user_consent():
-            logger.debug("User has not consented to telemetry, skipping screenshot upload")
+            logger.debug(
+                "User has not consented to telemetry, skipping screenshot upload",
+            )
             return ""
 
         try:
@@ -306,6 +316,7 @@ class TelemetryCollector:
         except Exception:
             return ""
 
+
 # Global telemetry instance
 _telemetry_collector: TelemetryCollector | None = None
 
@@ -319,10 +330,7 @@ def get_telemetry() -> TelemetryCollector:
 
 
 def record_tool_usage(
-    tool_name: str,
-    success: bool,
-    duration_ms: float,
-    error: str | None = None
+    tool_name: str, success: bool, duration_ms: float, error: str | None = None,
 ):
     """Convenience function to record tool usage"""
     get_telemetry().record_event(
@@ -330,15 +338,14 @@ def record_tool_usage(
         tool_name=tool_name,
         success=success,
         duration_ms=duration_ms,
-        error_message=error
+        error_message=error,
     )
 
 
 def record_startup(blender_version: str | None = None):
     """Record server startup event"""
     get_telemetry().record_event(
-        event_type=EventType.STARTUP,
-        blender_version=blender_version
+        event_type=EventType.STARTUP, blender_version=blender_version,
     )
 
 
