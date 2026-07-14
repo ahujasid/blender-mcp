@@ -10,7 +10,7 @@ BlenderMCP connects Blender to Claude AI through the Model Context Protocol (MCP
 
 ### Join the Community
 
-Give feedback, get inspired, and build on top of the MCP: [Discord](https://discord.gg/z5apgR8TFU)
+Give feedback, get inspired, and build on top of the MCP: [Discord](https://discord.gg/SNqPn4TcKQ)
 
 ### Supporters
 
