@@ -821,8 +821,22 @@ class BlenderMCPServer:
                                 # Get the URL for the included file - this is the fix
                                 include_url = include_info["url"]
 
+                                # Validate include_path — the API response controls these
+                                # dict keys; a malicious or MITM'd response could request an
+                                # absolute path or one containing ".." to escape temp_dir
+                                # and write arbitrary files (e.g. ~/.bashrc, authorized_keys).
+                                # Mirrors the zip-slip check in download_sketchfab_model.
+                                target_path = os.path.join(temp_dir, os.path.normpath(include_path))
+                                abs_temp_dir = os.path.abspath(temp_dir)
+                                abs_target_path = os.path.abspath(target_path)
+                                if (os.path.isabs(include_path)
+                                        or ".." in include_path
+                                        or not abs_target_path.startswith(abs_temp_dir + os.sep)):
+                                    print(f"Skipping include with unsafe path: {include_path}")
+                                    continue
+
                                 # Create the directory structure for the included file
-                                include_file_path = os.path.join(temp_dir, include_path)
+                                include_file_path = target_path
                                 os.makedirs(os.path.dirname(include_file_path), exist_ok=True)
 
                                 # Download the included file
