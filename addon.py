@@ -2633,6 +2633,27 @@ class BLENDERMCP_OT_SetFreeTrialHyper3DAPIKey(bpy.types.Operator):
         self.report({'INFO'}, "API Key set successfully!")
         return {'FINISHED'}
 
+
+_server_instance = None
+
+
+def _ensure_server(port):
+    global _server_instance
+
+    if _server_instance is None:
+        _server_instance = BlenderMCPServer(port=port)
+
+    return _server_instance
+
+
+def _stop_server():
+    global _server_instance
+
+    if _server_instance is not None:
+        _server_instance.stop()
+        _server_instance = None
+
+
 # Operator to start the server
 class BLENDERMCP_OT_StartServer(bpy.types.Operator):
     bl_idname = "blendermcp.start_server"
@@ -2642,13 +2663,9 @@ class BLENDERMCP_OT_StartServer(bpy.types.Operator):
     def execute(self, context):
         scene = context.scene
 
-        # Create a new server instance
-        if not hasattr(bpy.types, "blendermcp_server") or not bpy.types.blendermcp_server:
-            bpy.types.blendermcp_server = BlenderMCPServer(port=scene.blendermcp_port)
-
-        # Start the server
-        bpy.types.blendermcp_server.start()
-        scene.blendermcp_server_running = bpy.types.blendermcp_server.running
+        server = _ensure_server(scene.blendermcp_port)
+        server.start()
+        scene.blendermcp_server_running = server.running
 
         return {'FINISHED'}
 
@@ -2661,11 +2678,7 @@ class BLENDERMCP_OT_StopServer(bpy.types.Operator):
     def execute(self, context):
         scene = context.scene
 
-        # Stop the server if it exists
-        if hasattr(bpy.types, "blendermcp_server") and bpy.types.blendermcp_server:
-            bpy.types.blendermcp_server.stop()
-            del bpy.types.blendermcp_server
-
+        _stop_server()
         scene.blendermcp_server_running = False
 
         return {'FINISHED'}
@@ -2834,22 +2847,18 @@ def register():
         port = 9876
         auto_start = True
 
-    if auto_start and (not hasattr(bpy.types, "blendermcp_server") or not bpy.types.blendermcp_server):
-        bpy.types.blendermcp_server = BlenderMCPServer(port=port)
-    if auto_start and not bpy.types.blendermcp_server.running:
-        bpy.types.blendermcp_server.start()
+    server = _ensure_server(port) if auto_start else None
+    if server is not None and not server.running:
+        server.start()
         try:
-            bpy.context.scene.blendermcp_server_running = bpy.types.blendermcp_server.running
+            bpy.context.scene.blendermcp_server_running = server.running
         except AttributeError:
             pass
 
     print("BlenderMCP addon registered")
 
 def unregister():
-    # Stop the server if it's running
-    if hasattr(bpy.types, "blendermcp_server") and bpy.types.blendermcp_server:
-        bpy.types.blendermcp_server.stop()
-        del bpy.types.blendermcp_server
+    _stop_server()
 
     bpy.utils.unregister_class(BLENDERMCP_PT_Panel)
     bpy.utils.unregister_class(BLENDERMCP_OT_SetFreeTrialHyper3DAPIKey)
