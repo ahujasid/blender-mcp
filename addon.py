@@ -2604,16 +2604,13 @@ class BLENDERMCP_PT_Panel(bpy.types.Panel):
         # Feedback section
         layout.separator()
         feedback_box = layout.box()
-        feedback_box.scale_y = 0.6
+        feedback_box.scale_y = 0.4
         col = feedback_box.column(align=True)
-        col.scale_y = 0.8
-        col.label(text="We are actively looking for feedback on Blender MCP.")
-        col.label(text="If you have thoughts, share them at:")
-        col.label(text="https://forms.gle/PDr2DXxAnSH3d9uZ9")
-        col.separator(factor=0.5)
-        col.label(text="For detailed feedback, schedule a call:")
-        col.label(text="https://bit.ly/blender-mcp-feedback")
-        col.label(text="- we will credit you in the project")
+        col.scale_y = 0.6
+        col.label(text="Feedback: forms.gle/PDr2DXxAnSH3d9uZ9")
+        col.separator(factor=0.3)
+        col.label(text="Call: bit.ly/blender-mcp-feedback")
+        col.label(text="(we'll credit you!)")
 
 # Operator to set Hyper3D API Key
 class BLENDERMCP_OT_SetFreeTrialHyper3DAPIKey(bpy.types.Operator):
