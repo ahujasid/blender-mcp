@@ -128,12 +128,19 @@ class BlenderMCPServer:
             self.socket.bind((self.host, self.port))
             self.socket.listen(1)
 
-            # Start server thread
-            self.server_thread = threading.Thread(target=self._server_loop)
-            self.server_thread.daemon = True
-            self.server_thread.start()
-
             print(f"BlenderMCP server started on {self.host}:{self.port}")
+
+            # In `blender -b` (background) mode, run the server loop on
+            # the main (this) thread — blocking — so every command stays
+            # on the main thread. Callers in headless are expected to be
+            # startup scripts whose only job is to keep Blender alive.
+            # In GUI mode, the original threaded behavior is preserved.
+            if bpy.app.background:
+                self._server_loop()
+            else:
+                self.server_thread = threading.Thread(target=self._server_loop)
+                self.server_thread.daemon = True
+                self.server_thread.start()
         except Exception as e:
             print(f"Failed to start server: {str(e)}")
             self.stop()
@@ -172,13 +179,20 @@ class BlenderMCPServer:
                     client, address = self.socket.accept()
                     print(f"Connected to client: {address}")
 
-                    # Handle client in a separate thread
-                    client_thread = threading.Thread(
-                        target=self._handle_client,
-                        args=(client,)
-                    )
-                    client_thread.daemon = True
-                    client_thread.start()
+                    # In background mode the server loop is already on
+                    # the main thread; handle clients serially to keep
+                    # Blender API calls on the main thread. Multi-client
+                    # concurrency is intentionally not supported in this
+                    # mode — it's a single-client headless server design.
+                    if bpy.app.background:
+                        self._handle_client(client)
+                    else:
+                        client_thread = threading.Thread(
+                            target=self._handle_client,
+                            args=(client,)
+                        )
+                        client_thread.daemon = True
+                        client_thread.start()
                 except socket.timeout:
                     # Just check running condition
                     continue
@@ -236,8 +250,14 @@ class BlenderMCPServer:
                                     pass
                             return None
 
-                        # Schedule execution in main thread
-                        bpy.app.timers.register(execute_wrapper, first_interval=0.0)
+                        # Schedule execution in main thread.
+                        # In `blender -b` (background) mode, bpy.app.timers
+                        # never fire because there's no event loop, so we
+                        # execute synchronously in this worker thread instead.
+                        if bpy.app.background:
+                            execute_wrapper()
+                        else:
+                            bpy.app.timers.register(execute_wrapper, first_interval=0.0)
                     except json.JSONDecodeError:
                         # Incomplete data, wait for more
                         pass
