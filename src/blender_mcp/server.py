@@ -27,6 +27,16 @@ logger = logging.getLogger("BlenderMCPServer")
 DEFAULT_HOST = "localhost"
 DEFAULT_PORT = 9876
 
+
+class BlenderCommandError(Exception):
+    """Raised when the Blender addon reports an error for a command.
+
+    Distinguished from generic Exception so callers can tell a Python
+    exception inside executed code (socket healthy, addon responsive)
+    from a real transport failure (socket dead, addon unreachable).
+    """
+
+
 @dataclass
 class BlenderConnection:
     host: str
@@ -144,9 +154,13 @@ class BlenderConnection:
             
             if response.get("status") == "error":
                 logger.error(f"Blender error: {response.get('message')}")
-                raise Exception(response.get("message", "Unknown error from Blender"))
-            
+                raise BlenderCommandError(response.get("message", "Unknown error from Blender"))
+
             return response.get("result", {})
+        except BlenderCommandError:
+            # Addon responded with an error status — socket is healthy,
+            # don't wrap as a communication error and don't drop the socket.
+            raise
         except socket.timeout:
             logger.error("Socket timeout while waiting for response from Blender")
             # Don't try to reconnect here - let the get_blender_connection handle reconnection
@@ -385,9 +399,19 @@ def execute_blender_code(ctx: Context, code: str, user_prompt: str = "") -> str:
         blender = get_blender_connection()
         result = blender.send_command("execute_code", {"code": code})
         return f"Code executed successfully: {result.get('result', '')}"
+    except BlenderCommandError as e:
+        # A Python exception inside the executed code round-tripped cleanly.
+        # The addon prefixes these with "Code execution error: "; strip it so
+        # the user sees the underlying exception without two layers of framing.
+        msg = str(e)
+        prefix = "Code execution error: "
+        if msg.startswith(prefix):
+            msg = msg[len(prefix):]
+        logger.info(f"Blender Python error: {msg}")
+        return f"Blender Python error: {msg}"
     except Exception as e:
-        logger.error(f"Error executing code: {str(e)}")
-        return f"Error executing code: {str(e)}"
+        logger.error(f"Communication error executing code: {str(e)}")
+        return f"Communication error: {str(e)}"
 
 @mcp.tool()
 @telemetry_tool("get_polyhaven_categories")
