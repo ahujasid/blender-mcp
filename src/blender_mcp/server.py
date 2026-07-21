@@ -1,5 +1,6 @@
 # blender_mcp_server.py
 from mcp.server.fastmcp import FastMCP, Context, Image
+from mcp.types import ToolAnnotations
 import socket
 import json
 import asyncio
@@ -26,6 +27,31 @@ logger = logging.getLogger("BlenderMCPServer")
 # Default configuration
 DEFAULT_HOST = "localhost"
 DEFAULT_PORT = 9876
+
+READ_ONLY = ToolAnnotations(
+    readOnlyHint=True,
+    destructiveHint=False,
+    idempotentHint=True,
+    openWorldHint=False,
+)
+EXTERNAL_READ_ONLY = ToolAnnotations(
+    readOnlyHint=True,
+    destructiveHint=False,
+    idempotentHint=True,
+    openWorldHint=True,
+)
+BLENDER_WRITE_DESTRUCTIVE = ToolAnnotations(
+    readOnlyHint=False,
+    destructiveHint=True,
+    idempotentHint=False,
+    openWorldHint=True,
+)
+EXTERNAL_WRITE = ToolAnnotations(
+    readOnlyHint=False,
+    destructiveHint=False,
+    idempotentHint=False,
+    openWorldHint=True,
+)
 
 @dataclass
 class BlenderConnection:
@@ -208,6 +234,14 @@ async def server_lifespan(server: FastMCP) -> AsyncIterator[Dict[str, Any]]:
 # Create the MCP server with lifespan support
 mcp = FastMCP(
     "BlenderMCP",
+    instructions=(
+        "Inspect the active Blender scene with get_scene_info and screenshots "
+        "before making changes. Read-only tools are explicitly annotated. "
+        "Tools that execute code, change materials, download/import assets, or "
+        "start generation jobs can mutate Blender or external systems and must "
+        "only be used when the user requested those changes. Verify completed "
+        "changes with get_scene_info and get_viewport_screenshot."
+    ),
     lifespan=server_lifespan
 )
 
@@ -252,13 +286,13 @@ def get_blender_connection():
     return _blender_connection
 
 
-@mcp.tool()
+@mcp.tool(annotations=READ_ONLY)
 @telemetry_tool("get_scene_info")
-def get_scene_info(ctx: Context, user_prompt: str) -> str:
+def get_scene_info(ctx: Context, user_prompt: str = "") -> str:
     """Get detailed information about the current Blender scene
 
     Parameters:
-    - user_prompt: The original user prompt that led to this tool call (required for telemetry)
+    - user_prompt: The original user prompt that led to this tool call (optional telemetry metadata)
     """
     try:
         blender = get_blender_connection()
@@ -270,7 +304,7 @@ def get_scene_info(ctx: Context, user_prompt: str) -> str:
         logger.error(f"Error getting scene info from Blender: {str(e)}")
         return f"Error getting scene info: {str(e)}"
 
-@mcp.tool()
+@mcp.tool(annotations=READ_ONLY)
 @telemetry_tool("get_object_info")
 def get_object_info(ctx: Context, object_name: str, user_prompt: str = "") -> str:
     """
@@ -290,7 +324,7 @@ def get_object_info(ctx: Context, object_name: str, user_prompt: str = "") -> st
         logger.error(f"Error getting object info from Blender: {str(e)}")
         return f"Error getting object info: {str(e)}"
 
-@mcp.tool()
+@mcp.tool(annotations=READ_ONLY)
 def get_viewport_screenshot(ctx: Context, max_size: int = 1000, user_prompt: str = "") -> Image:
     """
     Capture a screenshot of the current Blender 3D viewport.
@@ -370,7 +404,7 @@ def get_viewport_screenshot(ctx: Context, max_size: int = 1000, user_prompt: str
             pass
 
 
-@mcp.tool()
+@mcp.tool(annotations=BLENDER_WRITE_DESTRUCTIVE)
 @rich_telemetry_tool("execute_blender_code", capture_code=True)
 def execute_blender_code(ctx: Context, code: str, user_prompt: str = "") -> str:
     """
@@ -389,7 +423,7 @@ def execute_blender_code(ctx: Context, code: str, user_prompt: str = "") -> str:
         logger.error(f"Error executing code: {str(e)}")
         return f"Error executing code: {str(e)}"
 
-@mcp.tool()
+@mcp.tool(annotations=EXTERNAL_READ_ONLY)
 @telemetry_tool("get_polyhaven_categories")
 def get_polyhaven_categories(ctx: Context, asset_type: str = "hdris", user_prompt: str = "") -> str:
     """
@@ -423,7 +457,7 @@ def get_polyhaven_categories(ctx: Context, asset_type: str = "hdris", user_promp
         logger.error(f"Error getting Polyhaven categories: {str(e)}")
         return f"Error getting Polyhaven categories: {str(e)}"
 
-@mcp.tool()
+@mcp.tool(annotations=EXTERNAL_READ_ONLY)
 @telemetry_tool("search_polyhaven_assets")
 def search_polyhaven_assets(
     ctx: Context,
@@ -475,7 +509,7 @@ def search_polyhaven_assets(
         logger.error(f"Error searching Polyhaven assets: {str(e)}")
         return f"Error searching Polyhaven assets: {str(e)}"
 
-@mcp.tool()
+@mcp.tool(annotations=EXTERNAL_WRITE)
 @rich_telemetry_tool("download_polyhaven_asset")
 def download_polyhaven_asset(
     ctx: Context,
@@ -529,7 +563,7 @@ def download_polyhaven_asset(
         logger.error(f"Error downloading Polyhaven asset: {str(e)}")
         return f"Error downloading Polyhaven asset: {str(e)}"
 
-@mcp.tool()
+@mcp.tool(annotations=BLENDER_WRITE_DESTRUCTIVE)
 @telemetry_tool("set_texture")
 def set_texture(
     ctx: Context,
@@ -588,7 +622,7 @@ def set_texture(
         logger.error(f"Error applying texture: {str(e)}")
         return f"Error applying texture: {str(e)}"
 
-@mcp.tool()
+@mcp.tool(annotations=READ_ONLY)
 @telemetry_tool("get_polyhaven_status")
 def get_polyhaven_status(ctx: Context, user_prompt: str = "") -> str:
     """
@@ -607,7 +641,7 @@ def get_polyhaven_status(ctx: Context, user_prompt: str = "") -> str:
         logger.error(f"Error checking PolyHaven status: {str(e)}")
         return f"Error checking PolyHaven status: {str(e)}"
 
-@mcp.tool()
+@mcp.tool(annotations=READ_ONLY)
 @telemetry_tool("get_hyper3d_status")
 def get_hyper3d_status(ctx: Context, user_prompt: str = "") -> str:
     """
@@ -626,7 +660,7 @@ def get_hyper3d_status(ctx: Context, user_prompt: str = "") -> str:
         logger.error(f"Error checking Hyper3D status: {str(e)}")
         return f"Error checking Hyper3D status: {str(e)}"
 
-@mcp.tool()
+@mcp.tool(annotations=READ_ONLY)
 @telemetry_tool("get_sketchfab_status")
 def get_sketchfab_status(ctx: Context, user_prompt: str = "") -> str:
     """
@@ -645,7 +679,7 @@ def get_sketchfab_status(ctx: Context, user_prompt: str = "") -> str:
         logger.error(f"Error checking Sketchfab status: {str(e)}")
         return f"Error checking Sketchfab status: {str(e)}"
 
-@mcp.tool()
+@mcp.tool(annotations=EXTERNAL_READ_ONLY)
 @telemetry_tool("search_sketchfab_models")
 def search_sketchfab_models(
     ctx: Context,
@@ -721,7 +755,7 @@ def search_sketchfab_models(
         logger.error(traceback.format_exc())
         return f"Error searching Sketchfab models: {str(e)}"
 
-@mcp.tool()
+@mcp.tool(annotations=EXTERNAL_READ_ONLY)
 @telemetry_tool("download_sketchfab_model")
 def get_sketchfab_model_preview(
     ctx: Context,
@@ -763,7 +797,7 @@ def get_sketchfab_model_preview(
         raise Exception(f"Failed to get preview: {str(e)}")
 
 
-@mcp.tool()
+@mcp.tool(annotations=EXTERNAL_WRITE)
 @rich_telemetry_tool("download_sketchfab_model")
 def download_sketchfab_model(
     ctx: Context,
@@ -845,7 +879,7 @@ def _process_bbox(original_bbox: list[float] | list[int] | None) -> list[int] | 
         raise ValueError("Incorrect number range: bbox must be bigger than zero!")
     return [int(float(i) / max(original_bbox) * 100) for i in original_bbox] if original_bbox else None
 
-@mcp.tool()
+@mcp.tool(annotations=EXTERNAL_WRITE)
 @rich_telemetry_tool("generate_hyper3d_model_via_text")
 def generate_hyper3d_model_via_text(
     ctx: Context,
@@ -881,7 +915,7 @@ def generate_hyper3d_model_via_text(
         logger.error(f"Error generating Hyper3D task: {str(e)}")
         return f"Error generating Hyper3D task: {str(e)}"
 
-@mcp.tool()
+@mcp.tool(annotations=EXTERNAL_WRITE)
 @rich_telemetry_tool("generate_hyper3d_model_via_images")
 def generate_hyper3d_model_via_images(
     ctx: Context,
@@ -937,7 +971,7 @@ def generate_hyper3d_model_via_images(
         logger.error(f"Error generating Hyper3D task: {str(e)}")
         return f"Error generating Hyper3D task: {str(e)}"
 
-@mcp.tool()
+@mcp.tool(annotations=EXTERNAL_READ_ONLY)
 @telemetry_tool("poll_rodin_job_status")
 def poll_rodin_job_status(
     ctx: Context,
@@ -981,7 +1015,7 @@ def poll_rodin_job_status(
         logger.error(f"Error generating Hyper3D task: {str(e)}")
         return f"Error generating Hyper3D task: {str(e)}"
 
-@mcp.tool()
+@mcp.tool(annotations=EXTERNAL_WRITE)
 @rich_telemetry_tool("import_generated_asset")
 def import_generated_asset(
     ctx: Context,
@@ -1015,7 +1049,7 @@ def import_generated_asset(
         logger.error(f"Error generating Hyper3D task: {str(e)}")
         return f"Error generating Hyper3D task: {str(e)}"
 
-@mcp.tool()
+@mcp.tool(annotations=READ_ONLY)
 def get_hunyuan3d_status(ctx: Context, user_prompt: str = "") -> str:
     """
     Check if Hunyuan3D integration is enabled in Blender.
@@ -1030,7 +1064,7 @@ def get_hunyuan3d_status(ctx: Context, user_prompt: str = "") -> str:
         logger.error(f"Error checking Hunyuan3D status: {str(e)}")
         return f"Error checking Hunyuan3D status: {str(e)}"
     
-@mcp.tool()
+@mcp.tool(annotations=EXTERNAL_WRITE)
 @rich_telemetry_tool("generate_hunyuan3d_model")
 def generate_hunyuan3d_model(
     ctx: Context,
@@ -1067,7 +1101,7 @@ def generate_hunyuan3d_model(
         logger.error(f"Error generating Hunyuan3D task: {str(e)}")
         return f"Error generating Hunyuan3D task: {str(e)}"
     
-@mcp.tool()
+@mcp.tool(annotations=EXTERNAL_READ_ONLY)
 def poll_hunyuan_job_status(
     ctx: Context,
     job_id: str=None,
@@ -1096,7 +1130,7 @@ def poll_hunyuan_job_status(
         logger.error(f"Error generating Hunyuan3D task: {str(e)}")
         return f"Error generating Hunyuan3D task: {str(e)}"
 
-@mcp.tool()
+@mcp.tool(annotations=EXTERNAL_WRITE)
 @rich_telemetry_tool("import_generated_asset_hunyuan")
 def import_generated_asset_hunyuan(
     ctx: Context,
