@@ -5,7 +5,9 @@
 [![PyPI Downloads](https://static.pepy.tech/personalized-badge/blender-mcp?period=total&units=INTERNATIONAL_SYSTEM&left_color=BLACK&right_color=GREEN&left_text=downloads)](https://pepy.tech/projects/blender-mcp)
 
 
-BlenderMCP connects Blender to Claude AI through the Model Context Protocol (MCP), allowing Claude to directly interact with and control Blender. This integration enables prompt assisted 3D modeling, scene creation, and manipulation.
+BlenderMCP connects Blender to Claude, ChatGPT/Codex, and other compatible
+clients through the Model Context Protocol (MCP). It enables prompt-assisted
+3D modeling, scene inspection, and direct Blender control.
 
 **[Official website](https://blendermcp.org/)**
 
@@ -164,6 +166,37 @@ claude mcp add blender uvx blender-mcp
 ```
 </details>
 
+### ChatGPT desktop and Codex integration
+
+The ChatGPT desktop app, Codex CLI, and Codex IDE extension share MCP
+configuration. Add the local server with the Codex CLI, using the same port
+shown in Blender's BlenderMCP panel:
+
+```bash
+codex mcp add blender \
+  --env BLENDER_HOST=127.0.0.1 \
+  --env BLENDER_PORT=9876 \
+  --env DISABLE_TELEMETRY=true \
+  -- uvx --python 3.11 blender-mcp
+```
+
+For development from a source checkout, replace the command after `--` with an
+absolute `uv` path and checkout path:
+
+```bash
+codex mcp add blender \
+  --env BLENDER_HOST=127.0.0.1 \
+  --env BLENDER_PORT=9876 \
+  --env DISABLE_TELEMETRY=true \
+  -- /absolute/path/to/uv run --directory /absolute/path/to/blender-mcp blender-mcp
+```
+
+Run `codex mcp list` to verify the server, then restart ChatGPT/Codex so the
+new tools are loaded. BlenderMCP marks scene inspection, screenshots, status,
+search, and job polling as read-only. Codex can therefore distinguish those
+calls from tools that execute Python, modify the scene, import assets, or start
+external generation jobs and apply the appropriate approval policy.
+
 ### Cursor integration
 
 [![Install MCP Server](https://cursor.com/deeplink/mcp-install-dark.svg)](https://cursor.com/link/mcp%2Finstall?name=blender&config=eyJjb21tYW5kIjoidXZ4IGJsZW5kZXItbWNwIn0%3D)
@@ -249,12 +282,13 @@ _Prerequisites_: Make sure you have [Visual Studio Code](https://code.visualstud
 1. In Blender, go to the 3D View sidebar (press N if not visible)
 2. Find the "BlenderMCP" tab
 3. Turn on the Poly Haven checkbox if you want assets from their API (optional)
-4. Click "Connect to Claude"
+4. Click "Connect to MCP server"
 5. Make sure the MCP server is running in your terminal
 
-### Using with Claude
+### Using with an MCP client
 
-Once the config file has been set on Claude, and the addon is running on Blender, you will see a hammer icon with tools for the Blender MCP.
+Once the client is configured and the addon is running in Blender, the client
+can discover the BlenderMCP tools. Claude displays a hammer icon for them.
 
 ![BlenderMCP in the sidebar](assets/hammer-icon.png)
 

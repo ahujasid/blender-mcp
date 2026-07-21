@@ -2624,8 +2624,8 @@ class BLENDERMCP_OT_SetFreeTrialHyper3DAPIKey(bpy.types.Operator):
 # Operator to start the server
 class BLENDERMCP_OT_StartServer(bpy.types.Operator):
     bl_idname = "blendermcp.start_server"
-    bl_label = "Connect to Claude"
-    bl_description = "Start the BlenderMCP server to connect with Claude"
+    bl_label = "Connect to MCP client"
+    bl_description = "Start BlenderMCP for Claude, ChatGPT, Codex, or another MCP client"
 
     def execute(self, context):
         scene = context.scene
@@ -2643,8 +2643,8 @@ class BLENDERMCP_OT_StartServer(bpy.types.Operator):
 # Operator to stop the server
 class BLENDERMCP_OT_StopServer(bpy.types.Operator):
     bl_idname = "blendermcp.stop_server"
-    bl_label = "Stop the connection to Claude"
-    bl_description = "Stop the connection to Claude"
+    bl_label = "Stop the MCP connection"
+    bl_description = "Stop the BlenderMCP socket server"
 
     def execute(self, context):
         scene = context.scene
