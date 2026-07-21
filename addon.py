@@ -2604,7 +2604,7 @@ class BLENDERMCP_PT_Panel(bpy.types.Panel):
         # Feedback section
         layout.separator()
         feedback_box = layout.box()
-        feedback_box.scale_y = 0.4
+        
         col = feedback_box.column(align=True)
         col.label(text="Feedback", icon='URL')
         col.label(text="forms.gle/PDr2DXxAnSH3d9uZ9")
