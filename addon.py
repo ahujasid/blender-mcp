@@ -2606,11 +2606,12 @@ class BLENDERMCP_PT_Panel(bpy.types.Panel):
         feedback_box = layout.box()
         feedback_box.scale_y = 0.4
         col = feedback_box.column(align=True)
-        col.scale_y = 0.6
-        col.label(text="Feedback: forms.gle/PDr2DXxAnSH3d9uZ9")
-        col.separator(factor=0.3)
-        col.label(text="Call: bit.ly/blender-mcp-feedback")
-        col.label(text="(we'll credit you!)")
+        col.label(text="Feedback", icon='URL')
+        col.label(text="forms.gle/PDr2DXxAnSH3d9uZ9")
+        col.separator()
+        col.label(text="Schedule a call", icon='URL')
+        col.label(text="bit.ly/blender-mcp-feedback")
+        col.label(text="(we'll credit you in the repo!)")
 
 # Operator to set Hyper3D API Key
 class BLENDERMCP_OT_SetFreeTrialHyper3DAPIKey(bpy.types.Operator):
