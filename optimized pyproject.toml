@@ -1,0 +1,54 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "blender-mcp"
+version = "1.5.5"
+description = "Blender integration via the Model Context Protocol (MCP)"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+
+authors = [
+  { name = "Your Name", email = "your.email@example.com" }
+]
+
+keywords = ["blender", "mcp", "ai", "automation", "3d", "agents"]
+
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Intended Audience :: Developers",
+  "Topic :: Multimedia :: Graphics :: 3D Modeling",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: OS Independent"
+]
+
+dependencies = [
+  "mcp[cli]>=1.3.0",
+  "supabase>=2.0.0",
+  "tomli>=2.0.0; python_version < '3.11'"
+]
+
+[project.scripts]
+blender-mcp = "blender_mcp.server:main"
+
+[project.urls]
+Homepage = "https://github.com/yourusername/blender-mcp"
+Repository = "https://github.com/yourusername/blender-mcp"
+Issues = "https://github.com/yourusername/blender-mcp/issues"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+include-package-data = true
+
+[tool.setuptools.packages.find]
+where = ["src"]
+exclude = ["tests*"]
+
+[tool.setuptools.package-data]
+"blender_mcp" = ["py.typed"]
