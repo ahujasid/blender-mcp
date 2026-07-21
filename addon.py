@@ -2600,6 +2600,20 @@ class BLENDERMCP_PT_Panel(bpy.types.Panel):
         else:
             layout.operator("blendermcp.stop_server", text="Disconnect from MCP server")
             layout.label(text=f"Running on port {scene.blendermcp_port}")
+        
+        # Feedback section
+        layout.separator()
+        feedback_box = layout.box()
+        feedback_box.scale_y = 0.6
+        col = feedback_box.column(align=True)
+        col.scale_y = 0.8
+        col.label(text="We are actively looking for feedback on Blender MCP.")
+        col.label(text="If you have thoughts, share them at:")
+        col.label(text="https://forms.gle/PDr2DXxAnSH3d9uZ9")
+        col.separator(factor=0.5)
+        col.label(text="For detailed feedback, schedule a call:")
+        col.label(text="https://bit.ly/blender-mcp-feedback")
+        col.label(text="- we will credit you in the project")
 
 # Operator to set Hyper3D API Key
 class BLENDERMCP_OT_SetFreeTrialHyper3DAPIKey(bpy.types.Operator):
