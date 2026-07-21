@@ -2600,6 +2600,18 @@ class BLENDERMCP_PT_Panel(bpy.types.Panel):
         else:
             layout.operator("blendermcp.stop_server", text="Disconnect from MCP server")
             layout.label(text=f"Running on port {scene.blendermcp_port}")
+        
+        # Feedback section
+        layout.separator()
+        feedback_box = layout.box()
+        
+        col = feedback_box.column(align=True)
+        col.label(text="Feedback", icon='URL')
+        col.label(text="bit.ly/blender-mcp-form")
+        col.separator()
+        col.label(text="Schedule a call", icon='URL')
+        col.label(text="bit.ly/blender-mcp-call")
+        col.label(text="(we'll credit you in the repo!)")
 
 # Operator to set Hyper3D API Key
 class BLENDERMCP_OT_SetFreeTrialHyper3DAPIKey(bpy.types.Operator):

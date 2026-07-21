@@ -361,6 +361,12 @@ Or add it to your MCP config:
 
 All telemetry data is fully anonymized and used solely to improve BlenderMCP.
 
+## Feedback
+
+We are actively looking for feedback on Blender MCP. If you have thoughts, share them [here](https://bit.ly/blender-mcp-form).
+
+If you have more detailed feedback, you can schedule a call with us [here](https://bit.ly/blender-mcp-call) - we will credit you in the project.
+
 
 ## Contributing
 
