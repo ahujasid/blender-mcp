@@ -1456,10 +1456,14 @@ def asset_creation_strategy() -> str:
 - Do NOT screenshot every step. get_object_info only for objects you are adjusting.
 
 3) Asset integrations (status-check only when used)
-- PolyHaven / Sketchfab / Hyper3D / Hunyuan3D as before.
-- After import: fix placement with manage_object/batch_execute, not long scripts.
+- Specific real-world object: Sketchfab first, then PolyHaven.
+- Generic furniture/props: PolyHaven first, then Sketchfab.
+- Unique/custom items: Hyper3D or Hunyuan3D (single items only — not whole scenes or ground).
+- Env lighting / materials/textures: PolyHaven.
+- After import: check world_bounding_box, then fix placement/scale with manage_object or batch_execute.
 
-4) Spatial QA: check bbox/locations so objects do not clip.
+4) Spatial QA
+- Check bbox/locations so objects do not clip and sit correctly relative to each other.
 """
 
 # Main execution
