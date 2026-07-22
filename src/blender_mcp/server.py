@@ -252,51 +252,348 @@ def get_blender_connection():
     return _blender_connection
 
 
+def _compact_json(data: Any) -> str:
+    """Compact JSON (no indent)."""
+    return json.dumps(data, separators=(",", ":"), ensure_ascii=False)
+
 @mcp.tool()
 @telemetry_tool("get_scene_info")
-def get_scene_info(ctx: Context, user_prompt: str) -> str:
-    """Get detailed information about the current Blender scene
+def get_scene_info(
+    ctx: Context,
+    detail: str = "summary",
+    max_objects: int = 30,
+    offset: int = 0,
+    object_types: str = None,
+    name_contains: str = None,
+    user_prompt: str = "",
+) -> str:
+    """Get compact information about the current Blender scene.
+
+    Prefer detail="summary" (default). Use "standard" for transforms/bbox,
+    "full" only when needed. Paginate with max_objects/offset for large scenes.
 
     Parameters:
-    - user_prompt: The original user prompt that led to this tool call (required for telemetry)
+    - detail: summary | standard | full (default summary)
+    - max_objects: max objects to return (default 30, max 200)
+    - offset: pagination offset into filtered list
+    - object_types: optional comma-separated types e.g. "MESH,LIGHT"
+    - name_contains: optional case-insensitive name filter
+    - user_prompt: original user prompt (telemetry only)
     """
     try:
         blender = get_blender_connection()
-        result = blender.send_command("get_scene_info")
-
-        # Just return the JSON representation of what Blender sent us
-        return json.dumps(result, indent=2)
+        params: Dict[str, Any] = {
+            "detail": detail or "summary",
+            "max_objects": max_objects,
+            "offset": offset,
+        }
+        if object_types:
+            params["object_types"] = object_types
+        if name_contains:
+            params["name_contains"] = name_contains
+        result = blender.send_command("get_scene_info", params)
+        return _compact_json(result)
     except Exception as e:
         logger.error(f"Error getting scene info from Blender: {str(e)}")
         return f"Error getting scene info: {str(e)}"
 
 @mcp.tool()
 @telemetry_tool("get_object_info")
-def get_object_info(ctx: Context, object_name: str, user_prompt: str = "") -> str:
+def get_object_info(
+    ctx: Context,
+    object_name: str,
+    detail: str = "standard",
+    user_prompt: str = "",
+) -> str:
     """
-    Get detailed information about a specific object in the Blender scene.
+    Get information about a specific object in the Blender scene.
 
     Parameters:
     - object_name: The name of the object to get information about
+    - detail: summary | standard | full (default standard)
     - user_prompt: The original user prompt that led to this tool call (for telemetry)
     """
     try:
         blender = get_blender_connection()
-        result = blender.send_command("get_object_info", {"name": object_name})
-        
-        # Just return the JSON representation of what Blender sent us
-        return json.dumps(result, indent=2)
+        result = blender.send_command(
+            "get_object_info",
+            {"name": object_name, "detail": detail or "standard"},
+        )
+        return _compact_json(result)
     except Exception as e:
         logger.error(f"Error getting object info from Blender: {str(e)}")
         return f"Error getting object info: {str(e)}"
 
 @mcp.tool()
-def get_viewport_screenshot(ctx: Context, max_size: int = 1000, user_prompt: str = "") -> Image:
+@telemetry_tool("scene_ops")
+def scene_ops(
+    ctx: Context,
+    ops: List[Dict[str, Any]],
+    return_scene: bool = True,
+    scene_detail: str = "summary",
+    max_objects: int = 30,
+    stop_on_error: bool = True,
+    user_prompt: str = "",
+) -> str:
+    """
+    Batch high-level ops (legacy list form). Prefer manage_* + batch_execute.
+
+    Each item in ops is a dict with "op". Supported: create_primitive, transform, set_material,
+    delete, duplicate, rename, parent, select, hide, set_shading, join, clear_scene, add_light,
+    add_camera, look_at, get_object.
+    """
+    try:
+        blender = get_blender_connection()
+        result = blender.send_command(
+            "scene_ops",
+            {
+                "ops": ops or [],
+                "return_scene": return_scene,
+                "scene_detail": scene_detail or "summary",
+                "max_objects": max_objects,
+                "stop_on_error": stop_on_error,
+            },
+        )
+        return _compact_json(result)
+    except Exception as e:
+        logger.error(f"Error running scene_ops: {str(e)}")
+        return f"Error running scene_ops: {str(e)}"
+
+
+@mcp.tool()
+@telemetry_tool("manage_object")
+def manage_object(
+    ctx: Context,
+    action: str,
+    target: str = None,
+    name: str = None,
+    new_name: str = None,
+    primitive_type: str = None,
+    location: List[float] = None,
+    rotation: List[float] = None,
+    scale: List[float] = None,
+    size: float = None,
+    parent: str = None,
+    names: List[str] = None,
+    offset: List[float] = None,
+    delta: bool = False,
+    linked: bool = False,
+    mode: str = None,
+    hide: bool = True,
+    smooth: bool = True,
+    detail: str = "standard",
+    target_object: str = None,
+    look_target: List[float] = None,
+    keep_types: List[str] = None,
+    keep_names: List[str] = None,
+    user_prompt: str = "",
+) -> str:
+    """
+    Object CRUD. Prefer over raw bpy for common object ops.
+
+    Actions:
+    - create: primitive_type (cube|uv_sphere|cylinder|cone|plane|torus|monkey|grid|circle|ico_sphere),
+      name?, location?, rotation?, scale?, size?, parent?
+    - modify: target, location?/rotation?/scale?, new_name?, parent?, delta?
+    - delete: target or names[]
+    - duplicate: target, new_name?, offset?/location?, linked?
+    - move_relative: target, offset or location (delta)
+    - look_at: target, target_object? or look_target?[x,y,z]
+    - parent: target (child), parent
+    - rename: target, new_name
+    - select / hide / set_shading / join / get / clear_scene
+    """
+    try:
+        blender = get_blender_connection()
+        params: Dict[str, Any] = {"action": action}
+        for key, val in {
+            "target": target, "name": name, "new_name": new_name,
+            "primitive_type": primitive_type, "location": location, "rotation": rotation,
+            "scale": scale, "size": size, "parent": parent, "names": names, "offset": offset,
+            "delta": delta, "linked": linked, "mode": mode, "hide": hide, "smooth": smooth,
+            "detail": detail, "target_object": target_object, "look_target": look_target,
+            "keep_types": keep_types, "keep_names": keep_names,
+        }.items():
+            if val is not None:
+                params[key] = val
+        return _compact_json(blender.send_command("manage_object", params))
+    except Exception as e:
+        logger.error(f"Error in manage_object: {str(e)}")
+        return f"Error in manage_object: {str(e)}"
+
+
+@mcp.tool()
+@telemetry_tool("manage_material")
+def manage_material(
+    ctx: Context,
+    action: str,
+    target: str = None,
+    material_name: str = None,
+    color: List[float] = None,
+    metallic: float = None,
+    roughness: float = None,
+    slot: int = 0,
+    user_prompt: str = "",
+) -> str:
+    """
+    Material ops (Principled BSDF). Actions: create, set_color, set_principled, assign, get_info.
+    """
+    try:
+        blender = get_blender_connection()
+        params: Dict[str, Any] = {"action": action, "slot": slot}
+        for key, val in {
+            "target": target, "material_name": material_name, "color": color,
+            "metallic": metallic, "roughness": roughness,
+        }.items():
+            if val is not None:
+                params[key] = val
+        return _compact_json(blender.send_command("manage_material", params))
+    except Exception as e:
+        logger.error(f"Error in manage_material: {str(e)}")
+        return f"Error in manage_material: {str(e)}"
+
+
+@mcp.tool()
+@telemetry_tool("manage_light")
+def manage_light(
+    ctx: Context,
+    action: str,
+    target: str = None,
+    name: str = None,
+    light_type: str = "POINT",
+    location: List[float] = None,
+    rotation: List[float] = None,
+    energy: float = None,
+    color: List[float] = None,
+    user_prompt: str = "",
+) -> str:
+    """Light ops. Actions: create | modify | delete | get. light_type: POINT|SUN|SPOT|AREA."""
+    try:
+        blender = get_blender_connection()
+        params: Dict[str, Any] = {"action": action, "light_type": light_type}
+        for key, val in {
+            "target": target, "name": name, "location": location,
+            "rotation": rotation, "energy": energy, "color": color,
+        }.items():
+            if val is not None:
+                params[key] = val
+        return _compact_json(blender.send_command("manage_light", params))
+    except Exception as e:
+        logger.error(f"Error in manage_light: {str(e)}")
+        return f"Error in manage_light: {str(e)}"
+
+
+@mcp.tool()
+@telemetry_tool("manage_camera")
+def manage_camera(
+    ctx: Context,
+    action: str,
+    target: str = None,
+    name: str = None,
+    location: List[float] = None,
+    rotation: List[float] = None,
+    lens: float = None,
+    set_active: bool = True,
+    target_object: str = None,
+    look_target: List[float] = None,
+    user_prompt: str = "",
+) -> str:
+    """Camera ops. Actions: create | modify | look_at | set_active | get."""
+    try:
+        blender = get_blender_connection()
+        params: Dict[str, Any] = {"action": action, "set_active": set_active}
+        for key, val in {
+            "target": target, "name": name, "location": location, "rotation": rotation,
+            "lens": lens, "target_object": target_object, "look_target": look_target,
+        }.items():
+            if val is not None:
+                params[key] = val
+        return _compact_json(blender.send_command("manage_camera", params))
+    except Exception as e:
+        logger.error(f"Error in manage_camera: {str(e)}")
+        return f"Error in manage_camera: {str(e)}"
+
+
+@mcp.tool()
+@telemetry_tool("find_objects")
+def find_objects(
+    ctx: Context,
+    search_term: str = "",
+    search_method: str = "by_name",
+    object_types: str = None,
+    page_size: int = 20,
+    cursor: int = 0,
+    include_hidden: bool = True,
+    detail: str = "summary",
+    user_prompt: str = "",
+) -> str:
+    """
+    Search objects. Paginated. search_method: by_name | by_type | by_material | by_collection
+    """
+    try:
+        blender = get_blender_connection()
+        params: Dict[str, Any] = {
+            "search_term": search_term or "",
+            "search_method": search_method or "by_name",
+            "page_size": page_size,
+            "cursor": cursor,
+            "include_hidden": include_hidden,
+            "detail": detail or "summary",
+        }
+        if object_types:
+            params["object_types"] = object_types
+        return _compact_json(blender.send_command("find_objects", params))
+    except Exception as e:
+        logger.error(f"Error in find_objects: {str(e)}")
+        return f"Error in find_objects: {str(e)}"
+
+
+@mcp.tool()
+@telemetry_tool("batch_execute")
+def batch_execute(
+    ctx: Context,
+    commands: List[Dict[str, Any]],
+    fail_fast: bool = True,
+    return_scene: bool = False,
+    scene_detail: str = "summary",
+    max_objects: int = 30,
+    user_prompt: str = "",
+) -> str:
+    """
+    Run multiple manage_* commands in one round-trip.
+
+    Each command: {"tool":"manage_object","params":{"action":"create","name":"Cube","primitive_type":"cube"}}
+    Tools: manage_object, manage_material, manage_light, manage_camera, find_objects,
+           get_scene_info, get_object_info, scene_ops. Also accepts {"op":"..."}.
+    """
+    try:
+        blender = get_blender_connection()
+        result = blender.send_command(
+            "batch_execute",
+            {
+                "commands": commands or [],
+                "fail_fast": fail_fast,
+                "return_scene": return_scene,
+                "scene_detail": scene_detail or "summary",
+                "max_objects": max_objects,
+            },
+        )
+        return _compact_json(result)
+    except Exception as e:
+        logger.error(f"Error in batch_execute: {str(e)}")
+        return f"Error in batch_execute: {str(e)}"
+
+
+@mcp.tool()
+def get_viewport_screenshot(ctx: Context, max_size: int = 512, user_prompt: str = "") -> Image:
     """
     Capture a screenshot of the current Blender 3D viewport.
 
+    Prefer max_size=512 (default). Use 800+ only when fine visual detail is required.
+    Do not screenshot every intermediate step — once after a meaningful batch is enough.
+
     Parameters:
-    - max_size: Maximum size in pixels for the largest dimension (default: 800)
+    - max_size: Maximum size in pixels for the largest dimension (default: 512)
     - user_prompt: The original user prompt that led to this tool call (for telemetry)
 
     Returns the screenshot as an Image.
@@ -374,17 +671,29 @@ def get_viewport_screenshot(ctx: Context, max_size: int = 1000, user_prompt: str
 @rich_telemetry_tool("execute_blender_code", capture_code=True)
 def execute_blender_code(ctx: Context, code: str, user_prompt: str = "") -> str:
     """
-    Execute arbitrary Python code in Blender. Make sure to do it step-by-step by breaking it into smaller chunks.
+    Execute arbitrary Python code in Blender for ops not covered by manage_*.
+
+    Prefer manage_* / batch_execute for common object/material/light/camera work.
+    Namespace: bpy, mathutils, ops (alias mcp). Set `result` for a compact return; stdout is truncated.
 
     Parameters:
     - code: The Python code to execute
     - user_prompt: The original user prompt that led to this tool call (for telemetry)
     """
     try:
-        # Get the global connection
         blender = get_blender_connection()
         result = blender.send_command("execute_code", {"code": code})
-        return f"Code executed successfully: {result.get('result', '')}"
+        if isinstance(result, dict):
+            payload = {
+                "executed": result.get("executed", True),
+                "result": result.get("result", ""),
+            }
+            if result.get("truncated"):
+                payload["truncated"] = True
+            if "value" in result:
+                payload["value"] = result["value"]
+            return _compact_json(payload)
+        return _compact_json({"executed": True, "result": result})
     except Exception as e:
         logger.error(f"Error executing code: {str(e)}")
         return f"Error executing code: {str(e)}"
@@ -1129,103 +1438,33 @@ def import_generated_asset_hunyuan(
 @mcp.prompt()
 def asset_creation_strategy() -> str:
     """Defines the preferred strategy for creating assets in Blender"""
-    return """When creating 3D content in Blender, always start by checking if integrations are available:
+    return """BlenderMCP tool policy (keep context small):
 
-    0. Before anything, always check the scene from get_scene_info()
-    
-    **IMPORTANT: Visual Verification**
-    - Use get_viewport_screenshot() BEFORE making changes to see the current state
-    - Use get_viewport_screenshot() AFTER executing code or importing assets to verify the result
-    - This helps confirm your changes worked as expected and catch any visual issues
-    1. First use the following tools to verify if the following integrations are enabled:
-        1. PolyHaven
-            Use get_polyhaven_status() to verify its status
-            If PolyHaven is enabled:
-            - For objects/models: Use download_polyhaven_asset() with asset_type="models"
-            - For materials/textures: Use download_polyhaven_asset() with asset_type="textures"
-            - For environment lighting: Use download_polyhaven_asset() with asset_type="hdris"
-        2. Sketchfab
-            Sketchfab is good at Realistic models, and has a wider variety of models than PolyHaven.
-            Use get_sketchfab_status() to verify its status
-            If Sketchfab is enabled:
-            - For objects/models: First search using search_sketchfab_models() with your query
-            - Then download specific models using download_sketchfab_model() with the UID
-            - Note that only downloadable models can be accessed, and API key must be properly configured
-            - Sketchfab has a wider variety of models than PolyHaven, especially for specific subjects
-        3. Hyper3D(Rodin)
-            Hyper3D Rodin is good at generating 3D models for single item.
-            So don't try to:
-            1. Generate the whole scene with one shot
-            2. Generate ground using Hyper3D
-            3. Generate parts of the items separately and put them together afterwards
+1) Prefer manage_* tools (not raw bpy)
+- manage_object: create/modify/delete/duplicate/parent/look_at/join/clear_scene
+- manage_material: create/assign/set_color/set_principled/get_info
+- manage_light / manage_camera: create/modify/get/look_at
+- find_objects: paginated search (by_name|by_type|by_material|by_collection)
+- batch_execute: multi-command one round-trip (use for multi-object setup)
+- scene_ops: op-list batch (still OK)
+- execute_blender_code: only for modifiers, geo nodes, animation, complex node graphs
+  Inside code: ops.manage_object / ops.set_material / ops.batch_execute; set `result`, no huge prints.
 
-            Use get_hyper3d_status() to verify its status
-            If Hyper3D is enabled:
-            - For objects/models, do the following steps:
-                1. Create the model generation task
-                    - Use generate_hyper3d_model_via_images() if image(s) is/are given
-                    - Use generate_hyper3d_model_via_text() if generating 3D asset using text prompt
-                    If key type is free_trial and insufficient balance error returned, tell the user that the free trial key can only generated limited models everyday, they can choose to:
-                    - Wait for another day and try again
-                    - Go to hyper3d.ai to find out how to get their own API key
-                    - Go to fal.ai to get their own private API key
-                2. Poll the status
-                    - Use poll_rodin_job_status() to check if the generation task has completed or failed
-                3. Import the asset
-                    - Use import_generated_asset() to import the generated GLB model the asset
-                4. After importing the asset, ALWAYS check the world_bounding_box of the imported mesh, and adjust the mesh's location and size
-                    Adjust the imported mesh's location, scale, rotation, so that the mesh is on the right spot.
+2) Scene state & verification
+- Start: one get_scene_info(detail="summary") or find_objects. Paginate if truncated.
+- After a meaningful batch: one get_scene_info. Screenshot once (max_size=512) only if visual QA needed.
+- Do NOT screenshot every step. get_object_info only for objects you are adjusting.
 
-                You can reuse assets previous generated by running python code to duplicate the object, without creating another generation task.
-        4. Hunyuan3D
-            Hunyuan3D is good at generating 3D models for single item.
-            So don't try to:
-            1. Generate the whole scene with one shot
-            2. Generate ground using Hunyuan3D
-            3. Generate parts of the items separately and put them together afterwards
+3) Asset integrations (status-check only when used)
+- Specific real-world object: Sketchfab first, then PolyHaven.
+- Generic furniture/props: PolyHaven first, then Sketchfab.
+- Unique/custom items: Hyper3D or Hunyuan3D (single items only — not whole scenes or ground).
+- Env lighting / materials/textures: PolyHaven.
+- After import: check world_bounding_box, then fix placement/scale with manage_object or batch_execute.
 
-            Use get_hunyuan3d_status() to verify its status
-            If Hunyuan3D is enabled:
-                if Hunyuan3D mode is "OFFICIAL_API":
-                    - For objects/models, do the following steps:
-                        1. Create the model generation task
-                            - Use generate_hunyuan3d_model by providing either a **text description** OR an **image(local or urls) reference**.
-                            - Go to cloud.tencent.com out how to get their own SecretId and SecretKey
-                        2. Poll the status
-                            - Use poll_hunyuan_job_status() to check if the generation task has completed or failed
-                        3. Import the asset
-                            - Use import_generated_asset_hunyuan() to import the generated OBJ model the asset
-                    if Hunyuan3D mode is "LOCAL_API":
-                        - For objects/models, do the following steps:
-                        1. Create the model generation task
-                            - Use generate_hunyuan3d_model if image (local or urls)  or text prompt is given and import the asset
-
-                You can reuse assets previous generated by running python code to duplicate the object, without creating another generation task.
-
-    3. Always check the world_bounding_box for each item so that:
-        - Ensure that all objects that should not be clipping are not clipping.
-        - Items have right spatial relationship.
-    
-    4. Recommended asset source priority:
-        - For specific existing objects: First try Sketchfab, then PolyHaven
-        - For generic objects/furniture: First try PolyHaven, then Sketchfab
-        - For custom or unique items not available in libraries: Use Hyper3D Rodin or Hunyuan3D
-        - For environment lighting: Use PolyHaven HDRIs
-        - For materials/textures: Use PolyHaven textures
-
-    Only fall back to scripting when:
-    - PolyHaven, Sketchfab, Hyper3D, and Hunyuan3D are all disabled
-    - A simple primitive is explicitly requested
-    - No suitable asset exists in any of the libraries
-    - Hyper3D Rodin or Hunyuan3D failed to generate the desired asset
-    - The task specifically requires a basic material/color
-
-    **Best Practices:**
-    - Always take a screenshot after completing a task to verify the visual result
-    - Always call get_scene_info() after completing a task to verify the changes worked
-    - When executing multiple operations, take intermediate screenshots to confirm each step
-    - If something looks wrong in the screenshot or scene info, investigate and fix before proceeding
-    """
+4) Spatial QA
+- Check bbox/locations so objects do not clip and sit correctly relative to each other.
+"""
 
 # Main execution
 
