@@ -278,6 +278,13 @@ class BlenderMCPServer:
             "get_object_info": self.get_object_info,
             "get_viewport_screenshot": self.get_viewport_screenshot,
             "execute_code": self.execute_code,
+            "scene_ops": self.scene_ops,
+            "manage_object": self.manage_object,
+            "manage_material": self.manage_material,
+            "manage_light": self.manage_light,
+            "manage_camera": self.manage_camera,
+            "find_objects": self.find_objects,
+            "batch_execute": self.batch_execute,
             "get_telemetry_consent": self.get_telemetry_consent,
             "get_polyhaven_status": self.get_polyhaven_status,
             "get_hyper3d_status": self.get_hyper3d_status,
@@ -338,98 +345,1053 @@ class BlenderMCPServer:
 
 
 
-    def get_scene_info(self):
-        """Get information about the current Blender scene"""
+    @staticmethod
+    def _round_vec(vec, ndigits=3):
+        return [round(float(v), ndigits) for v in vec]
+
+    @staticmethod
+    def _get_aabb(obj):
+        """Returns the world-space axis-aligned bounding box (AABB) of an object."""
+        if obj.type != 'MESH':
+            raise TypeError("Object must be a mesh")
+
+        local_bbox_corners = [mathutils.Vector(corner) for corner in obj.bound_box]
+        world_bbox_corners = [obj.matrix_world @ corner for corner in local_bbox_corners]
+        min_corner = mathutils.Vector(map(min, zip(*world_bbox_corners)))
+        max_corner = mathutils.Vector(map(max, zip(*world_bbox_corners)))
+        return [BlenderMCPServer._round_vec(min_corner), BlenderMCPServer._round_vec(max_corner)]
+
+    def _serialize_object(self, obj, detail="summary"):
+        """Compact object dict. detail: summary | standard | full"""
+        info = {
+            "name": obj.name,
+            "type": obj.type,
+            "location": self._round_vec(obj.location),
+        }
+        if detail == "summary":
+            return info
+
+        info["rotation"] = self._round_vec(obj.rotation_euler)
+        info["scale"] = self._round_vec(obj.scale)
+        info["visible"] = bool(obj.visible_get())
+        mats = [s.material.name for s in obj.material_slots if s.material]
+        if mats:
+            info["materials"] = mats
+        if obj.type == "MESH":
+            try:
+                info["world_bounding_box"] = self._get_aabb(obj)
+            except Exception:
+                pass
+            if obj.data:
+                info["mesh"] = {
+                    "vertices": len(obj.data.vertices),
+                    "edges": len(obj.data.edges),
+                    "polygons": len(obj.data.polygons),
+                }
+        if detail == "full":
+            if obj.parent:
+                info["parent"] = obj.parent.name
+            info["hide_viewport"] = bool(obj.hide_viewport)
+            info["hide_render"] = bool(obj.hide_render)
+            if obj.type == "LIGHT" and obj.data:
+                info["light"] = {
+                    "type": obj.data.type,
+                    "energy": round(float(getattr(obj.data, "energy", 0.0)), 3),
+                }
+            if obj.type == "CAMERA" and obj.data:
+                info["camera"] = {"lens": round(float(obj.data.lens), 3)}
+        return info
+
+    def get_scene_info(self, detail="summary", max_objects=30, offset=0, object_types=None, name_contains=None):
+        """Get scene info. detail: summary | standard | full. Supports max_objects/offset filters."""
         try:
-            print("Getting scene info...")
-            # Simplify the scene info to reduce data size
+            detail = (detail or "summary").lower()
+            if detail not in ("summary", "standard", "full"):
+                detail = "summary"
+            max_objects = max(1, min(int(max_objects or 30), 200))
+            offset = max(0, int(offset or 0))
+
+            type_filter = None
+            if object_types:
+                if isinstance(object_types, str):
+                    type_filter = {t.strip().upper() for t in object_types.split(",") if t.strip()}
+                else:
+                    type_filter = {str(t).strip().upper() for t in object_types if str(t).strip()}
+
+            needle = name_contains.lower() if name_contains else None
+            filtered = []
+            for obj in bpy.context.scene.objects:
+                if type_filter and obj.type not in type_filter:
+                    continue
+                if needle and needle not in obj.name.lower():
+                    continue
+                filtered.append(obj)
+
+            total = len(filtered)
+            page = filtered[offset:offset + max_objects]
             scene_info = {
                 "name": bpy.context.scene.name,
                 "object_count": len(bpy.context.scene.objects),
-                "objects": [],
+                "filtered_count": total,
+                "offset": offset,
+                "returned": len(page),
+                "truncated": offset + len(page) < total,
                 "materials_count": len(bpy.data.materials),
+                "objects": [self._serialize_object(obj, detail=detail) for obj in page],
             }
-
-            # Collect minimal object information (limit to first 10 objects)
-            for i, obj in enumerate(bpy.context.scene.objects):
-                if i >= 10:  # Reduced from 20 to 10
-                    break
-
-                obj_info = {
-                    "name": obj.name,
-                    "type": obj.type,
-                    # Only include basic location data
-                    "location": [round(float(obj.location.x), 2),
-                                round(float(obj.location.y), 2),
-                                round(float(obj.location.z), 2)],
-                }
-                scene_info["objects"].append(obj_info)
-
-            print(f"Scene info collected: {len(scene_info['objects'])} objects")
             return scene_info
         except Exception as e:
             print(f"Error in get_scene_info: {str(e)}")
             traceback.print_exc()
             return {"error": str(e)}
 
-    @staticmethod
-    def _get_aabb(obj):
-        """ Returns the world-space axis-aligned bounding box (AABB) of an object. """
-        if obj.type != 'MESH':
-            raise TypeError("Object must be a mesh")
-
-        # Get the bounding box corners in local space
-        local_bbox_corners = [mathutils.Vector(corner) for corner in obj.bound_box]
-
-        # Convert to world coordinates
-        world_bbox_corners = [obj.matrix_world @ corner for corner in local_bbox_corners]
-
-        # Compute axis-aligned min/max coordinates
-        min_corner = mathutils.Vector(map(min, zip(*world_bbox_corners)))
-        max_corner = mathutils.Vector(map(max, zip(*world_bbox_corners)))
-
-        return [
-            [*min_corner], [*max_corner]
-        ]
-
-
-
-    def get_object_info(self, name):
+    def get_object_info(self, name, detail="standard"):
         """Get detailed information about a specific object"""
         obj = bpy.data.objects.get(name)
         if not obj:
             raise ValueError(f"Object not found: {name}")
+        detail = (detail or "standard").lower()
+        if detail not in ("summary", "standard", "full"):
+            detail = "standard"
+        return self._serialize_object(obj, detail=detail)
 
-        # Basic object info
-        obj_info = {
-            "name": obj.name,
-            "type": obj.type,
-            "location": [obj.location.x, obj.location.y, obj.location.z],
-            "rotation": [obj.rotation_euler.x, obj.rotation_euler.y, obj.rotation_euler.z],
-            "scale": [obj.scale.x, obj.scale.y, obj.scale.z],
-            "visible": obj.visible_get(),
-            "materials": [],
-        }
+    _PRIMITIVE_OPS = {
+        "cube": "cube",
+        "uv_sphere": "uv_sphere",
+        "sphere": "uv_sphere",
+        "ico_sphere": "ico_sphere",
+        "cylinder": "cylinder",
+        "cone": "cone",
+        "plane": "plane",
+        "torus": "torus",
+        "monkey": "monkey",
+        "grid": "grid",
+        "circle": "circle",
+    }
 
-        if obj.type == "MESH":
-            bounding_box = self._get_aabb(obj)
-            obj_info["world_bounding_box"] = bounding_box
+    def _require_object(self, name):
+        obj = bpy.data.objects.get(name)
+        if not obj:
+            raise ValueError(f"Object not found: {name}")
+        return obj
 
-        # Add material slots
-        for slot in obj.material_slots:
-            if slot.material:
-                obj_info["materials"].append(slot.material.name)
+    def _apply_transform(self, obj, location=None, rotation=None, scale=None, delta=False):
+        if location is not None:
+            loc = mathutils.Vector(location)
+            obj.location = obj.location + loc if delta else loc
+        if rotation is not None:
+            rot = mathutils.Euler(rotation)
+            if delta:
+                obj.rotation_euler = mathutils.Euler(
+                    [a + b for a, b in zip(obj.rotation_euler, rot)]
+                )
+            else:
+                obj.rotation_euler = rot
+        if scale is not None:
+            scl = mathutils.Vector(scale)
+            if delta:
+                obj.scale = mathutils.Vector([a * b for a, b in zip(obj.scale, scl)])
+            else:
+                obj.scale = scl
 
-        # Add mesh data if applicable
-        if obj.type == 'MESH' and obj.data:
-            mesh = obj.data
-            obj_info["mesh"] = {
-                "vertices": len(mesh.vertices),
-                "edges": len(mesh.edges),
-                "polygons": len(mesh.polygons),
+    def _create_primitive(self, primitive="cube", name=None, location=None, rotation=None, scale=None, size=None, **kwargs):
+        prim = (primitive or "cube").lower()
+        if prim not in self._PRIMITIVE_OPS:
+            raise ValueError(f"Unknown primitive: {primitive}. Valid: {sorted(self._PRIMITIVE_OPS)}")
+        op_name = self._PRIMITIVE_OPS[prim]
+        op = getattr(bpy.ops.mesh, f"primitive_{op_name}_add")
+        add_kwargs = {"enter_editmode": False, "align": "WORLD"}
+        if location is not None:
+            add_kwargs["location"] = location
+        if rotation is not None:
+            add_kwargs["rotation"] = rotation
+        if size is not None:
+            if op_name in ("cube",):
+                add_kwargs["size"] = size
+            elif op_name in ("uv_sphere", "ico_sphere", "cylinder", "cone", "torus", "circle"):
+                add_kwargs["radius"] = size
+            elif op_name in ("plane", "grid"):
+                add_kwargs["size"] = size
+        op(**add_kwargs)
+        obj = bpy.context.active_object
+        if name:
+            obj.name = name
+            if obj.data:
+                obj.data.name = name
+        if scale is not None:
+            obj.scale = scale
+        return obj
+
+    def _set_material(self, name, color=None, metallic=None, roughness=None, material_name=None, **kwargs):
+        obj = self._require_object(name)
+        mat_name = material_name or f"{obj.name}_mat"
+        mat = bpy.data.materials.get(mat_name)
+        if mat is None:
+            mat = bpy.data.materials.new(name=mat_name)
+        mat.use_nodes = True
+        bsdf = mat.node_tree.nodes.get("Principled BSDF")
+        if bsdf is None:
+            bsdf = next((n for n in mat.node_tree.nodes if n.type == "BSDF_PRINCIPLED"), None)
+        if bsdf is None:
+            raise RuntimeError(f"No Principled BSDF on material {mat_name}")
+        if color is not None:
+            col = list(color)
+            if len(col) == 3:
+                col.append(1.0)
+            bsdf.inputs["Base Color"].default_value = col[:4]
+        if metallic is not None and "Metallic" in bsdf.inputs:
+            bsdf.inputs["Metallic"].default_value = float(metallic)
+        if roughness is not None and "Roughness" in bsdf.inputs:
+            bsdf.inputs["Roughness"].default_value = float(roughness)
+        if obj.data and hasattr(obj.data, "materials"):
+            if obj.data.materials:
+                obj.data.materials[0] = mat
+            else:
+                obj.data.materials.append(mat)
+        return {"object": obj.name, "material": mat.name}
+
+    def _delete_objects(self, names):
+        if isinstance(names, str):
+            names = [names]
+        deleted = []
+        for n in names:
+            obj = bpy.data.objects.get(n)
+            if obj:
+                bpy.data.objects.remove(obj, do_unlink=True)
+                deleted.append(n)
+        return deleted
+
+    def _add_light(self, light_type="POINT", name=None, location=None, energy=None, color=None, rotation=None, **kwargs):
+        light_type = (light_type or "POINT").upper()
+        data = bpy.data.lights.new(name=name or "Light", type=light_type)
+        if energy is not None:
+            data.energy = float(energy)
+        if color is not None:
+            data.color = color[:3]
+        obj = bpy.data.objects.new(name or data.name, data)
+        bpy.context.collection.objects.link(obj)
+        if location is not None:
+            obj.location = location
+        if rotation is not None:
+            obj.rotation_euler = rotation
+        if name:
+            obj.name = name
+        return obj
+
+    def _add_camera(self, name=None, location=None, rotation=None, lens=None, set_active=True, **kwargs):
+        data = bpy.data.cameras.new(name=name or "Camera")
+        if lens is not None:
+            data.lens = float(lens)
+        obj = bpy.data.objects.new(name or data.name, data)
+        bpy.context.collection.objects.link(obj)
+        if location is not None:
+            obj.location = location
+        if rotation is not None:
+            obj.rotation_euler = rotation
+        if name:
+            obj.name = name
+        if set_active:
+            bpy.context.scene.camera = obj
+        return obj
+
+    def _look_at(self, name, target=None, target_object=None, **kwargs):
+        obj = self._require_object(name)
+        if target_object:
+            target_obj = self._require_object(target_object)
+            target_vec = target_obj.matrix_world.translation
+        elif target is not None:
+            target_vec = mathutils.Vector(target)
+        else:
+            raise ValueError("look_at requires target or target_object")
+        direction = target_vec - obj.matrix_world.translation
+        if direction.length < 1e-8:
+            return obj
+        obj.rotation_euler = direction.to_track_quat("-Z", "Y").to_euler()
+        return obj
+
+    def _clear_scene(self, keep_types=None, keep_names=None, **kwargs):
+        keep_types = {t.upper() for t in (keep_types or [])}
+        keep_names = set(keep_names or [])
+        removed = []
+        for obj in list(bpy.context.scene.objects):
+            if obj.name in keep_names or obj.type in keep_types:
+                continue
+            removed.append(obj.name)
+            bpy.data.objects.remove(obj, do_unlink=True)
+        return removed
+
+    def _run_one_op(self, op_spec):
+        if not isinstance(op_spec, dict):
+            raise ValueError("each op must be a dict")
+        op = (op_spec.get("op") or op_spec.get("type") or "").lower()
+        if not op:
+            raise ValueError("op field required")
+
+        if op in ("create_primitive", "primitive", "add_primitive"):
+            obj = self._create_primitive(**{k: v for k, v in op_spec.items() if k not in ("op", "type")})
+            return {"op": "create_primitive", "name": obj.name, "object_type": obj.type}
+
+        if op in ("transform", "set_transform"):
+            obj = self._require_object(op_spec["name"])
+            self._apply_transform(
+                obj,
+                location=op_spec.get("location"),
+                rotation=op_spec.get("rotation"),
+                scale=op_spec.get("scale"),
+                delta=bool(op_spec.get("delta", False)),
+            )
+            return {
+                "op": "transform",
+                "name": obj.name,
+                "location": self._round_vec(obj.location),
+                "rotation": self._round_vec(obj.rotation_euler),
+                "scale": self._round_vec(obj.scale),
             }
 
-        return obj_info
+        if op in ("set_material", "material"):
+            result = self._set_material(**{k: v for k, v in op_spec.items() if k not in ("op", "type")})
+            result["op"] = "set_material"
+            return result
+
+        if op in ("delete", "remove"):
+            names = op_spec.get("names") or op_spec.get("name")
+            deleted = self._delete_objects(names)
+            return {"op": "delete", "deleted": deleted}
+
+        if op == "duplicate":
+            obj = self._require_object(op_spec["name"])
+            linked = bool(op_spec.get("linked", False))
+            new_obj = obj.copy()
+            if obj.data and not linked:
+                new_obj.data = obj.data.copy()
+            bpy.context.collection.objects.link(new_obj)
+            if op_spec.get("new_name"):
+                new_obj.name = op_spec["new_name"]
+            if op_spec.get("location") is not None or op_spec.get("rotation") is not None or op_spec.get("scale") is not None:
+                self._apply_transform(
+                    new_obj,
+                    location=op_spec.get("location"),
+                    rotation=op_spec.get("rotation"),
+                    scale=op_spec.get("scale"),
+                    delta=bool(op_spec.get("delta", False)),
+                )
+            return {"op": "duplicate", "name": new_obj.name, "from": obj.name}
+
+        if op == "rename":
+            obj = self._require_object(op_spec["name"])
+            new_name = op_spec["new_name"]
+            old = obj.name
+            obj.name = new_name
+            return {"op": "rename", "name": obj.name, "old_name": old}
+
+        if op == "parent":
+            child = self._require_object(op_spec["child"])
+            parent = self._require_object(op_spec["parent"])
+            keep = bool(op_spec.get("keep_transform", True))
+            if keep:
+                matrix = child.matrix_world.copy()
+                child.parent = parent
+                child.matrix_world = matrix
+            else:
+                child.parent = parent
+            return {"op": "parent", "child": child.name, "parent": parent.name}
+
+        if op == "select":
+            names = op_spec.get("names") or [op_spec["name"]]
+            mode = (op_spec.get("mode") or "replace").lower()
+            if mode == "replace":
+                bpy.ops.object.select_all(action="DESELECT")
+            selected = []
+            for n in names:
+                obj = bpy.data.objects.get(n)
+                if not obj:
+                    continue
+                obj.select_set(mode != "remove")
+                selected.append(obj.name)
+                if mode != "remove":
+                    bpy.context.view_layer.objects.active = obj
+            return {"op": "select", "mode": mode, "selected": selected}
+
+        if op == "hide":
+            names = op_spec.get("names") or [op_spec["name"]]
+            hide = bool(op_spec.get("hide", True))
+            changed = []
+            for n in names:
+                obj = bpy.data.objects.get(n)
+                if obj:
+                    obj.hide_set(hide)
+                    changed.append(obj.name)
+            return {"op": "hide", "hide": hide, "names": changed}
+
+        if op in ("set_shading", "shade"):
+            obj = self._require_object(op_spec["name"])
+            smooth = bool(op_spec.get("smooth", True))
+            if obj.type == "MESH" and obj.data:
+                for poly in obj.data.polygons:
+                    poly.use_smooth = smooth
+            return {"op": "set_shading", "name": obj.name, "smooth": smooth}
+
+        if op == "join":
+            names = list(op_spec.get("names") or [])
+            if len(names) < 2:
+                raise ValueError("join requires at least 2 names")
+            target_name = op_spec.get("target") or names[0]
+            bpy.ops.object.select_all(action="DESELECT")
+            target = self._require_object(target_name)
+            for n in names:
+                obj = self._require_object(n)
+                obj.select_set(True)
+            bpy.context.view_layer.objects.active = target
+            bpy.ops.object.join()
+            return {"op": "join", "name": bpy.context.view_layer.objects.active.name}
+
+        if op == "clear_scene":
+            removed = self._clear_scene(
+                keep_types=op_spec.get("keep_types"),
+                keep_names=op_spec.get("keep_names"),
+            )
+            return {"op": "clear_scene", "removed": removed, "removed_count": len(removed)}
+
+        if op == "add_light":
+            obj = self._add_light(**{k: v for k, v in op_spec.items() if k not in ("op", "type")})
+            return {"op": "add_light", "name": obj.name, "light_type": obj.data.type}
+
+        if op == "add_camera":
+            obj = self._add_camera(**{k: v for k, v in op_spec.items() if k not in ("op", "type")})
+            return {"op": "add_camera", "name": obj.name, "active": bpy.context.scene.camera == obj}
+
+        if op == "look_at":
+            obj = self._look_at(**{k: v for k, v in op_spec.items() if k not in ("op", "type")})
+            return {
+                "op": "look_at",
+                "name": obj.name,
+                "rotation": self._round_vec(obj.rotation_euler),
+            }
+
+        if op == "get_object":
+            obj = self._require_object(op_spec["name"])
+            detail = op_spec.get("detail", "standard")
+            data = self._serialize_object(obj, detail=detail)
+            data["op"] = "get_object"
+            return data
+
+        raise ValueError(
+            f"Unknown op: {op}. "
+            "Valid: create_primitive, transform, set_material, delete, duplicate, rename, "
+            "parent, select, hide, set_shading, join, clear_scene, add_light, add_camera, look_at, get_object"
+        )
+
+    def scene_ops(self, ops=None, return_scene=True, scene_detail="summary", max_objects=30, stop_on_error=True):
+        """Run a batch of high-level scene operations in one round-trip.
+
+        Each op is a dict with an "op" field. Example:
+          {"ops": [
+            {"op": "create_primitive", "primitive": "cube", "name": "Box", "location": [0,0,1]},
+            {"op": "set_material", "name": "Box", "color": [1,0,0,1], "roughness": 0.4},
+            {"op": "add_light", "light_type": "AREA", "location": [2,2,4], "energy": 200}
+          ], "return_scene": true}
+        """
+        if ops is None:
+            ops = []
+        if not isinstance(ops, list):
+            raise ValueError("ops must be a list of operation dicts")
+
+        results = []
+        for i, spec in enumerate(ops):
+            try:
+                results.append({"ok": True, "index": i, **self._run_one_op(spec)})
+            except Exception as e:
+                results.append({
+                    "ok": False,
+                    "index": i,
+                    "op": (spec or {}).get("op") if isinstance(spec, dict) else None,
+                    "error": str(e),
+                })
+                if stop_on_error:
+                    break
+
+        out = {
+            "ok": all(r.get("ok") for r in results) if results else True,
+            "results": results,
+            "executed": len(results),
+        }
+        if return_scene:
+            out["scene"] = self.get_scene_info(detail=scene_detail or "summary", max_objects=max_objects or 30)
+        return out
+
+    def manage_object(
+        self,
+        action=None,
+        target=None,
+        name=None,
+        new_name=None,
+        primitive_type=None,
+        primitive=None,
+        location=None,
+        position=None,
+        rotation=None,
+        scale=None,
+        size=None,
+        parent=None,
+        keep_transform=True,
+        delta=False,
+        linked=False,
+        offset=None,
+        names=None,
+        mode=None,
+        hide=True,
+        smooth=True,
+        detail="standard",
+        **kwargs,
+    ):
+        """Object CRUD. Actions: create, modify, delete, duplicate, move_relative, look_at, parent, select, hide, set_shading, join, get, clear_scene, rename."""
+        action = (action or "").lower()
+        loc = location if location is not None else position
+        prim = primitive_type or primitive or kwargs.get("primitive") or "cube"
+
+        if action == "create":
+            obj = self._create_primitive(
+                primitive=prim,
+                name=name,
+                location=loc,
+                rotation=rotation,
+                scale=scale,
+                size=size,
+            )
+            if parent:
+                p = self._require_object(parent)
+                matrix = obj.matrix_world.copy()
+                obj.parent = p
+                if keep_transform:
+                    obj.matrix_world = matrix
+            return {"action": action, "name": obj.name, "object_type": obj.type}
+
+        if action == "modify":
+            obj = self._require_object(target or name)
+            if new_name:
+                obj.name = new_name
+            self._apply_transform(obj, location=loc, rotation=rotation, scale=scale, delta=delta)
+            if parent is not None:
+                if parent == "" or parent is False:
+                    matrix = obj.matrix_world.copy()
+                    obj.parent = None
+                    obj.matrix_world = matrix
+                else:
+                    p = self._require_object(parent)
+                    matrix = obj.matrix_world.copy()
+                    obj.parent = p
+                    if keep_transform:
+                        obj.matrix_world = matrix
+            return {
+                "action": action,
+                "name": obj.name,
+                "location": self._round_vec(obj.location),
+                "rotation": self._round_vec(obj.rotation_euler),
+                "scale": self._round_vec(obj.scale),
+            }
+
+        if action == "delete":
+            to_delete = names or target or name
+            deleted = self._delete_objects(to_delete)
+            return {"action": action, "deleted": deleted}
+
+        if action == "duplicate":
+            src = self._require_object(target or name)
+            new_obj = src.copy()
+            if src.data and not linked:
+                new_obj.data = src.data.copy()
+            bpy.context.collection.objects.link(new_obj)
+            if new_name:
+                new_obj.name = new_name
+            if offset is not None:
+                self._apply_transform(new_obj, location=offset, delta=True)
+            elif loc is not None or rotation is not None or scale is not None:
+                self._apply_transform(new_obj, location=loc, rotation=rotation, scale=scale, delta=delta)
+            return {"action": action, "name": new_obj.name, "from": src.name}
+
+        if action == "move_relative":
+            obj = self._require_object(target or name)
+            if offset is None and loc is None:
+                raise ValueError("move_relative requires offset or location")
+            self._apply_transform(obj, location=offset if offset is not None else loc, delta=True)
+            return {"action": action, "name": obj.name, "location": self._round_vec(obj.location)}
+
+        if action == "look_at":
+            obj = self._look_at(
+                name=target or name,
+                target=kwargs.get("look_target") or kwargs.get("target_point"),
+                target_object=kwargs.get("target_object") or kwargs.get("look_at_target"),
+            )
+            return {"action": action, "name": obj.name, "rotation": self._round_vec(obj.rotation_euler)}
+
+        if action == "parent":
+            child = self._require_object(kwargs.get("child") or target)
+            parent_obj = self._require_object(parent or kwargs.get("parent_name"))
+            if keep_transform:
+                matrix = child.matrix_world.copy()
+                child.parent = parent_obj
+                child.matrix_world = matrix
+            else:
+                child.parent = parent_obj
+            return {"action": action, "child": child.name, "parent": parent_obj.name}
+
+        if action == "rename":
+            obj = self._require_object(target or name)
+            old = obj.name
+            obj.name = new_name or kwargs.get("new_name")
+            return {"action": action, "name": obj.name, "old_name": old}
+
+        if action == "select":
+            select_names = names or ([target] if target else [name])
+            select_mode = (mode or "replace").lower()
+            if select_mode == "replace":
+                bpy.ops.object.select_all(action="DESELECT")
+            selected = []
+            for n in select_names:
+                obj = bpy.data.objects.get(n)
+                if not obj:
+                    continue
+                obj.select_set(select_mode != "remove")
+                selected.append(obj.name)
+                if select_mode != "remove":
+                    bpy.context.view_layer.objects.active = obj
+            return {"action": action, "mode": select_mode, "selected": selected}
+
+        if action == "hide":
+            hide_names = names or ([target] if target else [name])
+            changed = []
+            for n in hide_names:
+                obj = bpy.data.objects.get(n)
+                if obj:
+                    obj.hide_set(bool(hide))
+                    changed.append(obj.name)
+            return {"action": action, "hide": bool(hide), "names": changed}
+
+        if action in ("set_shading", "shade"):
+            obj = self._require_object(target or name)
+            if obj.type == "MESH" and obj.data:
+                for poly in obj.data.polygons:
+                    poly.use_smooth = bool(smooth)
+            return {"action": "set_shading", "name": obj.name, "smooth": bool(smooth)}
+
+        if action == "join":
+            join_names = list(names or [])
+            if len(join_names) < 2:
+                raise ValueError("join requires names with at least 2 objects")
+            target_name = target or join_names[0]
+            bpy.ops.object.select_all(action="DESELECT")
+            t = self._require_object(target_name)
+            for n in join_names:
+                self._require_object(n).select_set(True)
+            bpy.context.view_layer.objects.active = t
+            bpy.ops.object.join()
+            return {"action": action, "name": bpy.context.view_layer.objects.active.name}
+
+        if action == "get":
+            obj = self._require_object(target or name)
+            data = self._serialize_object(obj, detail=detail or "standard")
+            data["action"] = action
+            return data
+
+        if action == "clear_scene":
+            removed = self._clear_scene(
+                keep_types=kwargs.get("keep_types"),
+                keep_names=kwargs.get("keep_names"),
+            )
+            return {"action": action, "removed": removed, "removed_count": len(removed)}
+
+        raise ValueError(
+            f"Unknown manage_object action: {action}. "
+            "Valid: create, modify, delete, duplicate, move_relative, look_at, parent, "
+            "rename, select, hide, set_shading, join, get, clear_scene"
+        )
+
+    def manage_material(
+        self,
+        action=None,
+        target=None,
+        name=None,
+        material_name=None,
+        color=None,
+        metallic=None,
+        roughness=None,
+        slot=0,
+        **kwargs,
+    ):
+        """Material ops (Principled BSDF). Actions: create, assign, set_color, set_principled, get_info."""
+        action = (action or "").lower()
+        mat_name = material_name or name or kwargs.get("material_path")
+        obj_name = target or kwargs.get("object_name")
+
+        if action in ("create", "set_principled", "set_color"):
+            if action == "create" and not obj_name:
+                if not mat_name:
+                    raise ValueError("material_name required for create without target")
+                mat = bpy.data.materials.get(mat_name) or bpy.data.materials.new(name=mat_name)
+                mat.use_nodes = True
+                bsdf = mat.node_tree.nodes.get("Principled BSDF") or next(
+                    (n for n in mat.node_tree.nodes if n.type == "BSDF_PRINCIPLED"), None
+                )
+                if color is not None and bsdf:
+                    col = list(color) + [1.0] if len(color) == 3 else list(color)
+                    bsdf.inputs["Base Color"].default_value = col[:4]
+                if metallic is not None and bsdf and "Metallic" in bsdf.inputs:
+                    bsdf.inputs["Metallic"].default_value = float(metallic)
+                if roughness is not None and bsdf and "Roughness" in bsdf.inputs:
+                    bsdf.inputs["Roughness"].default_value = float(roughness)
+                return {"action": action, "material": mat.name}
+
+            if not obj_name:
+                raise ValueError("target/object_name required")
+            result = self._set_material(
+                name=obj_name,
+                color=color,
+                metallic=metallic,
+                roughness=roughness,
+                material_name=mat_name,
+            )
+            result["action"] = action
+            return result
+
+        if action == "assign":
+            if not obj_name or not mat_name:
+                raise ValueError("assign requires target and material_name")
+            obj = self._require_object(obj_name)
+            mat = bpy.data.materials.get(mat_name)
+            if not mat:
+                raise ValueError(f"Material not found: {mat_name}")
+            if obj.data and hasattr(obj.data, "materials"):
+                idx = int(slot or 0)
+                while len(obj.data.materials) <= idx:
+                    obj.data.materials.append(None)
+                obj.data.materials[idx] = mat
+            return {"action": action, "object": obj.name, "material": mat.name, "slot": int(slot or 0)}
+
+        if action == "get_info":
+            if mat_name:
+                mat = bpy.data.materials.get(mat_name)
+                if not mat:
+                    raise ValueError(f"Material not found: {mat_name}")
+            elif obj_name:
+                obj = self._require_object(obj_name)
+                mat = obj.active_material or (obj.data.materials[0] if obj.data and obj.data.materials else None)
+                if not mat:
+                    raise ValueError(f"No material on object: {obj_name}")
+            else:
+                raise ValueError("get_info requires material_name or target")
+            info = {"action": action, "name": mat.name, "use_nodes": bool(mat.use_nodes)}
+            if mat.use_nodes:
+                bsdf = mat.node_tree.nodes.get("Principled BSDF") or next(
+                    (n for n in mat.node_tree.nodes if n.type == "BSDF_PRINCIPLED"), None
+                )
+                if bsdf:
+                    bc = bsdf.inputs["Base Color"].default_value
+                    info["base_color"] = [round(float(c), 3) for c in bc]
+                    if "Metallic" in bsdf.inputs:
+                        info["metallic"] = round(float(bsdf.inputs["Metallic"].default_value), 3)
+                    if "Roughness" in bsdf.inputs:
+                        info["roughness"] = round(float(bsdf.inputs["Roughness"].default_value), 3)
+            return info
+
+        raise ValueError(
+            f"Unknown manage_material action: {action}. "
+            "Valid: create, assign, set_color, set_principled, get_info"
+        )
+
+    def manage_light(
+        self,
+        action=None,
+        target=None,
+        name=None,
+        light_type="POINT",
+        location=None,
+        position=None,
+        rotation=None,
+        energy=None,
+        color=None,
+        **kwargs,
+    ):
+        """Light ops. Actions: create | modify | delete | get"""
+        action = (action or "").lower()
+        loc = location if location is not None else position
+
+        if action == "create":
+            obj = self._add_light(
+                light_type=light_type or kwargs.get("type") or "POINT",
+                name=name or target,
+                location=loc,
+                energy=energy,
+                color=color,
+                rotation=rotation,
+            )
+            return {"action": action, "name": obj.name, "light_type": obj.data.type}
+
+        if action == "modify":
+            obj = self._require_object(target or name)
+            if obj.type != "LIGHT":
+                raise ValueError(f"{obj.name} is not a light")
+            self._apply_transform(obj, location=loc, rotation=rotation)
+            if energy is not None:
+                obj.data.energy = float(energy)
+            if color is not None:
+                obj.data.color = color[:3]
+            return {
+                "action": action,
+                "name": obj.name,
+                "energy": round(float(obj.data.energy), 3),
+                "location": self._round_vec(obj.location),
+            }
+
+        if action == "delete":
+            deleted = self._delete_objects(target or name)
+            return {"action": action, "deleted": deleted}
+
+        if action == "get":
+            obj = self._require_object(target or name)
+            if obj.type != "LIGHT":
+                raise ValueError(f"{obj.name} is not a light")
+            return {
+                "action": action,
+                "name": obj.name,
+                "light_type": obj.data.type,
+                "energy": round(float(obj.data.energy), 3),
+                "color": self._round_vec(obj.data.color),
+                "location": self._round_vec(obj.location),
+                "rotation": self._round_vec(obj.rotation_euler),
+            }
+
+        raise ValueError(f"Unknown manage_light action: {action}. Valid: create, modify, delete, get")
+
+    def manage_camera(
+        self,
+        action=None,
+        target=None,
+        name=None,
+        location=None,
+        position=None,
+        rotation=None,
+        lens=None,
+        set_active=True,
+        **kwargs,
+    ):
+        """Camera ops. Actions: create | modify | look_at | set_active | get"""
+        action = (action or "").lower()
+        loc = location if location is not None else position
+
+        if action == "create":
+            obj = self._add_camera(
+                name=name or target,
+                location=loc,
+                rotation=rotation,
+                lens=lens,
+                set_active=set_active,
+            )
+            return {"action": action, "name": obj.name, "active": bpy.context.scene.camera == obj}
+
+        if action == "modify":
+            obj = self._require_object(target or name)
+            if obj.type != "CAMERA":
+                raise ValueError(f"{obj.name} is not a camera")
+            self._apply_transform(obj, location=loc, rotation=rotation)
+            if lens is not None:
+                obj.data.lens = float(lens)
+            if set_active:
+                bpy.context.scene.camera = obj
+            return {
+                "action": action,
+                "name": obj.name,
+                "lens": round(float(obj.data.lens), 3),
+                "location": self._round_vec(obj.location),
+            }
+
+        if action == "look_at":
+            obj = self._look_at(
+                name=target or name,
+                target=kwargs.get("look_target") or kwargs.get("target_point"),
+                target_object=kwargs.get("target_object") or kwargs.get("look_at_target"),
+            )
+            return {"action": action, "name": obj.name, "rotation": self._round_vec(obj.rotation_euler)}
+
+        if action == "set_active":
+            obj = self._require_object(target or name)
+            if obj.type != "CAMERA":
+                raise ValueError(f"{obj.name} is not a camera")
+            bpy.context.scene.camera = obj
+            return {"action": action, "name": obj.name}
+
+        if action == "get":
+            obj = self._require_object(target or name) if (target or name) else bpy.context.scene.camera
+            if not obj:
+                raise ValueError("No camera target and no active scene camera")
+            if obj.type != "CAMERA":
+                raise ValueError(f"{obj.name} is not a camera")
+            return {
+                "action": action,
+                "name": obj.name,
+                "lens": round(float(obj.data.lens), 3),
+                "location": self._round_vec(obj.location),
+                "rotation": self._round_vec(obj.rotation_euler),
+                "active": bpy.context.scene.camera == obj,
+            }
+
+        raise ValueError(
+            f"Unknown manage_camera action: {action}. Valid: create, modify, look_at, set_active, get"
+        )
+
+    def find_objects(
+        self,
+        search_term="",
+        search_method="by_name",
+        object_types=None,
+        page_size=20,
+        cursor=0,
+        include_hidden=True,
+        detail="summary",
+        **kwargs,
+    ):
+        """Search objects. search_method: by_name|by_type|by_material|by_collection. Paginated."""
+        method = (search_method or "by_name").lower()
+        page_size = max(1, min(int(page_size or 20), 200))
+        cursor = max(0, int(cursor or 0))
+        term = (search_term or "").strip()
+
+        type_filter = None
+        if object_types:
+            if isinstance(object_types, str):
+                type_filter = {t.strip().upper() for t in object_types.split(",") if t.strip()}
+            else:
+                type_filter = {str(t).strip().upper() for t in object_types if str(t).strip()}
+
+        matches = []
+        for obj in bpy.context.scene.objects:
+            if not include_hidden and obj.hide_get():
+                continue
+            if type_filter and obj.type not in type_filter:
+                continue
+            if method in ("by_name", "by_path"):
+                if term and term.lower() not in obj.name.lower():
+                    continue
+            elif method == "by_type":
+                if term and obj.type.upper() != term.upper():
+                    continue
+            elif method == "by_material":
+                mats = [s.material.name for s in obj.material_slots if s.material]
+                if term and not any(term.lower() in m.lower() for m in mats):
+                    continue
+            elif method == "by_collection":
+                cols = [c.name for c in obj.users_collection]
+                if term and not any(term.lower() in c.lower() for c in cols):
+                    continue
+            else:
+                if term and term.lower() not in obj.name.lower():
+                    continue
+            matches.append(obj)
+
+        page = matches[cursor:cursor + page_size]
+        return {
+            "total": len(matches),
+            "cursor": cursor,
+            "page_size": page_size,
+            "returned": len(page),
+            "truncated": cursor + len(page) < len(matches),
+            "next_cursor": cursor + len(page) if cursor + len(page) < len(matches) else None,
+            "objects": [self._serialize_object(o, detail=detail or "summary") for o in page],
+        }
+
+    def batch_execute(self, commands=None, fail_fast=True, return_scene=False, scene_detail="summary", max_objects=30):
+        """Run multiple manage_* commands in one round-trip. Each: {"tool": "...", "params": {...}}. Also accepts {"op": "..."}."""
+        if commands is None:
+            commands = []
+        if not isinstance(commands, list):
+            raise ValueError("commands must be a list")
+
+        tool_map = {
+            "manage_object": self.manage_object,
+            "manage_material": self.manage_material,
+            "manage_light": self.manage_light,
+            "manage_camera": self.manage_camera,
+            "find_objects": self.find_objects,
+            "get_scene_info": self.get_scene_info,
+            "get_object_info": self.get_object_info,
+            "scene_ops": self.scene_ops,
+        }
+
+        results = []
+        for i, cmd in enumerate(commands):
+            if not isinstance(cmd, dict):
+                results.append({"ok": False, "index": i, "error": "command must be a dict"})
+                if fail_fast:
+                    break
+                continue
+            try:
+                if "op" in cmd and "tool" not in cmd:
+                    results.append({"ok": True, "index": i, **self._run_one_op(cmd)})
+                    continue
+                tool = (cmd.get("tool") or "").strip()
+                params = cmd.get("params") or {}
+                if not isinstance(params, dict):
+                    raise ValueError("params must be a dict")
+                handler = tool_map.get(tool)
+                if not handler:
+                    raise ValueError(
+                        f"Unknown tool in batch: {tool}. "
+                        f"Valid: {sorted(tool_map)}"
+                    )
+                result = handler(**params)
+                entry = {"ok": True, "index": i, "tool": tool}
+                if isinstance(result, dict):
+                    entry["result"] = result
+                else:
+                    entry["result"] = {"value": result}
+                results.append(entry)
+            except Exception as e:
+                results.append({
+                    "ok": False,
+                    "index": i,
+                    "tool": cmd.get("tool") if isinstance(cmd, dict) else None,
+                    "error": str(e),
+                })
+                if fail_fast:
+                    break
+
+        out = {
+            "ok": all(r.get("ok") for r in results) if results else True,
+            "results": results,
+            "executed": len(results),
+        }
+        if return_scene:
+            out["scene"] = self.get_scene_info(detail=scene_detail or "summary", max_objects=max_objects or 30)
+        return out
+
+    def _build_code_helpers(self):
+        """Helpers injected into execute_code namespace."""
+        server = self
+
+        class Helpers:
+            create_primitive = staticmethod(lambda **kw: server._create_primitive(**kw))
+            transform = staticmethod(
+                lambda name, location=None, rotation=None, scale=None, delta=False: server._apply_transform(
+                    server._require_object(name), location, rotation, scale, delta
+                )
+            )
+            set_material = staticmethod(lambda **kw: server._set_material(**kw))
+            delete = staticmethod(lambda names: server._delete_objects(names))
+            scene_ops = staticmethod(lambda ops, **kw: server.scene_ops(ops=ops, **kw))
+            manage_object = staticmethod(lambda **kw: server.manage_object(**kw))
+            manage_material = staticmethod(lambda **kw: server.manage_material(**kw))
+            manage_light = staticmethod(lambda **kw: server.manage_light(**kw))
+            manage_camera = staticmethod(lambda **kw: server.manage_camera(**kw))
+            find_objects = staticmethod(lambda **kw: server.find_objects(**kw))
+            batch_execute = staticmethod(lambda commands, **kw: server.batch_execute(commands=commands, **kw))
+            get_scene = staticmethod(lambda **kw: server.get_scene_info(**kw))
+            get_object = staticmethod(lambda name, detail="standard": server.get_object_info(name, detail=detail))
+            add_light = staticmethod(lambda **kw: server._add_light(**kw))
+            add_camera = staticmethod(lambda **kw: server._add_camera(**kw))
+            look_at = staticmethod(lambda **kw: server._look_at(**kw))
+            clear_scene = staticmethod(lambda **kw: server._clear_scene(**kw))
+            require = staticmethod(lambda name: server._require_object(name))
+
+        return Helpers()
 
     def get_viewport_screenshot(self, max_size=800, filepath=None, format="png"):
         """
@@ -524,20 +1486,35 @@ class BlenderMCPServer:
         except Exception as e:
             return {"error": str(e)}
 
-    def execute_code(self, code):
-        """Execute arbitrary Blender Python code"""
-        # This is powerful but potentially dangerous - use with caution
+    def execute_code(self, code, max_output_chars=4000):
+        """Execute arbitrary Blender Python code. Namespace: bpy, mathutils, ops/mcp helpers."""
         try:
-            # Create a local namespace for execution
-            namespace = {"bpy": bpy}
+            helpers = self._build_code_helpers()
+            namespace = {
+                "bpy": bpy,
+                "mathutils": mathutils,
+                "ops": helpers,
+                "mcp": helpers,
+            }
 
-            # Capture stdout during execution, and return it as result
             capture_buffer = io.StringIO()
             with redirect_stdout(capture_buffer):
                 exec(code, namespace)
 
             captured_output = capture_buffer.getvalue()
-            return {"executed": True, "result": captured_output}
+            max_chars = max(200, int(max_output_chars or 4000))
+            truncated = len(captured_output) > max_chars
+            if truncated:
+                captured_output = captured_output[:max_chars] + f"\n...[truncated {len(capture_buffer.getvalue()) - max_chars} chars]"
+
+            script_result = namespace.get("result", None)
+            if script_result is not None and not isinstance(script_result, (str, int, float, bool, list, dict, type(None))):
+                script_result = str(script_result)
+
+            out = {"executed": True, "result": captured_output, "truncated": truncated}
+            if script_result is not None:
+                out["value"] = script_result
+            return out
         except Exception as e:
             raise Exception(f"Code execution error: {str(e)}")
 
