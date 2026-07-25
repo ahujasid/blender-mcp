@@ -1,6 +1,8 @@
 
 
 # BlenderMCP - Blender Model Context Protocol Integration
+
+[![MCP Toplist](https://mcptoplist.com/badge/glama%2Fahujasid%2Fblender-mcp.svg)](https://mcptoplist.com/server/glama%2Fahujasid%2Fblender-mcp)
 <a href="https://trendshift.io/repositories/14834?utm_source=repository-badge&amp;utm_medium=badge&amp;utm_campaign=badge-repository-14834" target="_blank" rel="noopener noreferrer"><img src="https://trendshift.io/api/badge/repositories/14834" alt="ahujasid%2Fblender-mcp | Trendshift" width="250" height="55"/></a><br />
 [![PyPI Downloads](https://static.pepy.tech/personalized-badge/blender-mcp?period=total&units=INTERNATIONAL_SYSTEM&left_color=BLACK&right_color=GREEN&left_text=downloads)](https://pepy.tech/projects/blender-mcp)
 
