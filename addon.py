@@ -6,6 +6,7 @@ import mathutils
 import json
 import threading
 import socket
+import struct
 import time
 import requests
 import tempfile
@@ -35,6 +36,13 @@ RODIN_FREE_TRIAL_KEY = "vibecoding"
 # Add User-Agent as required by Poly Haven API
 REQ_HEADERS = requests.utils.default_headers()
 REQ_HEADERS.update({"User-Agent": "blender-mcp"})
+
+
+def _send_framed_json(client, payload):
+    """Send one JSON object with a 4-byte big-endian length prefix."""
+    body = json.dumps(payload).encode("utf-8")
+    client.sendall(struct.pack(">I", len(body)) + body)
+
 
 def get_blendermcp_addon_preferences(context=None):
     """Get add-on preferences object if available."""
@@ -218,10 +226,9 @@ class BlenderMCPServer:
                         def execute_wrapper():
                             try:
                                 response = self.execute_command(command)
-                                response_json = json.dumps(response)
                                 try:
-                                    client.sendall(response_json.encode('utf-8'))
-                                except:
+                                    _send_framed_json(client, response)
+                                except Exception:
                                     print("Failed to send response - client disconnected")
                             except Exception as e:
                                 print(f"Error executing command: {str(e)}")
@@ -231,8 +238,8 @@ class BlenderMCPServer:
                                         "status": "error",
                                         "message": str(e)
                                     }
-                                    client.sendall(json.dumps(error_response).encode('utf-8'))
-                                except:
+                                    _send_framed_json(client, error_response)
+                                except Exception:
                                     pass
                             return None
 
