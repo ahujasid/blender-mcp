@@ -44,7 +44,10 @@ def get_blendermcp_addon_preferences(context=None):
     return addon.preferences if addon else None
 
 class BlenderMCPServer:
-    def __init__(self, host='localhost', port=9876):
+    def __init__(self, host=None, port=9876):
+        # WSL/Cursor on Linux → Blender on Windows: must not bind 127.0.0.1 only.
+        if host is None:
+            host = os.getenv("BLENDERMCP_HOST", "0.0.0.0")
         self.host = host
         self.port = port
         self.running = False
