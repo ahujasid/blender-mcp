@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from contextlib import asynccontextmanager
 from typing import AsyncIterator, Dict, Any, List
 import os
+import sys
 from pathlib import Path
 import base64
 from urllib.parse import urlparse
@@ -151,7 +152,7 @@ class BlenderConnection:
             # Don't try to reconnect here - let the get_blender_connection handle reconnection
             # Just invalidate the current socket so it will be recreated next time
             self.sock = None
-            raise Exception("Timeout waiting for Blender response - try simplifying your request")
+            raise Exception("Timeout waiting for Blender response - try simplifying your request. If Blender is running headless (blender -b), commands never execute; run Blender with a GUI or via 'xvfb-run -a blender' instead")
         except (ConnectionError, BrokenPipeError, ConnectionResetError) as e:
             logger.error(f"Socket connection error: {str(e)}")
             self.sock = None
@@ -1230,6 +1231,22 @@ def asset_creation_strategy() -> str:
 
 def main():
     """Run the MCP server"""
+    # When run by hand (stdin is a TTY) the server appears to "hang" while it
+    # silently waits for an MCP client; log a hint so that state is obvious.
+    # Launched by a client, stdin is a pipe so this is skipped, and logging goes
+    # to stderr, never to the stdio protocol on stdout.
+    try:
+        interactive = sys.stdin.isatty()
+    except (AttributeError, OSError):
+        interactive = False
+    if interactive:
+        logger.info(
+            "BlenderMCP is an MCP server and is meant to be launched by your MCP "
+            "client (Claude Desktop, Cursor, VS Code, ...), not run by hand. "
+            "It will now wait silently for a client on stdin -- that is normal, "
+            "not a hang. Press Ctrl-C to exit. "
+            "Setup guide: https://github.com/ahujasid/blender-mcp#installation"
+        )
     mcp.run()
 
 if __name__ == "__main__":
