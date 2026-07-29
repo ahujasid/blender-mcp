@@ -23,7 +23,7 @@ from contextlib import redirect_stdout, suppress
 bl_info = {
     "name": "Blender MCP",
     "author": "BlenderMCP",
-    "version": (1, 2),
+    "version": (1, 3, 0),
     "blender": (3, 0, 0),
     "location": "View3D > Sidebar > BlenderMCP",
     "description": "Connect Blender to Claude via MCP",
@@ -31,6 +31,43 @@ bl_info = {
 }
 
 RODIN_FREE_TRIAL_KEY = "vibecoding"
+SOCKET_PROTOCOL_VERSION = 2
+MAX_SOCKET_MESSAGE_BYTES = 64 * 1024 * 1024
+COMMAND_TIMEOUT_SECONDS = 175.0
+
+
+def _encode_socket_message(payload):
+    """Encode one newline-delimited JSON message for the TCP bridge."""
+    return (
+        json.dumps(payload, separators=(",", ":"), ensure_ascii=False)
+        .encode("utf-8")
+        + b"\n"
+    )
+
+
+def _decode_socket_messages(buffer):
+    """Return complete JSON messages while retaining an incomplete tail.
+
+    New peers use newline-delimited JSON. The final ``json.loads`` attempt keeps
+    compatibility with older blender-mcp servers that send one unframed JSON
+    object and then wait for a response.
+    """
+    messages = []
+
+    while b"\n" in buffer:
+        raw_message, buffer = buffer.split(b"\n", 1)
+        if not raw_message.strip():
+            continue
+        messages.append(json.loads(raw_message.decode("utf-8")))
+
+    if buffer.strip():
+        try:
+            messages.append(json.loads(buffer.decode("utf-8")))
+            buffer = b""
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            pass
+
+    return messages, buffer
 
 # Add User-Agent as required by Poly Haven API
 REQ_HEADERS = requests.utils.default_headers()
@@ -50,6 +87,8 @@ class BlenderMCPServer:
         self.running = False
         self.socket = None
         self.server_thread = None
+        self._clients = set()
+        self._clients_lock = threading.Lock()
 
     def _get_config_value(self, scene_attr, pref_attr=None, env_var=None):
         """Read config in order: addon preferences -> scene -> env var."""
@@ -141,6 +180,20 @@ class BlenderMCPServer:
     def stop(self):
         self.running = False
 
+        # Closing active clients unblocks their recv calls and lets handler
+        # threads exit promptly when the add-on is disabled or restarted.
+        with self._clients_lock:
+            clients = list(self._clients)
+        for client in clients:
+            try:
+                client.shutdown(socket.SHUT_RDWR)
+            except:
+                pass
+            try:
+                client.close()
+            except:
+                pass
+
         # Close socket
         if self.socket:
             try:
@@ -171,6 +224,8 @@ class BlenderMCPServer:
                 try:
                     client, address = self.socket.accept()
                     print(f"Connected to client: {address}")
+                    with self._clients_lock:
+                        self._clients.add(client)
 
                     # Handle client in a separate thread
                     client_thread = threading.Thread(
@@ -196,7 +251,7 @@ class BlenderMCPServer:
     def _handle_client(self, client):
         """Handle connected client"""
         print("Client handler started")
-        client.settimeout(None)  # No timeout
+        client.settimeout(1.0)
         buffer = b''
 
         try:
@@ -209,18 +264,56 @@ class BlenderMCPServer:
                         break
 
                     buffer += data
-                    try:
-                        # Try to parse command
-                        command = json.loads(buffer.decode('utf-8'))
-                        buffer = b''
+                    if len(buffer) > MAX_SOCKET_MESSAGE_BYTES:
+                        raise ValueError(
+                            f"Socket message exceeds {MAX_SOCKET_MESSAGE_BYTES} bytes"
+                        )
 
-                        # Execute command in Blender's main thread
-                        def execute_wrapper():
+                    try:
+                        commands, buffer = _decode_socket_messages(buffer)
+                    except (json.JSONDecodeError, UnicodeDecodeError) as e:
+                        error_response = {
+                            "status": "error",
+                            "message": f"Invalid socket message: {e}",
+                            "protocol_version": SOCKET_PROTOCOL_VERSION,
+                        }
+                        client.sendall(_encode_socket_message(error_response))
+                        buffer = b""
+                        continue
+
+                    for command in commands:
+                        if not isinstance(command, dict):
+                            client.sendall(_encode_socket_message({
+                                "status": "error",
+                                "message": "Socket command must be a JSON object",
+                                "protocol_version": SOCKET_PROTOCOL_VERSION,
+                            }))
+                            continue
+
+                        request_id = command.get("request_id")
+                        completed = threading.Event()
+                        state = {"cancelled": False}
+
+                        # Default arguments freeze this iteration's values. This
+                        # avoids a late-binding race when multiple timer callbacks
+                        # are queued before Blender's main thread runs them.
+                        def execute_wrapper(
+                            command=command,
+                            request_id=request_id,
+                            completed=completed,
+                            state=state,
+                            client=client,
+                        ):
+                            if state["cancelled"]:
+                                completed.set()
+                                return None
                             try:
                                 response = self.execute_command(command)
-                                response_json = json.dumps(response)
+                                if request_id is not None:
+                                    response["request_id"] = request_id
+                                response["protocol_version"] = SOCKET_PROTOCOL_VERSION
                                 try:
-                                    client.sendall(response_json.encode('utf-8'))
+                                    client.sendall(_encode_socket_message(response))
                                 except:
                                     print("Failed to send response - client disconnected")
                             except Exception as e:
@@ -229,18 +322,40 @@ class BlenderMCPServer:
                                 try:
                                     error_response = {
                                         "status": "error",
-                                        "message": str(e)
+                                        "message": str(e),
+                                        "protocol_version": SOCKET_PROTOCOL_VERSION,
                                     }
-                                    client.sendall(json.dumps(error_response).encode('utf-8'))
+                                    if request_id is not None:
+                                        error_response["request_id"] = request_id
+                                    client.sendall(_encode_socket_message(error_response))
                                 except:
                                     pass
+                            finally:
+                                completed.set()
                             return None
 
-                        # Schedule execution in main thread
+                        # Blender API work must execute in the main thread.
                         bpy.app.timers.register(execute_wrapper, first_interval=0.0)
-                    except json.JSONDecodeError:
-                        # Incomplete data, wait for more
-                        pass
+
+                        if not completed.wait(COMMAND_TIMEOUT_SECONDS):
+                            state["cancelled"] = True
+                            timeout_response = {
+                                "status": "error",
+                                "message": (
+                                    "Timed out waiting for Blender's main thread "
+                                    "to complete the command"
+                                ),
+                                "protocol_version": SOCKET_PROTOCOL_VERSION,
+                            }
+                            if request_id is not None:
+                                timeout_response["request_id"] = request_id
+                            try:
+                                client.sendall(_encode_socket_message(timeout_response))
+                            except:
+                                pass
+                            return
+                except socket.timeout:
+                    continue
                 except Exception as e:
                     print(f"Error receiving data: {str(e)}")
                     break
@@ -251,6 +366,8 @@ class BlenderMCPServer:
                 client.close()
             except:
                 pass
+            with self._clients_lock:
+                self._clients.discard(client)
             print("Client handler stopped")
 
     def execute_command(self, command):

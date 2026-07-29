@@ -14,8 +14,13 @@ classifiers = [
     "Operating System :: OS Independent",
 ]
 dependencies = [
-    "mcp[cli]>=1.3.0,<2",
+    "mcp[cli]>=2.0.0,<3",
     "httpx>=0.27.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3",
 ]
 
 [project.scripts]

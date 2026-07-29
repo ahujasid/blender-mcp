@@ -27,6 +27,9 @@ Give feedback, get inspired, and build on top of the MCP: [Discord](https://disc
 
 For the current version and changelog, see the [releases page](https://github.com/ahujasid/blender-mcp/releases).
 
+- Supports the MCP `2026-07-28` stateless protocol and earlier MCP clients
+- Supports both stdio and opt-in stateless Streamable HTTP transports
+- Uses a framed, versioned Blender socket bridge with request correlation and legacy compatibility
 - Added Hunyuan3D support
 - View screenshots for Blender viewport to better understand the scene
 - Search and download Sketchfab models
@@ -135,6 +138,29 @@ Example:
 export BLENDER_HOST='host.docker.internal'
 export BLENDER_PORT=9876
 ```
+
+### MCP protocol and transport
+
+BlenderMCP uses the MCP Python SDK v2 and supports both the current
+`2026-07-28` protocol and legacy handshake clients. The default remains stdio,
+so existing Claude Desktop, Cursor, VS Code, and other local configurations do
+not need to change.
+
+For a local stateless Streamable HTTP endpoint, set:
+
+```powershell
+$env:BLENDER_MCP_TRANSPORT = "streamable-http"
+$env:BLENDER_MCP_HTTP_HOST = "127.0.0.1"
+$env:BLENDER_MCP_HTTP_PORT = "8000"
+$env:BLENDER_MCP_HTTP_PATH = "/mcp"
+blender-mcp
+```
+
+The endpoint is then available at `http://127.0.0.1:8000/mcp`. The HTTP mode
+uses stateless requests and JSON responses. It refuses non-loopback binding by
+default because BlenderMCP exposes powerful scene and Python execution tools.
+Only set `BLENDER_MCP_ALLOW_REMOTE_HTTP=true` when the endpoint is protected by
+appropriate authentication and network controls.
 
 ### Claude for Desktop Integration
 
