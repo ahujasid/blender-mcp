@@ -266,6 +266,7 @@ Once the config file has been set on Claude, and the addon is running on Blender
 - Execute any Python code in Blender
 - Download the right models, assets and HDRIs through [Poly Haven](https://polyhaven.com/)
 - AI generated 3D models through [Hyper3D Rodin](https://hyper3d.ai/)
+- AI generated 3D models through [Hunyuan3D](https://github.com/Tencent-Hunyuan/Hunyuan3D-2) (Tencent Cloud, or your own self-hosted server)
 
 
 ### Example Commands
@@ -285,6 +286,15 @@ Here are some examples of what you can ask Claude to do:
 ## Hyper3D integration
 
 Hyper3D's free trial key allows you to generate a limited number of models per day. If the daily limit is reached, you can wait for the next day's reset or obtain your own key from hyper3d.ai and fal.ai.
+
+## Hunyuan3D integration
+
+Hunyuan3D has two modes, selected by the **Hunyuan3D Mode** dropdown in the BlenderMCP sidebar panel:
+
+- **`official api`** — Tencent Cloud. Requires a SecretId and SecretKey, and bills per job.
+- **`local api`** — your own self-hosted Hunyuan3D inference server. This is the default.
+
+**`local api` mode requires you to run that server yourself.** BlenderMCP is only the client: it POSTs to `<API URL>/generate` and imports the GLB it gets back, but it does not provide, bundle or start an inference server. The **API URL** field defaults to `http://localhost:8081`, so if nothing is listening there, generation fails with a connection error.
 
 ## Persistent API credentials
 
