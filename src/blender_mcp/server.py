@@ -27,6 +27,14 @@ logger = logging.getLogger("BlenderMCPServer")
 DEFAULT_HOST = "localhost"
 DEFAULT_PORT = 9876
 
+# MCP transport configuration. Defaults to stdio so existing MCP client
+# configs (Claude Desktop, Cursor, VS Code, etc. -- see README) keep working
+# unchanged. Set MCP_TRANSPORT=streamable-http to run as a networked HTTP
+# server instead (e.g. for container/PaaS deployments).
+MCP_TRANSPORT = os.getenv("MCP_TRANSPORT", "stdio")
+MCP_HOST = os.getenv("MCP_HOST", "0.0.0.0")
+MCP_PORT = int(os.getenv("MCP_PORT", "8000"))
+
 @dataclass
 class BlenderConnection:
     host: str
@@ -208,7 +216,9 @@ async def server_lifespan(server: FastMCP) -> AsyncIterator[Dict[str, Any]]:
 # Create the MCP server with lifespan support
 mcp = FastMCP(
     "BlenderMCP",
-    lifespan=server_lifespan
+    lifespan=server_lifespan,
+    host=MCP_HOST,
+    port=MCP_PORT
 )
 
 # Resource endpoints
@@ -1231,23 +1241,26 @@ def asset_creation_strategy() -> str:
 
 def main():
     """Run the MCP server"""
-    # When run by hand (stdin is a TTY) the server appears to "hang" while it
-    # silently waits for an MCP client; log a hint so that state is obvious.
-    # Launched by a client, stdin is a pipe so this is skipped, and logging goes
-    # to stderr, never to the stdio protocol on stdout.
-    try:
-        interactive = sys.stdin.isatty()
-    except (AttributeError, OSError):
-        interactive = False
-    if interactive:
-        logger.info(
-            "BlenderMCP is an MCP server and is meant to be launched by your MCP "
-            "client (Claude Desktop, Cursor, VS Code, ...), not run by hand. "
-            "It will now wait silently for a client on stdin -- that is normal, "
-            "not a hang. Press Ctrl-C to exit. "
-            "Setup guide: https://github.com/ahujasid/blender-mcp#installation"
-        )
-    mcp.run()
+    if MCP_TRANSPORT == "stdio":
+        # When run by hand (stdin is a TTY) the server appears to "hang" while it
+        # silently waits for an MCP client; log a hint so that state is obvious.
+        # Launched by a client, stdin is a pipe so this is skipped, and logging goes
+        # to stderr, never to the stdio protocol on stdout.
+        try:
+            interactive = sys.stdin.isatty()
+        except (AttributeError, OSError):
+            interactive = False
+        if interactive:
+            logger.info(
+                "BlenderMCP is an MCP server and is meant to be launched by your MCP "
+                "client (Claude Desktop, Cursor, VS Code, ...), not run by hand. "
+                "It will now wait silently for a client on stdin -- that is normal, "
+                "not a hang. Press Ctrl-C to exit. "
+                "Setup guide: https://github.com/ahujasid/blender-mcp#installation"
+            )
+    else:
+        logger.info(f"BlenderMCP starting in '{MCP_TRANSPORT}' mode on {MCP_HOST}:{MCP_PORT}")
+    mcp.run(transport=MCP_TRANSPORT)
 
 if __name__ == "__main__":
     main()
