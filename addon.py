@@ -19,6 +19,7 @@ from datetime import datetime
 import hashlib, hmac, base64
 import os.path as osp
 from contextlib import redirect_stdout, suppress
+from urllib.parse import urlparse
 
 bl_info = {
     "name": "Blender MCP",
@@ -2058,6 +2059,28 @@ class BlenderMCPServer:
     #endregion
 
     #region Hunyuan3D
+    @staticmethod
+    def probe_hunyuan3d_local_api(api_url, timeout=1.5):
+        """Best-effort reachability check for a LOCAL_API Hunyuan3D server.
+
+        Only confirms that something accepts TCP on the host/port; it does not
+        verify the peer actually speaks the /generate contract. Returns None
+        when reachable, otherwise a short human-readable reason.
+        """
+        parsed = urlparse(api_url if "://" in api_url else f"http://{api_url}")
+        host = parsed.hostname
+        if not host:
+            return f"could not parse a host out of {api_url!r}"
+        try:
+            port = parsed.port or (443 if parsed.scheme == "https" else 80)
+        except ValueError:
+            return f"invalid port in {api_url!r}"
+        try:
+            with socket.create_connection((host, port), timeout=timeout):
+                return None
+        except OSError as e:
+            return f"nothing is accepting connections at {host}:{port} ({e})"
+
     def get_hunyuan3d_status(self):
         """Get the current status of Hunyuan3D integration"""
         enabled = bpy.context.scene.blendermcp_use_hunyuan3d
@@ -2079,15 +2102,32 @@ class BlenderMCPServer:
                                 4. Restart the connection to Claude"""
                         }
                 case "LOCAL_API":
+                    # Defensive: _get_hunyuan3d_api_url() falls back to a default,
+                    # so this only fires if that fallback is ever removed.
                     if not api_url:
                         return {
-                            "enabled": False, 
-                            "mode": hunyuan3d_mode, 
+                            "enabled": False,
+                            "mode": hunyuan3d_mode,
                             "message": """Hunyuan3D integration is currently enabled, but API URL  is not given. To enable it:
                                 1. In the 3D Viewport, find the BlenderMCP panel in the sidebar (press N if hidden)
                                 2. Keep the 'Use Tencent Hunyuan 3D model generation' checkbox checked
                                 3. Choose the right platform and fill in the API URL
                                 4. Restart the connection to Claude"""
+                        }
+                    # A URL alone proves nothing: blender-mcp is only the client and
+                    # never starts a server, so report unreachable rather than ready.
+                    unreachable = self.probe_hunyuan3d_local_api(api_url)
+                    if unreachable:
+                        return {
+                            "enabled": False,
+                            "mode": hunyuan3d_mode,
+                            "api_url": api_url,
+                            "message": f"""Hunyuan3D integration is enabled and pointed at {api_url}, but that server is not reachable: {unreachable}.
+                                LOCAL_API mode requires your own Hunyuan3D inference server accepting POST {api_url}/generate - blender-mcp does not provide or start one. To fix it:
+                                1. Start your Hunyuan3D API server, or
+                                2. In the 3D Viewport, find the BlenderMCP panel in the sidebar (press N if hidden) and set 'API URL' to where it is actually listening
+                                3. Restart the connection to Claude
+                                (Switch the mode to 'official api' instead if you intend to use Tencent Cloud with a SecretId/SecretKey.)"""
                         }
                 case _:
                     return {
