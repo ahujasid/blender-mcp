@@ -218,7 +218,8 @@ mcp = FastMCP(
     "BlenderMCP",
     lifespan=server_lifespan,
     host=MCP_HOST,
-    port=MCP_PORT
+    port=MCP_PORT,
+    stateless_http=True
 )
 
 # Resource endpoints
