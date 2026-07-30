@@ -1,0 +1,12 @@
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+.venv
+.git
+.DS_Store
+assets
+README.md
+TERMS_AND_CONDITIONS.md
