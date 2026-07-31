@@ -70,11 +70,10 @@ class BlenderMCPServer:
         return ""
 
     def _get_hyper3d_api_key(self):
-        # Let the free-trial button temporarily override persistent keys
-        # without overwriting user-saved private keys.
-        scene_value = getattr(bpy.context.scene, "blendermcp_hyper3d_api_key", "")
-        if scene_value == RODIN_FREE_TRIAL_KEY:
-            return scene_value
+        # A real, explicitly-configured key (in addon preferences, the scene
+        # field, or an env var) always takes priority over the free-trial
+        # placeholder -- otherwise clicking "Set Free Trial API Key" once
+        # would permanently lock out any real key entered afterward.
         return self._get_config_value(
             "blendermcp_hyper3d_api_key",
             "hyper3d_api_key",
@@ -1330,6 +1329,12 @@ class BlenderMCPServer:
                 return {"error": "Hyper3D API key is not given"}
             if images is None:
                 images = []
+            if any(not isinstance(img, (tuple, list)) or len(img) != 2 for img in images):
+                return {
+                    "error": "MAIN_SITE mode requires input_image_paths (uploaded file bytes), "
+                             "not input_image_urls. Switch Hyper3D Rodin's mode to FAL_AI in the "
+                             "BlenderMCP panel to use image URLs, or pass input_image_paths instead."
+                }
             """Call Rodin API, get the job uuid and subscription key"""
             files = [
                 *[("images", (f"{i:04d}{img_suffix}", base64.b64decode(img) if isinstance(img, str) else img)) for i, (img_suffix, img) in enumerate(images)],
