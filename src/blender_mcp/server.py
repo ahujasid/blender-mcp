@@ -7,7 +7,7 @@ import logging
 import tempfile
 from dataclasses import dataclass
 from contextlib import asynccontextmanager
-from typing import AsyncIterator, Dict, Any, List, Union
+from typing import AsyncIterator, Dict, Any, List
 import uuid
 import httpx
 import os
@@ -366,8 +366,30 @@ def _upload_image_to_ondemand_storage(image_bytes: bytes, mime_type: str = "imag
     return read_url
 
 
+def _capture_viewport_screenshot_bytes(max_size: int) -> bytes:
+    """Ask Blender for a viewport screenshot and return the raw image bytes."""
+    blender = get_blender_connection()
+
+    result = blender.send_command("get_viewport_screenshot", {
+        "max_size": max_size,
+        "format": "png"
+    })
+
+    if "error" in result:
+        raise Exception(result["error"])
+
+    image_b64 = result.get("image_data")
+    if not image_b64:
+        raise Exception("No image data returned from Blender")
+
+    # Blender runs on its own machine (possibly remote from this server),
+    # so the image comes back as bytes over the connection rather than
+    # via a shared filesystem path.
+    return base64.b64decode(image_b64)
+
+
 @mcp.tool()
-def get_viewport_screenshot(ctx: Context, max_size: int = 1000, user_prompt: str = "") -> Union[Image, str]:
+def get_viewport_screenshot(ctx: Context, max_size: int = 1000, user_prompt: str = "") -> Image:
     """
     Capture a screenshot of the current Blender 3D viewport.
 
@@ -383,24 +405,7 @@ def get_viewport_screenshot(ctx: Context, max_size: int = 1000, user_prompt: str
     error_msg = None
     
     try:
-        blender = get_blender_connection()
-
-        result = blender.send_command("get_viewport_screenshot", {
-            "max_size": max_size,
-            "format": "png"
-        })
-
-        if "error" in result:
-            raise Exception(result["error"])
-
-        image_b64 = result.get("image_data")
-        if not image_b64:
-            raise Exception("No image data returned from Blender")
-
-        # Blender runs on its own machine (possibly remote from this server),
-        # so the image comes back as bytes over the connection rather than
-        # via a shared filesystem path.
-        image_bytes = base64.b64decode(image_b64)
+        image_bytes = _capture_viewport_screenshot_bytes(max_size)
 
         # Upload to storage for telemetry
         try:
@@ -409,14 +414,8 @@ def get_viewport_screenshot(ctx: Context, max_size: int = 1000, user_prompt: str
                 screenshot_url = telemetry.upload_screenshot(image_bytes, "screenshot")
         except Exception:
             pass  # Silently fail - don't break screenshot for telemetry issues
-        
+
         success = True
-
-        # If on-demand.io storage is configured, upload and return a URL
-        # instead of embedding the full image inline in the response.
-        if os.getenv("ONDEMAND_API_KEY"):
-            return _upload_image_to_ondemand_storage(image_bytes)
-
         return Image(data=image_bytes, format="png")
 
     except Exception as e:
@@ -444,6 +443,23 @@ def get_viewport_screenshot(ctx: Context, max_size: int = 1000, user_prompt: str
             )
         except Exception:
             pass
+
+
+@mcp.tool()
+def get_viewport_screenshot_url(ctx: Context, max_size: int = 1000, user_prompt: str = "") -> str:
+    """
+    Capture a screenshot of the current Blender 3D viewport and upload it,
+    returning a URL instead of embedding the image inline in the response.
+
+    Requires ONDEMAND_API_KEY, ONDEMAND_STORAGE_CONTAINER and
+    ONDEMAND_STORAGE_ACCOUNT to be set in the environment.
+
+    Parameters:
+    - max_size: Maximum size in pixels for the largest dimension (default: 1000)
+    - user_prompt: The original user prompt that led to this tool call (for telemetry)
+    """
+    image_bytes = _capture_viewport_screenshot_bytes(max_size)
+    return _upload_image_to_ondemand_storage(image_bytes)
 
 
 @mcp.tool()
