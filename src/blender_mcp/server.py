@@ -7,7 +7,9 @@ import logging
 import tempfile
 from dataclasses import dataclass
 from contextlib import asynccontextmanager
-from typing import AsyncIterator, Dict, Any, List
+from typing import AsyncIterator, Dict, Any, List, Union
+import uuid
+import httpx
 import os
 import sys
 from pathlib import Path
@@ -301,8 +303,71 @@ def get_object_info(ctx: Context, object_name: str, user_prompt: str = "") -> st
         logger.error(f"Error getting object info from Blender: {str(e)}")
         return f"Error getting object info: {str(e)}"
 
+def _upload_image_to_ondemand_storage(image_bytes: bytes, mime_type: str = "image/png", ext: str = "png") -> str:
+    """Upload an image via on-demand.io's storage adapter and return a public read URL.
+
+    Requires ONDEMAND_API_KEY, ONDEMAND_STORAGE_CONTAINER and ONDEMAND_STORAGE_ACCOUNT
+    to be set. ONDEMAND_COMPANY_ID is optional.
+    """
+    api_key = os.getenv("ONDEMAND_API_KEY")
+    container = os.getenv("ONDEMAND_STORAGE_CONTAINER")
+    account = os.getenv("ONDEMAND_STORAGE_ACCOUNT")
+    if not api_key or not container or not account:
+        raise Exception(
+            "ONDEMAND_API_KEY, ONDEMAND_STORAGE_CONTAINER and ONDEMAND_STORAGE_ACCOUNT must all be set"
+        )
+
+    company_id = os.getenv("ONDEMAND_COMPANY_ID")
+    file_name = f"{uuid.uuid4().hex}.{ext}"
+    folder_path = f"{company_id}/agents" if company_id else "agents"
+
+    headers = {"Content-Type": "application/json", "apikey": api_key}
+    if company_id:
+        headers["x-company-id"] = company_id
+
+    write_resp = httpx.post(
+        "https://gateway-dev.on-demand.io/storage/v1/public/url/generate/write",
+        json={
+            "cloudProvider": "AZURE",
+            "folderPath": folder_path,
+            "fileName": file_name,
+            "fileContainer": container,
+            "fileAccount": account,
+        },
+        headers=headers,
+        timeout=15.0,
+    )
+    write_resp.raise_for_status()
+    write_data = write_resp.json()
+    upload_url = write_data.get("url") or write_data.get("fileUrl") or write_data.get("signedUrl")
+    if not upload_url:
+        raise Exception("Storage adapter did not return an upload URL")
+
+    put_resp = httpx.put(
+        upload_url,
+        content=image_bytes,
+        headers={"Content-Type": mime_type, "x-ms-blob-type": "BlockBlob"},
+        timeout=30.0,
+    )
+    put_resp.raise_for_status()
+
+    read_resp = httpx.post(
+        "https://gateway-dev.on-demand.io/storage/v1/public/url/generate/refresh",
+        json={"signedUrl": write_data.get("fileUrl")},
+        headers=headers,
+        timeout=15.0,
+    )
+    read_resp.raise_for_status()
+    read_data = read_resp.json()
+    read_url = read_data.get("url") or read_data.get("refreshedUrl")
+    if not read_url:
+        raise Exception("Storage adapter did not return a read URL")
+
+    return read_url
+
+
 @mcp.tool()
-def get_viewport_screenshot(ctx: Context, max_size: int = 1000, user_prompt: str = "") -> Image:
+def get_viewport_screenshot(ctx: Context, max_size: int = 1000, user_prompt: str = "") -> Union[Image, str]:
     """
     Capture a screenshot of the current Blender 3D viewport.
 
@@ -346,8 +411,14 @@ def get_viewport_screenshot(ctx: Context, max_size: int = 1000, user_prompt: str
             pass  # Silently fail - don't break screenshot for telemetry issues
         
         success = True
+
+        # If on-demand.io storage is configured, upload and return a URL
+        # instead of embedding the full image inline in the response.
+        if os.getenv("ONDEMAND_API_KEY"):
+            return _upload_image_to_ondemand_storage(image_bytes)
+
         return Image(data=image_bytes, format="png")
-        
+
     except Exception as e:
         error_msg = str(e)
         logger.error(f"Error capturing screenshot: {str(e)}")
