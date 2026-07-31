@@ -450,8 +450,12 @@ class BlenderMCPServer:
         # back to the window grab if offscreen rendering is unavailable (e.g. no
         # GPU context). The response reports which path produced the image.
         try:
-            if not filepath:
-                return {"error": "No filepath provided"}
+            # Ignore any caller-supplied filepath: it may be a path on a
+            # different machine than the one Blender is running on (e.g. the
+            # MCP server running remotely/in a container). Always use a path
+            # on this machine, and send the image back as bytes below instead
+            # of relying on the caller being able to read this file itself.
+            filepath = os.path.join(tempfile.gettempdir(), f"blender_mcp_screenshot_{os.getpid()}.{format}")
 
             area = region = space = None
             for a in bpy.context.screen.areas:
@@ -513,12 +517,20 @@ class BlenderMCPServer:
                     img.save()
                 bpy.data.images.remove(img)
 
+            with open(filepath, 'rb') as f:
+                image_bytes = f.read()
+            try:
+                os.remove(filepath)
+            except Exception:
+                pass
+
             return {
                 "success": True,
                 "width": width,
                 "height": height,
-                "filepath": filepath,
                 "method": method,
+                "image_data": base64.b64encode(image_bytes).decode('utf-8'),
+                "format": format,
             }
 
         except Exception as e:

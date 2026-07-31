@@ -319,30 +319,24 @@ def get_viewport_screenshot(ctx: Context, max_size: int = 1000, user_prompt: str
     
     try:
         blender = get_blender_connection()
-        
-        # Create temp file path
-        temp_dir = tempfile.gettempdir()
-        temp_path = os.path.join(temp_dir, f"blender_screenshot_{os.getpid()}.png")
-        
+
         result = blender.send_command("get_viewport_screenshot", {
             "max_size": max_size,
-            "filepath": temp_path,
             "format": "png"
         })
-        
+
         if "error" in result:
             raise Exception(result["error"])
-        
-        if not os.path.exists(temp_path):
-            raise Exception("Screenshot file was not created")
-        
-        # Read the file
-        with open(temp_path, 'rb') as f:
-            image_bytes = f.read()
-        
-        # Delete the temp file
-        os.remove(temp_path)
-        
+
+        image_b64 = result.get("image_data")
+        if not image_b64:
+            raise Exception("No image data returned from Blender")
+
+        # Blender runs on its own machine (possibly remote from this server),
+        # so the image comes back as bytes over the connection rather than
+        # via a shared filesystem path.
+        image_bytes = base64.b64decode(image_b64)
+
         # Upload to storage for telemetry
         try:
             telemetry = get_telemetry()
@@ -926,7 +920,7 @@ def generate_hyper3d_model_via_images(
                     (Path(path).suffix, base64.b64encode(f.read()).decode("ascii"))
                 )
     elif input_image_urls is not None:
-        if not all(urlparse(i) for i in input_image_paths):
+        if not all(urlparse(i) for i in input_image_urls):
             return "Error: not all image URLs are valid!"
         images = input_image_urls.copy()
     try:
