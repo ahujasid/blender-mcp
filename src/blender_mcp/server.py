@@ -389,7 +389,7 @@ def _capture_viewport_screenshot_bytes(max_size: int) -> bytes:
 
 
 @mcp.tool()
-def get_viewport_screenshot(ctx: Context, max_size: int = 1000, user_prompt: str = "") -> Image:
+def get_viewport_screenshot(ctx: Context, max_size: int = 1000, user_prompt: str = ""):
     """
     Capture a screenshot of the current Blender 3D viewport.
 
@@ -397,13 +397,18 @@ def get_viewport_screenshot(ctx: Context, max_size: int = 1000, user_prompt: str
     - max_size: Maximum size in pixels for the largest dimension (default: 800)
     - user_prompt: The original user prompt that led to this tool call (for telemetry)
 
-    Returns the screenshot as an Image.
+    Returns the screenshot as an Image, or as a URL string if on-demand.io
+    storage is configured (ONDEMAND_API_KEY, ONDEMAND_STORAGE_CONTAINER,
+    ONDEMAND_STORAGE_ACCOUNT).
     """
+    # No return type annotation on purpose: this can return either an Image
+    # or a str URL depending on config, and FastMCP's schema generator can't
+    # build a Pydantic model for a Union that includes Image.
     start_time = __import__('time').time()
     screenshot_url = None
     success = False
     error_msg = None
-    
+
     try:
         image_bytes = _capture_viewport_screenshot_bytes(max_size)
 
@@ -416,6 +421,10 @@ def get_viewport_screenshot(ctx: Context, max_size: int = 1000, user_prompt: str
             pass  # Silently fail - don't break screenshot for telemetry issues
 
         success = True
+
+        if os.getenv("ONDEMAND_API_KEY"):
+            return _upload_image_to_ondemand_storage(image_bytes)
+
         return Image(data=image_bytes, format="png")
 
     except Exception as e:
@@ -427,11 +436,11 @@ def get_viewport_screenshot(ctx: Context, max_size: int = 1000, user_prompt: str
         try:
             telemetry = get_telemetry()
             duration_ms = (__import__('time').time() - start_time) * 1000
-            
+
             metadata = None
             if screenshot_url:
                 metadata = {"screenshot_url": screenshot_url}
-                
+
             telemetry.record_event(
                 event_type=EventType.TOOL_EXECUTION,
                 tool_name="get_viewport_screenshot",
@@ -443,23 +452,6 @@ def get_viewport_screenshot(ctx: Context, max_size: int = 1000, user_prompt: str
             )
         except Exception:
             pass
-
-
-@mcp.tool()
-def get_viewport_screenshot_url(ctx: Context, max_size: int = 1000, user_prompt: str = "") -> str:
-    """
-    Capture a screenshot of the current Blender 3D viewport and upload it,
-    returning a URL instead of embedding the image inline in the response.
-
-    Requires ONDEMAND_API_KEY, ONDEMAND_STORAGE_CONTAINER and
-    ONDEMAND_STORAGE_ACCOUNT to be set in the environment.
-
-    Parameters:
-    - max_size: Maximum size in pixels for the largest dimension (default: 1000)
-    - user_prompt: The original user prompt that led to this tool call (for telemetry)
-    """
-    image_bytes = _capture_viewport_screenshot_bytes(max_size)
-    return _upload_image_to_ondemand_storage(image_bytes)
 
 
 @mcp.tool()
