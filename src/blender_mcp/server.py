@@ -5,7 +5,8 @@ import json
 import asyncio
 import logging
 import tempfile
-from dataclasses import dataclass
+import threading
+from dataclasses import dataclass, field
 from contextlib import asynccontextmanager
 from typing import AsyncIterator, Dict, Any, List
 import os
@@ -32,7 +33,11 @@ class BlenderConnection:
     host: str
     port: int
     sock: socket.socket = None  # Changed from 'socket' to 'sock' to avoid naming conflict
-    
+    # Serializes send+receive so two commands can never interleave on one socket.
+    # Without this, a second command's response can be read as the first's, and
+    # the stream stays desynced until the 180s timeout fires.
+    _lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
+
     def connect(self) -> bool:
         """Connect to the Blender addon socket server"""
         if self.sock:
@@ -116,14 +121,21 @@ class BlenderConnection:
 
     def send_command(self, command_type: str, params: Dict[str, Any] = None) -> Dict[str, Any]:
         """Send a command to Blender and return the response"""
+        # Hold the lock across send+receive: the response is matched to the
+        # command purely by ordering on the stream, so overlapping calls would
+        # hand each other's responses back.
+        with self._lock:
+            return self._send_command_locked(command_type, params)
+
+    def _send_command_locked(self, command_type: str, params: Dict[str, Any] = None) -> Dict[str, Any]:
         if not self.sock and not self.connect():
             raise ConnectionError("Not connected to Blender")
-        
+
         command = {
             "type": command_type,
             "params": params or {}
         }
-        
+
         try:
             # Log the command being sent
             logger.info(f"Sending command: {command_type} with params: {params}")
@@ -215,29 +227,18 @@ mcp = FastMCP(
 
 # Global connection for resources (since resources can't access context)
 _blender_connection = None
-_polyhaven_enabled = False  # Add this global variable
 
 def get_blender_connection():
     """Get or create a persistent Blender connection"""
-    global _blender_connection, _polyhaven_enabled  # Add _polyhaven_enabled to globals
-    
-    # If we have an existing connection, check if it's still valid
-    if _blender_connection is not None:
-        try:
-            # First check if PolyHaven is enabled by sending a ping command
-            result = _blender_connection.send_command("get_polyhaven_status")
-            # Store the PolyHaven status globally
-            _polyhaven_enabled = result.get("enabled", False)
-            return _blender_connection
-        except Exception as e:
-            # Connection is dead, close it and create a new one
-            logger.warning(f"Existing connection is no longer valid: {str(e)}")
-            try:
-                _blender_connection.disconnect()
-            except:
-                pass
-            _blender_connection = None
-    
+    global _blender_connection
+
+    # Reuse the existing connection. We deliberately do NOT probe it with a
+    # command here: that put two commands on the wire for every tool call, and
+    # any overlap desynced the response stream until the socket timeout fired.
+    # A dead socket is detected by the next real command and reconnected then.
+    if _blender_connection is not None and _blender_connection.sock is not None:
+        return _blender_connection
+
     # Create a new connection if needed
     if _blender_connection is None:
         host = os.getenv("BLENDER_HOST", DEFAULT_HOST)
@@ -401,7 +402,8 @@ def get_polyhaven_categories(ctx: Context, asset_type: str = "hdris", user_promp
     """
     try:
         blender = get_blender_connection()
-        if not _polyhaven_enabled:
+        status = blender.send_command("get_polyhaven_status")
+        if not status.get("enabled", False):
             return "PolyHaven integration is disabled. Select it in the sidebar in BlenderMCP, then run it again."
         result = blender.send_command("get_polyhaven_categories", {"asset_type": asset_type})
         
