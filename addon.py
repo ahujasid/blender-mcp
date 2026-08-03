@@ -5,6 +5,7 @@ import bpy
 import mathutils
 import json
 import threading
+import signal
 import socket
 import time
 import requests
@@ -525,19 +526,126 @@ class BlenderMCPServer:
             return {"error": str(e)}
 
     def execute_code(self, code):
-        """Execute arbitrary Blender Python code"""
-        # This is powerful but potentially dangerous - use with caution
-        try:
-            # Create a local namespace for execution
-            namespace = {"bpy": bpy}
+        """Execute Blender Python code with security restrictions.
 
-            # Capture stdout during execution, and return it as result
-            capture_buffer = io.StringIO()
-            with redirect_stdout(capture_buffer):
-                exec(code, namespace)
+        Sandboxed execution restricts access to dangerous operations (filesystem,
+        network, subprocess) while preserving full bpy functionality for Blender
+        scene manipulation.
+        """
+        # --- Security: block dangerous code patterns -------------------------
+        _DANGEROUS_PATTERNS = [
+            # Module imports for system access
+            r'__import__\s*\(',
+            r'\bimport\s+(?:os|subprocess|shutil|socket|requests|urllib|http|ftplib|smtplib|ctypes|sys)\b',
+            r'\bfrom\s+(?:os|subprocess|shutil|socket|requests|urllib|http|ftplib|smtplib|ctypes|sys)\b',
+            # Direct dangerous function calls
+            r'\bos\s*\.\s*(?:system|popen|exec|spawn|remove|unlink|rmdir|rename|kill|getenv)\s*\(',
+            r'\bsubprocess\s*\.',
+            r'\bshutil\s*\.\s*(?:rmtree|copy|move)\s*\(',
+            # Sandbox escape primitives
+            r'__builtins__',
+            r'__globals__',
+            r'__class__',
+            r'__subclasses__',
+            r'__bases__',
+            r'__mro__',
+            r'__loader__',
+            r'__spec__',
+            r'__file__',
+            # Code injection / dynamic code compilation
+            r'\bexec\s*\(',
+            r'\beval\s*\(',
+            r'\bcompile\s*\(',
+            # Attribute access manipulation
+            r'\bgetattr\s*\(',
+            r'\bsetattr\s*\(',
+            r'\bdelattr\s*\(',
+            # File system access
+            r'\bopen\s*\(',
+            # Other dangerous operations
+            r'\bbreakpoint\s*\(',
+            r'\binput\s*\(',
+        ]
+
+        for pattern in _DANGEROUS_PATTERNS:
+            match = re.search(pattern, code)
+            if match:
+                raise Exception(
+                    f"Security violation: blocked dangerous pattern "
+                    f"'{match.group()}' in submitted code. "
+                    f"Only Blender (bpy) operations are allowed."
+                )
+
+        try:
+            # --- Security: restrict builtins ---------------------------------
+            # Provide only safe builtins needed for typical Blender scripting
+            # (math, iteration, type conversions). Deliberately excludes:
+            #   __import__, exec, eval, compile, open, getattr, setattr,
+            #   delattr, breakpoint, input, and all file/system functions.
+            _SAFE_BUILTINS = {
+                'True': True, 'False': False, 'None': None,
+                'abs': abs, 'all': all, 'any': any,
+                'bool': bool, 'dict': dict, 'dir': dir,
+                'enumerate': enumerate, 'float': float,
+                'format': format, 'frozenset': frozenset,
+                'hex': hex, 'int': int, 'isinstance': isinstance,
+                'issubclass': issubclass, 'iter': iter,
+                'len': len, 'list': list, 'map': map,
+                'max': max, 'min': min, 'next': next,
+                'object': object, 'oct': oct, 'ord': ord,
+                'pow': pow, 'print': print, 'property': property,
+                'range': range, 'repr': repr, 'reversed': reversed,
+                'round': round, 'set': set, 'slice': slice,
+                'sorted': sorted, 'staticmethod': staticmethod,
+                'str': str, 'sum': sum, 'super': super,
+                'tuple': tuple, 'type': type, 'zip': zip,
+                # Common exception types for try/except blocks
+                'ValueError': ValueError, 'TypeError': TypeError,
+                'IndexError': IndexError, 'KeyError': KeyError,
+                'StopIteration': StopIteration, 'Exception': Exception,
+            }
+
+            # Create restricted namespace — bpy is available, builtins are sandboxed
+            namespace = {"bpy": bpy, "__builtins__": _SAFE_BUILTINS}
+
+            # --- Security: execution timeout ---------------------------------
+            # Prevent infinite loops or hanging code (Unix only)
+            _TIMEOUT_SECONDS = 30
+            timed_out = False
+
+            def _timeout_handler(signum, frame):
+                nonlocal timed_out
+                timed_out = True
+                raise TimeoutError("Code execution exceeded time limit")
+
+            old_handler = None
+            try:
+                old_handler = signal.signal(signal.SIGALRM, _timeout_handler)
+                signal.alarm(_TIMEOUT_SECONDS)
+            except (OSError, AttributeError, ValueError):
+                # SIGALRM unavailable (Windows) or not in main thread
+                pass
+
+            try:
+                # Capture stdout during execution and return it as result
+                capture_buffer = io.StringIO()
+                with redirect_stdout(capture_buffer):
+                    exec(code, namespace)
+            finally:
+                try:
+                    signal.alarm(0)
+                    if old_handler is not None:
+                        signal.signal(signal.SIGALRM, old_handler)
+                except (OSError, AttributeError, ValueError):
+                    pass
+
+            if timed_out:
+                raise TimeoutError("Code execution exceeded time limit")
 
             captured_output = capture_buffer.getvalue()
             return {"executed": True, "result": captured_output}
+        except TimeoutError:
+            raise Exception("Code execution timed out (exceeded 30 seconds)")
         except Exception as e:
             raise Exception(f"Code execution error: {str(e)}")
 
