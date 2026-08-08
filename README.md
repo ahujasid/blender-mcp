@@ -1,17 +1,18 @@
 <div align="center">
 
-<img src="https://raw.githubusercontent.com/MCPBlender/blender-mcp/main/assets/addon-instructions.png" alt="BlenderMCP" width="700">
+<img src="https://raw.githubusercontent.com/MCPBlender/.github/main/assets/logo.png" width="80" alt="MCPBlender">
 
 <h1>BlenderMCP</h1>
 
-<p><strong>Connect Blender to any LLM through the Model Context Protocol</strong></p>
+<p><strong>Control Blender 3D with Claude AI — in real time, through natural language</strong></p>
 
 <p>
-  <a href="https://pepy.tech/projects/blender-mcp"><img src="https://static.pepy.tech/personalized-badge/blender-mcp?period=total&units=INTERNATIONAL_SYSTEM&left_color=111111&right_color=4CAF50&left_text=downloads" alt="PyPI Downloads"></a>
-  <a href="https://github.com/MCPBlender/blender-mcp/stargazers"><img src="https://img.shields.io/github/stars/MCPBlender/blender-mcp?style=flat&color=F5A623&label=stars" alt="Stars"></a>
+  <a href="https://pepy.tech/projects/blender-mcp"><img src="https://static.pepy.tech/personalized-badge/blender-mcp?period=total&units=INTERNATIONAL_SYSTEM&left_color=111111&right_color=4CAF50&left_text=installs" alt="Installs"></a>
+  <a href="https://github.com/MCPBlender/blender-mcp/stargazers"><img src="https://img.shields.io/github/stars/MCPBlender/blender-mcp?style=flat&color=F5A623&label=⭐%20stars" alt="Stars"></a>
   <a href="https://github.com/MCPBlender/blender-mcp/network/members"><img src="https://img.shields.io/github/forks/MCPBlender/blender-mcp?style=flat&color=4A90D9&label=forks" alt="Forks"></a>
-  <a href="https://github.com/MCPBlender/blender-mcp/blob/main/LICENSE"><img src="https://img.shields.io/github/license/MCPBlender/blender-mcp?style=flat&color=9B59B6" alt="MIT License"></a>
+  <a href="https://github.com/MCPBlender/blender-mcp/blob/main/LICENSE"><img src="https://img.shields.io/github/license/MCPBlender/blender-mcp?style=flat&color=9B59B6" alt="License"></a>
   <a href="https://discord.gg/SNqPn4TcKQ"><img src="https://img.shields.io/badge/Discord-Join-5865F2?style=flat&logo=discord&logoColor=white" alt="Discord"></a>
+  <a href="https://pypi.org/project/blender-mcp"><img src="https://img.shields.io/pypi/v/blender-mcp?style=flat&color=blue&label=PyPI" alt="PyPI"></a>
 </p>
 
 <p>
@@ -21,10 +22,11 @@
 </p>
 
 <p>
-  <a href="https://blendermcp.org/"><strong>Website</strong></a> ·
-  <a href="https://www.youtube.com/watch?v=lCyQ717DuzQ"><strong>Tutorial</strong></a> ·
-  <a href="https://discord.gg/SNqPn4TcKQ"><strong>Discord</strong></a> ·
-  <a href="https://github.com/MCPBlender/blender-mcp/releases"><strong>Changelog</strong></a>
+  <a href="https://blendermcp.org"><strong>🌐 Website</strong></a> ·
+  <a href="https://www.youtube.com/watch?v=lCyQ717DuzQ"><strong>📹 Full Tutorial</strong></a> ·
+  <a href="https://discord.gg/SNqPn4TcKQ"><strong>💬 Discord</strong></a> ·
+  <a href="https://github.com/MCPBlender/blender-mcp/wiki"><strong>📖 Wiki</strong></a> ·
+  <a href="https://github.com/MCPBlender/blender-mcp/releases"><strong>📋 Changelog</strong></a>
 </p>
 
 </div>
