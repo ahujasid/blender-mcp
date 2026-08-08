@@ -536,3 +536,19 @@ MIT — see [LICENSE](LICENSE).
 If this project helps your workflow, please star it!
 
 </div>
+
+---
+
+## Contributors
+
+<div align="center">
+
+Thanks to everyone who has contributed to this project!
+
+<a href="https://github.com/MCPBlender/blender-mcp/graphs/contributors">
+  <img src="https://contrib.rocks/image?repo=MCPBlender/blender-mcp&max=80&columns=12" alt="Contributors" />
+</a>
+
+<sub>Made with [contrib.rocks](https://contrib.rocks)</sub>
+
+</div>
