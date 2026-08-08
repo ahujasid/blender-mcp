@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="https://raw.githubusercontent.com/SerenityUiX/blender-mcp/main/assets/addon-instructions.png" alt="BlenderMCP" width="700">
+<img src="https://raw.githubusercontent.com/MCPBlender/blender-mcp/main/assets/addon-instructions.png" alt="BlenderMCP" width="700">
 
 <h1>BlenderMCP</h1>
 
@@ -8,9 +8,9 @@
 
 <p>
   <a href="https://pepy.tech/projects/blender-mcp"><img src="https://static.pepy.tech/personalized-badge/blender-mcp?period=total&units=INTERNATIONAL_SYSTEM&left_color=111111&right_color=4CAF50&left_text=downloads" alt="PyPI Downloads"></a>
-  <a href="https://github.com/SerenityUiX/blender-mcp/stargazers"><img src="https://img.shields.io/github/stars/SerenityUiX/blender-mcp?style=flat&color=F5A623&label=stars" alt="Stars"></a>
-  <a href="https://github.com/SerenityUiX/blender-mcp/network/members"><img src="https://img.shields.io/github/forks/SerenityUiX/blender-mcp?style=flat&color=4A90D9&label=forks" alt="Forks"></a>
-  <a href="https://github.com/SerenityUiX/blender-mcp/blob/main/LICENSE"><img src="https://img.shields.io/github/license/SerenityUiX/blender-mcp?style=flat&color=9B59B6" alt="MIT License"></a>
+  <a href="https://github.com/MCPBlender/blender-mcp/stargazers"><img src="https://img.shields.io/github/stars/MCPBlender/blender-mcp?style=flat&color=F5A623&label=stars" alt="Stars"></a>
+  <a href="https://github.com/MCPBlender/blender-mcp/network/members"><img src="https://img.shields.io/github/forks/MCPBlender/blender-mcp?style=flat&color=4A90D9&label=forks" alt="Forks"></a>
+  <a href="https://github.com/MCPBlender/blender-mcp/blob/main/LICENSE"><img src="https://img.shields.io/github/license/MCPBlender/blender-mcp?style=flat&color=9B59B6" alt="MIT License"></a>
   <a href="https://discord.gg/SNqPn4TcKQ"><img src="https://img.shields.io/badge/Discord-Join-5865F2?style=flat&logo=discord&logoColor=white" alt="Discord"></a>
 </p>
 
@@ -24,7 +24,7 @@
   <a href="https://blendermcp.org/"><strong>Website</strong></a> ·
   <a href="https://www.youtube.com/watch?v=lCyQ717DuzQ"><strong>Tutorial</strong></a> ·
   <a href="https://discord.gg/SNqPn4TcKQ"><strong>Discord</strong></a> ·
-  <a href="https://github.com/SerenityUiX/blender-mcp/releases"><strong>Changelog</strong></a>
+  <a href="https://github.com/MCPBlender/blender-mcp/releases"><strong>Changelog</strong></a>
 </p>
 
 </div>
@@ -71,7 +71,7 @@
 
 ## Whats New
 
-> Full changelog: [Releases](https://github.com/SerenityUiX/blender-mcp/releases)
+> Full changelog: [Releases](https://github.com/MCPBlender/blender-mcp/releases)
 
 - Hunyuan3D 3D model generation
 - Viewport screenshot for scene understanding
@@ -316,7 +316,7 @@ claude mcp add blender uvx blender-mcp
 
 ### Blender Addon
 
-1. Download [`addon.py`](https://github.com/SerenityUiX/blender-mcp/raw/main/addon.py)
+1. Download [`addon.py`](https://github.com/MCPBlender/blender-mcp/raw/main/addon.py)
 2. In Blender: **Edit > Preferences > Add-ons > Install...**
 3. Select `addon.py`
 4. Enable **"Interface: Blender MCP"**
@@ -327,7 +327,7 @@ claude mcp add blender uvx blender-mcp
 
 ### Starting the Connection
 
-<img src="https://raw.githubusercontent.com/SerenityUiX/blender-mcp/main/assets/addon-instructions.png" alt="BlenderMCP sidebar" width="600">
+<img src="https://raw.githubusercontent.com/MCPBlender/blender-mcp/main/assets/addon-instructions.png" alt="BlenderMCP sidebar" width="600">
 
 1. Open the **3D View sidebar** (press `N` if not visible)
 2. Go to the **BlenderMCP** tab
@@ -336,7 +336,7 @@ claude mcp add blender uvx blender-mcp
 
 When connected, Claude shows a hammer icon confirming Blender tools are active:
 
-<img src="https://raw.githubusercontent.com/SerenityUiX/blender-mcp/main/assets/hammer-icon.png" alt="Hammer icon in Claude" width="300">
+<img src="https://raw.githubusercontent.com/MCPBlender/blender-mcp/main/assets/hammer-icon.png" alt="Hammer icon in Claude" width="300">
 
 ---
 
@@ -502,8 +502,8 @@ Or in config: `"env": { "DISABLE_TELEMETRY": "true" }`
 | 💬 Discord | [Join the community](https://discord.gg/SNqPn4TcKQ) |
 | 📝 Feedback | [Share your thoughts](https://bit.ly/blender-mcp-form) |
 | 📞 Call | [Schedule a call](https://bit.ly/blender-mcp-call) — credited in the project |
-| 🐛 Issues | [GitHub Issues](https://github.com/SerenityUiX/blender-mcp/issues) |
-| 💖 Sponsor | [Support BlenderMCP](https://github.com/sponsors/SerenityUiX) |
+| 🐛 Issues | [GitHub Issues](https://github.com/MCPBlender/blender-mcp/issues) |
+| 💖 Sponsor | [Support BlenderMCP](https://github.com/sponsors/MCPBlender) |
 
 </div>
 
