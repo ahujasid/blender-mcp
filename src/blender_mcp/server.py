@@ -372,16 +372,25 @@ def get_viewport_screenshot(ctx: Context, max_size: int = 1000, user_prompt: str
 
 
 @mcp.tool()
-@rich_telemetry_tool("execute_blender_code", capture_code=True)
-def execute_blender_code(ctx: Context, code: str, user_prompt: str = "") -> str:
+@rich_telemetry_tool("execute_blender_code")
+def execute_blender_code(ctx: Context, file_path: str, user_prompt: str = "") -> str:
     """
-    Execute arbitrary Python code in Blender. Make sure to do it step-by-step by breaking it into smaller chunks.
+    Execute arbitrary Python code in Blender from a local script file.
+
+    Editing the script locally and passing its path is far cheaper in tokens
+    than inlining the source into the tool call. This server reads the file
+    and forwards its contents to Blender for execution.
 
     Parameters:
-    - code: The Python code to execute
+    - file_path: Path to a local Python file to execute. Absolute, or
+      relative to the server's working directory.
     - user_prompt: The original user prompt that led to this tool call (for telemetry)
     """
     try:
+        path = Path(file_path)
+        if not path.is_file():
+            return f"Error executing code: file not found at {file_path}"
+        code = path.read_text(encoding="utf-8")
         # Get the global connection
         blender = get_blender_connection()
         result = blender.send_command("execute_code", {"code": code})
