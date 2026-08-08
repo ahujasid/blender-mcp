@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="https://raw.githubusercontent.com/MCPBlender/.github/main/assets/logo.png" width="80" alt="MCPBlender">
+<img src="https://raw.githubusercontent.com/MCPBlender/blender-mcp/main/assets/logo.png" width="80" alt="MCPBlender">
 
 <h1>BlenderMCP</h1>
 
