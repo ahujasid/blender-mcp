@@ -529,6 +529,17 @@ MIT — see [LICENSE](LICENSE).
 
 ---
 
+## Star History
+
+<div align="center">
+
+[![Star History Chart](https://api.star-history.com/svg?repos=MCPBlender/blender-mcp&type=Date)](https://star-history.com/#MCPBlender/blender-mcp&Date)
+
+</div>
+
+
+---
+
 <div align="center">
 
 [MCPBlender](https://github.com/MCPBlender) · [blendermcp.org](https://blendermcp.org) · Not affiliated with the Blender Foundation
