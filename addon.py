@@ -123,6 +123,57 @@ def _send_framed_json(sock, payload):
     sock.sendall(struct.pack(_FRAME_HDR, len(body)) + body)
 
 
+def _recv_legacy_json(sock, buffer_size=8192):
+    """Pre-#292 wire format: no length prefix, just raw JSON — read chunks
+    until what we have parses. This is what blender_mcp.server on PyPI
+    (<= 1.8.0 at time of writing) still sends, so a client that hasn't been
+    republished since #292 landed on `main` would otherwise get every command
+    rejected with 'invalid frame length' the instant it connects."""
+    chunks = []
+    while True:
+        chunk = sock.recv(buffer_size)
+        if not chunk:
+            if not chunks:
+                raise ConnectionError("client closed")
+            break
+        chunks.append(chunk)
+        try:
+            return json.loads(b"".join(chunks).decode("utf-8"))
+        except json.JSONDecodeError:
+            continue
+    return json.loads(b"".join(chunks).decode("utf-8"))
+
+
+def _recv_command(sock):
+    """Detect and read either wire format on a per-connection basis.
+
+    A length-prefixed frame's 4-byte header is a big-endian uint32 byte
+    count. Real commands are far under 16 MiB, so that header's first byte
+    is always 0x00 for the new protocol. A legacy client instead writes raw
+    JSON, whose first byte is one of '{', '[', or whitespace — never 0x00.
+    Peeking one byte (without consuming it) is enough to tell them apart
+    before committing to a parser, so both protocols can be served from the
+    same socket without a config flag or a second port.
+
+    Returns (command, is_legacy) — the caller replies in the same wire
+    format the client just used.
+    """
+    peek = sock.recv(1, socket.MSG_PEEK)
+    if not peek:
+        raise ConnectionError("client closed")
+    is_legacy = peek[0] != 0x00
+    if is_legacy:
+        return _recv_legacy_json(sock), True
+    return _recv_framed_json(sock), False
+
+
+def _send_command(sock, payload, is_legacy):
+    if is_legacy:
+        sock.sendall(json.dumps(payload).encode("utf-8"))
+    else:
+        _send_framed_json(sock, payload)
+
+
 def get_blendermcp_addon_preferences(context=None):
     """Get add-on preferences object if available."""
     if context is None:
@@ -305,32 +356,37 @@ class BlenderMCPServer:
         print("Server thread stopped")
 
     def _handle_client(self, client):
-        """Handle connected client (length-prefixed JSON frames)."""
+        """Handle a connected client. Speaks length-prefixed JSON frames
+        (current protocol, see #292) or raw JSON (pre-#292, still what PyPI's
+        published blender_mcp client sends as of this writing) — whichever
+        the client used first, for the life of the connection. See
+        _recv_command for how that's detected."""
         print("Client handler started")
         client.settimeout(None)
 
         try:
             while self.running:
                 try:
-                    command = _recv_framed_json(client)
+                    command, is_legacy = _recv_command(client)
                 except Exception as e:
                     print(f"Client disconnected or bad frame: {e}")
                     break
 
-                def execute_wrapper(cmd=command):
+                def execute_wrapper(cmd=command, legacy=is_legacy):
                     try:
                         response = self.execute_command(cmd)
                         try:
-                            _send_framed_json(client, response)
+                            _send_command(client, response, legacy)
                         except Exception:
                             print("Failed to send response - client disconnected")
                     except Exception as e:
                         print(f"Error executing command: {str(e)}")
                         traceback.print_exc()
                         try:
-                            _send_framed_json(
+                            _send_command(
                                 client,
                                 {"status": "error", "message": str(e)},
+                                legacy,
                             )
                         except Exception:
                             pass
