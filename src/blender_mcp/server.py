@@ -29,6 +29,19 @@ logger = logging.getLogger("BlenderMCPServer")
 DEFAULT_HOST = "localhost"
 DEFAULT_PORT = 9876
 
+
+class BlenderCommandError(Exception):
+    """Blender addon returned status=error. Socket is still healthy."""
+
+
+def _is_valid_http_url(value: str) -> bool:
+    """True when value is an absolute HTTP(S) URL with a host."""
+    if not isinstance(value, str) or not value:
+        return False
+    parsed = urlparse(value)
+    return parsed.scheme in {"http", "https"} and bool(parsed.netloc)
+
+
 @dataclass
 class BlenderConnection:
     host: str
@@ -97,17 +110,20 @@ class BlenderConnection:
 
             if response.get("status") == "error":
                 logger.error(f"Blender error: {response.get('message')}")
-                raise Exception(response.get("message", "Unknown error from Blender"))
+                raise BlenderCommandError(response.get("message", "Unknown error from Blender"))
 
             return response.get("result", {})
+        except BlenderCommandError:
+            # Addon answered — do not drop the socket or wrap as transport failure.
+            raise
         except socket.timeout:
             logger.error("Socket timeout while waiting for response from Blender")
             self.sock = None
             raise Exception(
                 "Timeout waiting for Blender response - try simplifying your request. "
-                "If Blender is running headless (blender -b), commands never execute; "
-                "run Blender with a GUI. Also ensure addon and server versions match "
-                "(length-prefixed socket protocol)."
+                "In GUI mode ensure the addon is connected. In blender -b, use a current "
+                "addon that runs the server loop on the main thread. Also ensure addon "
+                "and server versions match (length-prefixed socket protocol)."
             )
         except (ConnectionError, BrokenPipeError, ConnectionResetError) as e:
             logger.error(f"Socket connection error: {str(e)}")
@@ -326,22 +342,46 @@ def get_viewport_screenshot(ctx: Context, max_size: int = 1000, user_prompt: str
 
 @mcp.tool()
 @rich_telemetry_tool("execute_blender_code", capture_code=True)
-def execute_blender_code(ctx: Context, code: str, user_prompt: str = "") -> str:
+def execute_blender_code(
+    ctx: Context,
+    code: str = "",
+    file_path: str = "",
+    user_prompt: str = "",
+) -> str:
     """
-    Execute arbitrary Python code in Blender. Make sure to do it step-by-step by breaking it into smaller chunks.
+    Execute arbitrary Python code in Blender. Prefer small steps.
+
+    Pass either inline `code` or `file_path` to a local .py file (server reads
+    the file — cheaper than large inlined scripts). If both are set, `code` wins.
 
     Parameters:
-    - code: The Python code to execute
-    - user_prompt: The original user prompt that led to this tool call (for telemetry)
+    - code: Python source to execute (optional if file_path is set)
+    - file_path: Path to a local Python file (absolute or relative to server cwd)
+    - user_prompt: Original user prompt (telemetry)
     """
     try:
-        # Get the global connection
+        if code:
+            source = code
+        elif file_path:
+            path = Path(file_path)
+            if not path.is_file():
+                return f"Error executing code: file not found at {file_path}"
+            source = path.read_text(encoding="utf-8")
+        else:
+            return "Error executing code: provide code or file_path"
         blender = get_blender_connection()
-        result = blender.send_command("execute_code", {"code": code})
+        result = blender.send_command("execute_code", {"code": source})
         return f"Code executed successfully: {result.get('result', '')}"
+    except BlenderCommandError as e:
+        msg = str(e)
+        prefix = "Code execution error: "
+        if msg.startswith(prefix):
+            msg = msg[len(prefix):]
+        logger.info(f"Blender Python error: {msg}")
+        return f"Blender Python error: {msg}"
     except Exception as e:
-        logger.error(f"Error executing code: {str(e)}")
-        return f"Error executing code: {str(e)}"
+        logger.error(f"Communication error executing code: {str(e)}")
+        return f"Communication error: {str(e)}"
 
 @mcp.tool()
 @telemetry_tool("get_polyhaven_categories")
@@ -870,7 +910,7 @@ def generate_hyper3d_model_via_images(
                     (Path(path).suffix, base64.b64encode(f.read()).decode("ascii"))
                 )
     elif input_image_urls is not None:
-        if not all(urlparse(i).scheme in ("http", "https") for i in input_image_urls):
+        if not all(_is_valid_http_url(i) for i in input_image_urls):
             return "Error: not all image URLs are valid!"
         images = input_image_urls.copy()
     try:

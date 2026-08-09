@@ -99,6 +99,30 @@
 1. Download the latest `addon.py` and replace it in Blender
 2. Remove and re-add the MCP server in your client config
 
+### Codex
+
+Add to `~/.codex/config.toml` (or `%USERPROFILE%\.codex\config.toml` on Windows):
+
+```toml
+[mcp_servers.blender]
+command = "uvx"
+args = ["blender-mcp"]
+```
+
+On Windows, if `uvx` is missing from PATH, set `command` to the full `uvx.exe` path.
+
+### Hunyuan3D
+
+| Mode | What you need |
+|------|----------------|
+| **official api** | Tencent Cloud SecretId + SecretKey (billed per job) |
+| **local api** (default) | **Your own** Hunyuan3D inference server — BlenderMCP only POSTs to `{API URL}/generate` and imports the GLB. Default URL is `http://localhost:8081`. Nothing is bundled or started for you. |
+
+### Remote Blender host
+
+1. In the BlenderMCP panel, enable **Listen on all interfaces (0.0.0.0)** only on a trusted network (no auth on the socket).
+2. Point the MCP client at Blender with `BLENDER_HOST` / `BLENDER_PORT`.
+
 ---
 
 ## Quick Start

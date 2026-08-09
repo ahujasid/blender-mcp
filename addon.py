@@ -14,12 +14,67 @@ import traceback
 import os
 import shutil
 import zipfile
+import ipaddress
 from bpy.props import IntProperty, BoolProperty
 import io
 from datetime import datetime
 import hashlib, hmac, base64
 import os.path as osp
 from contextlib import redirect_stdout, suppress
+from urllib.parse import urlparse
+
+ALLOWED_IMAGE_EXTENSIONS = {
+    ".png", ".jpg", ".jpeg", ".gif", ".bmp", ".tiff", ".tif",
+    ".webp", ".heic", ".heif",
+}
+MAX_LOCAL_IMAGE_BYTES = 10 * 1024 * 1024
+
+
+def validate_image_path(path: str):
+    """Return None if path is a safe local image, else an error string."""
+    resolved = os.path.realpath(path)
+    ext = os.path.splitext(resolved)[1].lower()
+    if ext not in ALLOWED_IMAGE_EXTENSIONS:
+        return (
+            f"Invalid image file type '{ext}'. "
+            f"Allowed: {', '.join(sorted(ALLOWED_IMAGE_EXTENSIONS))}"
+        )
+    if not os.path.isfile(resolved):
+        return f"File not found: {resolved}"
+    try:
+        size = os.path.getsize(resolved)
+    except OSError as e:
+        return f"Cannot read file size: {e}"
+    if size > MAX_LOCAL_IMAGE_BYTES:
+        return (
+            f"Image file too large ({size} bytes). "
+            f"Maximum is {MAX_LOCAL_IMAGE_BYTES} bytes"
+        )
+    return None
+
+
+def validate_url_not_internal(url: str):
+    """Block private/loopback targets for outbound image fetches (SSRF).
+
+    Returns (None, [ip, ...]) if ok, or (error_message, None) if blocked.
+    """
+    parsed = urlparse(url)
+    hostname = parsed.hostname
+    if not hostname:
+        return ("URL has no hostname", None)
+    try:
+        addr_infos = socket.getaddrinfo(hostname, parsed.port or 443)
+    except socket.gaierror:
+        return (f"Could not resolve hostname: {hostname}", None)
+    validated_ips = []
+    for _family, _type, _proto, _canon, sockaddr in addr_infos:
+        ip = ipaddress.ip_address(sockaddr[0])
+        if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved:
+            return (f"URL resolves to a non-public address ({ip}), request blocked", None)
+        validated_ips.append(sockaddr[0])
+    if not validated_ips:
+        return ("Could not resolve hostname to an IP", None)
+    return (None, validated_ips)
 
 bl_info = {
     "name": "Blender MCP",
@@ -163,11 +218,6 @@ class BlenderMCPServer:
         ) or "http://localhost:8081"
 
     def start(self):
-        if bpy.app.background:
-            print("BlenderMCP: cannot start server in background mode (blender -b) - commands would never execute\n"
-                  "BlenderMCP: run Blender with a GUI, or use a virtual display: xvfb-run -a blender")
-            return
-
         if self.running:
             print("Server is already running")
             return
@@ -181,12 +231,17 @@ class BlenderMCPServer:
             self.socket.bind((self.host, self.port))
             self.socket.listen(1)
 
-            # Start server thread
-            self.server_thread = threading.Thread(target=self._server_loop)
-            self.server_thread.daemon = True
-            self.server_thread.start()
-
             print(f"BlenderMCP server started on {self.host}:{self.port}")
+
+            # blender -b: no event loop / timers — run accept+handle on main thread.
+            # GUI: keep threaded accept so the UI stays responsive.
+            if bpy.app.background:
+                print("BlenderMCP: background mode — blocking server loop on main thread")
+                self._server_loop()
+            else:
+                self.server_thread = threading.Thread(target=self._server_loop)
+                self.server_thread.daemon = True
+                self.server_thread.start()
         except Exception as e:
             print(f"Failed to start server: {str(e)}")
             self.stop()
@@ -225,13 +280,16 @@ class BlenderMCPServer:
                     client, address = self.socket.accept()
                     print(f"Connected to client: {address}")
 
-                    # Handle client in a separate thread
-                    client_thread = threading.Thread(
-                        target=self._handle_client,
-                        args=(client,)
-                    )
-                    client_thread.daemon = True
-                    client_thread.start()
+                    # Background: handle serially on main thread (API thread-safety).
+                    if bpy.app.background:
+                        self._handle_client(client)
+                    else:
+                        client_thread = threading.Thread(
+                            target=self._handle_client,
+                            args=(client,)
+                        )
+                        client_thread.daemon = True
+                        client_thread.start()
                 except socket.timeout:
                     # Just check running condition
                     continue
@@ -278,7 +336,11 @@ class BlenderMCPServer:
                             pass
                     return None
 
-                bpy.app.timers.register(execute_wrapper, first_interval=0.0)
+                # timers never fire under blender -b; run inline instead.
+                if bpy.app.background:
+                    execute_wrapper()
+                else:
+                    bpy.app.timers.register(execute_wrapper, first_interval=0.0)
         except Exception as e:
             print(f"Error in client handler: {str(e)}")
         finally:
@@ -2088,6 +2150,23 @@ class BlenderMCPServer:
     #endregion
 
     #region Hunyuan3D
+    @staticmethod
+    def probe_hunyuan3d_local_api(api_url, timeout=1.5):
+        """TCP reachability check for LOCAL_API. None if up, else reason string."""
+        parsed = urlparse(api_url if "://" in api_url else f"http://{api_url}")
+        host = parsed.hostname
+        if not host:
+            return f"could not parse a host out of {api_url!r}"
+        try:
+            port = parsed.port or (443 if parsed.scheme == "https" else 80)
+        except ValueError:
+            return f"invalid port in {api_url!r}"
+        try:
+            with socket.create_connection((host, port), timeout=timeout):
+                return None
+        except OSError as e:
+            return f"nothing is accepting connections at {host}:{port} ({e})"
+
     def get_hunyuan3d_status(self):
         """Get the current status of Hunyuan3D integration"""
         enabled = bpy.context.scene.blendermcp_use_hunyuan3d
@@ -2106,7 +2185,7 @@ class BlenderMCPServer:
                                 1. In the 3D Viewport, find the BlenderMCP panel in the sidebar (press N if hidden)
                                 2. Keep the 'Use Tencent Hunyuan 3D model generation' checkbox checked
                                 3. Choose the right platform and fill in the SecretId and SecretKey
-                                4. Restart the connection to Claude"""
+                                4. Restart the connection to your MCP client"""
                         }
                 case "LOCAL_API":
                     if not api_url:
@@ -2117,7 +2196,19 @@ class BlenderMCPServer:
                                 1. In the 3D Viewport, find the BlenderMCP panel in the sidebar (press N if hidden)
                                 2. Keep the 'Use Tencent Hunyuan 3D model generation' checkbox checked
                                 3. Choose the right platform and fill in the API URL
-                                4. Restart the connection to Claude"""
+                                4. Restart the connection to your MCP client"""
+                        }
+                    unreachable = self.probe_hunyuan3d_local_api(api_url)
+                    if unreachable:
+                        return {
+                            "enabled": False,
+                            "mode": hunyuan3d_mode,
+                            "api_url": api_url,
+                            "message": (
+                                f"Hunyuan3D LOCAL_API is enabled at {api_url}, but the server is not reachable: {unreachable}. "
+                                "BlenderMCP does not start an inference server — run your own Hunyuan3D API "
+                                f"(POST {api_url.rstrip('/')}/generate), fix the API URL, or switch to official api."
+                            ),
                         }
                 case _:
                     return {
@@ -2134,7 +2225,7 @@ class BlenderMCPServer:
             "message": """Hunyuan3D integration is currently disabled. To enable it:
                         1. In the 3D Viewport, find the BlenderMCP panel in the sidebar (press N if hidden)
                         2. Check the 'Use Tencent Hunyuan 3D model generation' checkbox
-                        3. Restart the connection to Claude"""
+                        3. Restart the connection to your MCP client"""
         }
     
     @staticmethod
@@ -2266,10 +2357,16 @@ class BlenderMCPServer:
 
             if image:
                 if re.match(r"^https?://", image, re.IGNORECASE) is not None:
+                    ssrf_err, _ips = validate_url_not_internal(image)
+                    if ssrf_err:
+                        return {"error": ssrf_err}
                     data["ImageUrl"] = image
                 else:
+                    path_err = validate_image_path(image)
+                    if path_err:
+                        return {"error": path_err}
                     try:
-                        with open(image, "rb") as f:
+                        with open(os.path.realpath(image), "rb") as f:
                             image_base64 = base64.b64encode(f.read()).decode("ascii")
                         data["ImageBase64"] = image_base64
                     except Exception as e:
@@ -2333,17 +2430,43 @@ class BlenderMCPServer:
             # Handling image
             if image:
                 if re.match(r'^https?://', image, re.IGNORECASE) is not None:
+                    # LOCAL_API often runs on localhost — allow loopback only for the
+                    # configured inference host; still block other private ranges via
+                    # path validation for file reads below. Remote image URLs must be public.
+                    ssrf_err, validated_ips = validate_url_not_internal(image)
+                    if ssrf_err:
+                        # Permit same-host as the local API URL (self-hosted assets).
+                        api_host = urlparse(base_url).hostname
+                        img_host = urlparse(image).hostname
+                        if not (api_host and img_host and api_host.lower() == img_host.lower()):
+                            return {"error": ssrf_err}
+                        validated_ips = None
                     try:
-                        resImg = requests.get(image)
+                        if validated_ips:
+                            parsed_img = urlparse(image)
+                            pinned = image.replace(
+                                f"{parsed_img.scheme}://{parsed_img.hostname}",
+                                f"{parsed_img.scheme}://{validated_ips[0]}",
+                                1,
+                            )
+                            resImg = requests.get(
+                                pinned,
+                                headers={"Host": parsed_img.hostname},
+                                timeout=30,
+                            )
+                        else:
+                            resImg = requests.get(image, timeout=30)
                         resImg.raise_for_status()
                         image_base64 = base64.b64encode(resImg.content).decode("ascii")
                         data["image"] = image_base64
                     except Exception as e:
                         return {"error": f"Failed to download or encode image: {str(e)}"} 
                 else:
+                    path_err = validate_image_path(image)
+                    if path_err:
+                        return {"error": path_err}
                     try:
-                        # Convert to Base64 format
-                        with open(image, "rb") as f:
+                        with open(os.path.realpath(image), "rb") as f:
                             image_base64 = base64.b64encode(f.read()).decode("ascii")
                         data["image"] = image_base64
                     except Exception as e:
@@ -2611,6 +2734,7 @@ class BLENDERMCP_PT_Panel(bpy.types.Panel):
         prefs = get_blendermcp_addon_preferences(context)
 
         layout.prop(scene, "blendermcp_port")
+        layout.prop(scene, "blendermcp_host_all_interfaces", text="Listen on all interfaces (0.0.0.0)")
         layout.prop(scene, "blendermcp_use_polyhaven", text="Use assets from Poly Haven")
 
         layout.prop(scene, "blendermcp_use_hyper3d", text="Use Hyper3D Rodin 3D model generation")
@@ -2653,7 +2777,8 @@ class BLENDERMCP_PT_Panel(bpy.types.Panel):
             layout.operator("blendermcp.start_server", text="Connect to MCP server")
         else:
             layout.operator("blendermcp.stop_server", text="Disconnect from MCP server")
-            layout.label(text=f"Running on port {scene.blendermcp_port}")
+            bind_host = "0.0.0.0" if scene.blendermcp_host_all_interfaces else "localhost"
+            layout.label(text=f"Running on {bind_host}:{scene.blendermcp_port}")
         
         # Feedback section
         layout.separator()
@@ -2690,15 +2815,19 @@ class BLENDERMCP_OT_SetFreeTrialHyper3DAPIKey(bpy.types.Operator):
 # Operator to start the server
 class BLENDERMCP_OT_StartServer(bpy.types.Operator):
     bl_idname = "blendermcp.start_server"
-    bl_label = "Connect to Claude"
-    bl_description = "Start the BlenderMCP server to connect with Claude"
+    bl_label = "Connect to MCP server"
+    bl_description = "Start the BlenderMCP server to connect with your MCP client"
 
     def execute(self, context):
         global _blender_mcp_server
         scene = context.scene
 
+        host = "0.0.0.0" if scene.blendermcp_host_all_interfaces else "localhost"
         if _blender_mcp_server is None:
-            _blender_mcp_server = BlenderMCPServer(port=scene.blendermcp_port)
+            _blender_mcp_server = BlenderMCPServer(host=host, port=scene.blendermcp_port)
+        else:
+            _blender_mcp_server.host = host
+            _blender_mcp_server.port = scene.blendermcp_port
 
         _blender_mcp_server.start()
         scene.blendermcp_server_running = _blender_mcp_server.running
@@ -2708,8 +2837,8 @@ class BLENDERMCP_OT_StartServer(bpy.types.Operator):
 # Operator to stop the server
 class BLENDERMCP_OT_StopServer(bpy.types.Operator):
     bl_idname = "blendermcp.stop_server"
-    bl_label = "Stop the connection to Claude"
-    bl_description = "Stop the connection to Claude"
+    bl_label = "Disconnect from MCP server"
+    bl_description = "Stop the BlenderMCP server"
 
     def execute(self, context):
         global _blender_mcp_server
@@ -2751,6 +2880,15 @@ def register():
         max=65535
     )
 
+    bpy.types.Scene.blendermcp_host_all_interfaces = BoolProperty(
+        name="All interfaces",
+        description=(
+            "Bind on 0.0.0.0 so a remote MCP client can connect. "
+            "Only enable on trusted networks — the socket accepts unauthenticated commands."
+        ),
+        default=False,
+    )
+
     bpy.types.Scene.blendermcp_server_running = bpy.props.BoolProperty(
         name="Server Running",
         default=False
@@ -2770,7 +2908,7 @@ def register():
 
     bpy.types.Scene.blendermcp_use_hyper3d = bpy.props.BoolProperty(
         name="Use Hyper3D Rodin",
-        description="Enable Hyper3D Rodin generatino integration",
+        description="Enable Hyper3D Rodin generation integration",
         default=False
     )
 
@@ -2913,6 +3051,7 @@ def unregister():
     bpy.utils.unregister_class(BLENDERMCP_AddonPreferences)
 
     del bpy.types.Scene.blendermcp_port
+    del bpy.types.Scene.blendermcp_host_all_interfaces
     del bpy.types.Scene.blendermcp_server_running
     del bpy.types.Scene.blendermcp_auto_start_server
     del bpy.types.Scene.blendermcp_use_polyhaven
