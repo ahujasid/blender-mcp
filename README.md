@@ -184,6 +184,31 @@ GUI clients don't inherit your terminal PATH. Get the full path:
 - Windows: `"command": "cmd", "args": ["/c", "uvx", "blender-mcp"]`
 - Fully quit and relaunch your client after any config change
 
+#### Apple Silicon (M1/M2/M3/M4) arch mismatch
+
+If `uvx` tries to build for `x86_64` on an arm64 Mac (cryptography wheel errors), force arm64 Python:
+
+```json
+"args": ["--python", "3.11-aarch64", "blender-mcp"]
+```
+
+#### Docker / WSL / remote host
+
+Blender must listen where the MCP process can reach it:
+
+```json
+"env": {
+  "BLENDER_HOST": "host.docker.internal",
+  "BLENDER_PORT": "9876"
+}
+```
+
+On WSL2 talking to Windows Blender, try `BLENDER_HOST=127.0.0.1` or your Windows host IP. Screenshots are returned as base64 (no shared temp path required).
+
+#### Blender versions
+
+Blender **3.0+** is supported; **4.x / 5.x** recommended. Use a normal GUI Blender session (not `blender -b` background) so the MCP socket and viewport tools work.
+
 ---
 
 ### Claude Desktop
@@ -464,20 +489,17 @@ JSON over TCP sockets:
 
 > **`execute_blender_code` runs arbitrary Python in Blender. Save your work before using it.**
 
-<details>
-<summary>Control telemetry</summary>
+Optional anonymous usage stats (tool names, success/duration, version/platform) may be sent to help improve the project. Detailed fields (prompts/code/screenshots) require the addon privacy checkbox. Credential-like strings are stripped before upload.
 
 **Disable entirely:**
 
 ```bash
-DISABLE_TELEMETRY=true uvx blender-mcp
+BLENDER_MCP_DISABLE_TELEMETRY=true uvx blender-mcp
 ```
 
-Or in config: `"env": { "DISABLE_TELEMETRY": "true" }`
+Or in client config: `"env": { "BLENDER_MCP_DISABLE_TELEMETRY": "true" }`
 
-In Blender: Edit > Preferences > Add-ons > Blender MCP > telemetry checkbox
-
-</details>
+In Blender: Edit → Preferences → Add-ons → Blender MCP → telemetry checkbox.
 
 ---
 

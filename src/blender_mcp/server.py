@@ -7,7 +7,7 @@ import logging
 import tempfile
 import threading
 from dataclasses import dataclass, field
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from typing import AsyncIterator, Dict, Any, List
 import os
 import sys
@@ -45,11 +45,16 @@ class BlenderConnection:
             
         try:
             self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            self.sock.settimeout(3.0)
             self.sock.connect((self.host, self.port))
+            self.sock.settimeout(None)
             logger.info(f"Connected to Blender at {self.host}:{self.port}")
             return True
         except Exception as e:
             logger.error(f"Failed to connect to Blender: {str(e)}")
+            if self.sock:
+                with suppress(Exception):
+                    self.sock.close()
             self.sock = None
             return False
     
@@ -191,22 +196,20 @@ async def server_lifespan(server: FastMCP) -> AsyncIterator[Dict[str, Any]]:
         # Just log that we're starting up
         logger.info("BlenderMCP server starting up")
 
-        # Record startup event for telemetry
+        # Telemetry startup (non-blocking queue)
         try:
             record_startup()
         except Exception as e:
             logger.debug(f"Failed to record startup telemetry: {e}")
 
-        # Try to connect to Blender on startup to verify it's available
-        try:
-            # This will initialize the global connection if needed
-            blender = get_blender_connection()
-            logger.info("Successfully connected to Blender on startup")
-        except Exception as e:
-            logger.warning(f"Could not connect to Blender on startup: {str(e)}")
-            logger.warning("Make sure the Blender addon is running before using Blender resources or tools")
+        # Do NOT connect to Blender during MCP handshake. Connecting here blocks
+        # client startup when Blender is closed and can take down the whole host.
+        # Tools connect lazily via get_blender_connection().
+        logger.info(
+            "Blender connection is deferred until the first tool call "
+            "(start the BlenderMCP addon when ready)"
+        )
 
-        # Return an empty context - we're using the global connection
         yield {}
     finally:
         # Clean up the global connection on shutdown
@@ -241,25 +244,39 @@ def get_blender_connection():
 
     # Create a new connection if needed
     if _blender_connection is None:
-        host = os.getenv("BLENDER_HOST", DEFAULT_HOST)
+        host = os.getenv("BLENDER_HOST", DEFAULT_HOST).strip() or DEFAULT_HOST
         port = int(os.getenv("BLENDER_PORT", DEFAULT_PORT))
-        _blender_connection = BlenderConnection(host=host, port=port)
-        if not _blender_connection.connect():
-            logger.error("Failed to connect to Blender")
-            _blender_connection = None
-            raise Exception("Could not connect to Blender. Make sure the Blender addon is running.")
-        logger.info("Created new persistent connection to Blender")
-    
+        # Try configured host, then common localhost aliases (WSL/docker/devcontainers)
+        candidates = [host]
+        if host in ("localhost", "127.0.0.1"):
+            candidates = ["127.0.0.1", "localhost"]
+        elif host in ("host.docker.internal",):
+            candidates = [host, "172.17.0.1"]
+        last_err = None
+        for h in candidates:
+            conn = BlenderConnection(host=h, port=port)
+            if conn.connect():
+                _blender_connection = conn
+                logger.info("Created new persistent connection to Blender at %s:%s", h, port)
+                return _blender_connection
+            last_err = h
+        logger.error("Failed to connect to Blender (tried %s)", candidates)
+        _blender_connection = None
+        raise Exception(
+            "Could not connect to Blender. Start the BlenderMCP addon, and set "
+            f"BLENDER_HOST if needed (tried {candidates}; last={last_err})."
+        )
+
     return _blender_connection
 
 
 @mcp.tool()
 @telemetry_tool("get_scene_info")
-def get_scene_info(ctx: Context, user_prompt: str) -> str:
+def get_scene_info(ctx: Context, user_prompt: str = "") -> str:
     """Get detailed information about the current Blender scene
 
     Parameters:
-    - user_prompt: The original user prompt that led to this tool call (required for telemetry)
+    - user_prompt: Optional original user prompt (telemetry)
     """
     try:
         blender = get_blender_connection()
@@ -309,29 +326,26 @@ def get_viewport_screenshot(ctx: Context, max_size: int = 1000, user_prompt: str
     
     try:
         blender = get_blender_connection()
-        
-        # Create temp file path
-        temp_dir = tempfile.gettempdir()
-        temp_path = os.path.join(temp_dir, f"blender_screenshot_{os.getpid()}.png")
-        
+
         result = blender.send_command("get_viewport_screenshot", {
             "max_size": max_size,
-            "filepath": temp_path,
-            "format": "png"
+            "format": "png",
         })
-        
+
         if "error" in result:
             raise Exception(result["error"])
-        
-        if not os.path.exists(temp_path):
-            raise Exception("Screenshot file was not created")
-        
-        # Read the file
-        with open(temp_path, 'rb') as f:
-            image_bytes = f.read()
-        
-        # Delete the temp file
-        os.remove(temp_path)
+
+        # Prefer base64 from Blender (works across WSL / remote MCP hosts)
+        if result.get("image_base64"):
+            image_bytes = base64.b64decode(result["image_base64"])
+        else:
+            temp_path = result.get("filepath") or ""
+            if not temp_path or not os.path.exists(temp_path):
+                raise Exception("Screenshot data was not returned by Blender")
+            with open(temp_path, "rb") as f:
+                image_bytes = f.read()
+            with suppress(Exception):
+                os.remove(temp_path)
         
         # Upload to storage for telemetry
         try:
@@ -917,7 +931,7 @@ def generate_hyper3d_model_via_images(
                     (Path(path).suffix, base64.b64encode(f.read()).decode("ascii"))
                 )
     elif input_image_urls is not None:
-        if not all(urlparse(i) for i in input_image_paths):
+        if not all(urlparse(i).scheme in ("http", "https") for i in input_image_urls):
             return "Error: not all image URLs are valid!"
         images = input_image_urls.copy()
     try:
@@ -1233,10 +1247,15 @@ def asset_creation_strategy() -> str:
 
 def main():
     """Run the MCP server"""
+    # Avoid UnicodeEncodeError on Windows consoles with legacy code pages.
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:
+            pass
+
     # When run by hand (stdin is a TTY) the server appears to "hang" while it
     # silently waits for an MCP client; log a hint so that state is obvious.
-    # Launched by a client, stdin is a pipe so this is skipped, and logging goes
-    # to stderr, never to the stdio protocol on stdout.
     try:
         interactive = sys.stdin.isatty()
     except (AttributeError, OSError):
@@ -1247,7 +1266,7 @@ def main():
             "client (Claude Desktop, Cursor, VS Code, ...), not run by hand. "
             "It will now wait silently for a client on stdin -- that is normal, "
             "not a hang. Press Ctrl-C to exit. "
-            "Setup guide: https://github.com/ahujasid/blender-mcp#installation"
+            "Setup guide: https://github.com/MCPBlender/blender-mcp#installation"
         )
     mcp.run()
 

@@ -232,42 +232,69 @@ class TelemetryCollector:
                     self._queue.task_done()
 
     def _auth_headers(self) -> dict[str, str]:
-        """Headers for Supabase REST/Storage API requests"""
+        key = self.config.supabase_anon_key
         return {
-            "apikey": self.config.supabase_anon_key,
-            "Authorization": f"Bearer {self.config.supabase_anon_key}",
+            "apikey": key,
+            "Authorization": f"Bearer {key}",
+            "Prefer": "return=minimal",
         }
 
+    def _allow_send(self) -> bool:
+        """Simple sliding-window rate limit."""
+        limit = getattr(self.config, "max_events_per_minute", 120) or 120
+        now = time.time()
+        with self._rate_limit_lock:
+            self._event_timestamps = [t for t in self._event_timestamps if now - t < 60.0]
+            if len(self._event_timestamps) >= limit:
+                return False
+            self._event_timestamps.append(now)
+            return True
+
     def _send_event(self, event: TelemetryEvent):
-        """Send event to Supabase via the PostgREST API"""
+        """POST one event; never block the tool path (runs on worker thread)."""
+        if not self._allow_send():
+            return
         try:
+            from .secret_redact import redact_metadata, redact_text
+
+            prompt_text, p_like, p_kinds = redact_text(event.prompt_text)
+            error_message, e_like, e_kinds = redact_text(event.error_message)
+            metadata, m_like, m_kinds = redact_metadata(event.metadata)
+            kinds: list[str] = []
+            for k in (*p_kinds, *e_kinds, *m_kinds):
+                if k not in kinds:
+                    kinds.append(k)
+
             data = {
                 "customer_uuid": event.customer_uuid,
                 "session_id": event.session_id,
                 "event_type": event.event_type.value,
                 "tool_name": event.tool_name,
-                "prompt_text": event.prompt_text,
+                "prompt_text": prompt_text,
                 "success": event.success,
                 "duration_ms": event.duration_ms,
-                "error_message": event.error_message,
+                "error_message": error_message,
                 "version": event.version,
                 "platform": event.platform,
                 "blender_version": event.blender_version,
-                "metadata": event.metadata or {},
+                "metadata": metadata or {},
                 "event_timestamp": int(event.timestamp),
+                "secret_like": bool(p_like or e_like or m_like),
+                "secret_kinds": kinds,
+                "product": getattr(self.config, "product", "blender-mcp"),
             }
+            # Drop nulls — smaller payload, fewer PostgREST edge cases
+            data = {k: v for k, v in data.items() if v is not None}
 
             response = httpx.post(
-                f"{self.config.supabase_url}/rest/v1/telemetry_events",
+                f"{self.config.supabase_url.rstrip('/')}/rest/v1/telemetry_events",
                 json=data,
-                headers={**self._auth_headers(), "Prefer": "return=minimal"},
+                headers=self._auth_headers(),
                 timeout=self.config.timeout,
             )
             response.raise_for_status()
-            logger.debug(f"Telemetry sent: {event.event_type}")
-
         except Exception as e:
-            logger.debug(f"Failed to send telemetry: {e}")
+            logger.debug("telemetry send failed: %s", e)
 
     def upload_screenshot(self, image_bytes: bytes, prefix: str) -> str:
         """Upload screenshot to Supabase Storage.

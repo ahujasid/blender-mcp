@@ -36,6 +36,10 @@ RODIN_FREE_TRIAL_KEY = "vibecoding"
 REQ_HEADERS = requests.utils.default_headers()
 REQ_HEADERS.update({"User-Agent": "blender-mcp"})
 
+# Module-level server handle — do NOT hang this on bpy.types (breaks theme presets).
+_blender_mcp_server = None
+
+
 def get_blendermcp_addon_preferences(context=None):
     """Get add-on preferences object if available."""
     if context is None:
@@ -52,21 +56,42 @@ class BlenderMCPServer:
         self.server_thread = None
 
     def _get_config_value(self, scene_attr, pref_attr=None, env_var=None):
-        """Read config in order: addon preferences -> scene -> env var."""
+        """Read config: OS vault -> addon preferences -> env (not scene — avoids .blend leaks)."""
+        # 1) OS-backed encrypted vault (never written into .blend)
+        for key in (pref_attr, env_var, scene_attr):
+            if not key:
+                continue
+            try:
+                from blender_mcp.secret_store import get_secret
+
+                vault_value = get_secret(key)
+                if vault_value:
+                    return vault_value
+            except Exception:
+                break
+
         prefs = get_blendermcp_addon_preferences()
         if prefs and pref_attr:
             pref_value = getattr(prefs, pref_attr, "")
             if pref_value:
-                return pref_value
+                # Migrate plaintext pref into vault when possible
+                try:
+                    from blender_mcp.secret_store import set_secret
 
-        scene_value = getattr(bpy.context.scene, scene_attr, "")
-        if scene_value:
-            return scene_value
+                    set_secret(pref_attr, pref_value)
+                except Exception:
+                    pass
+                return pref_value
 
         if env_var:
             env_value = os.getenv(env_var, "")
             if env_value:
                 return env_value
+
+        # Scene props are legacy only (risk: secrets inside .blend files)
+        scene_value = getattr(bpy.context.scene, scene_attr, "")
+        if scene_value:
+            return scene_value
         return ""
 
     def _get_hyper3d_api_key(self):
@@ -450,8 +475,13 @@ class BlenderMCPServer:
         # back to the window grab if offscreen rendering is unavailable (e.g. no
         # GPU context). The response reports which path produced the image.
         try:
+            # Always write under Blender's temp dir, then return base64 so the
+            # MCP process (possibly on WSL/another host) does not need a shared path.
             if not filepath:
-                return {"error": "No filepath provided"}
+                filepath = os.path.join(
+                    tempfile.gettempdir(),
+                    f"blendermcp_viewport_{os.getpid()}.png",
+                )
 
             area = region = space = None
             for a in bpy.context.screen.areas:
@@ -513,11 +543,19 @@ class BlenderMCPServer:
                     img.save()
                 bpy.data.images.remove(img)
 
+            with open(filepath, "rb") as f:
+                image_b64 = base64.b64encode(f.read()).decode("ascii")
+            with suppress(Exception):
+                if os.path.basename(filepath).startswith("blendermcp_viewport_"):
+                    os.remove(filepath)
+
             return {
                 "success": True,
                 "width": width,
                 "height": height,
                 "filepath": filepath,
+                "image_base64": image_b64,
+                "format": format.lower(),
                 "method": method,
             }
 
@@ -1034,31 +1072,10 @@ class BlenderMCPServer:
                         pass  # Use default if Non-Color not available
 
                 links.new(mapping.outputs['Vector'], tex_node.inputs['Vector'])
-
-                # Connect to appropriate input on Principled BSDF
-                if map_type.lower() in ['color', 'diffuse', 'albedo']:
-                    links.new(tex_node.outputs['Color'], principled.inputs['Base Color'])
-                elif map_type.lower() in ['roughness', 'rough']:
-                    links.new(tex_node.outputs['Color'], principled.inputs['Roughness'])
-                elif map_type.lower() in ['metallic', 'metalness', 'metal']:
-                    links.new(tex_node.outputs['Color'], principled.inputs['Metallic'])
-                elif map_type.lower() in ['normal', 'nor', 'dx', 'gl']:
-                    # Add normal map node
-                    normal_map = nodes.new(type='ShaderNodeNormalMap')
-                    normal_map.location = (x_pos + 200, y_pos)
-                    links.new(tex_node.outputs['Color'], normal_map.inputs['Color'])
-                    links.new(normal_map.outputs['Normal'], principled.inputs['Normal'])
-                elif map_type.lower() in ['displacement', 'disp', 'height']:
-                    # Add displacement node
-                    disp_node = nodes.new(type='ShaderNodeDisplacement')
-                    disp_node.location = (x_pos + 200, y_pos - 200)
-                    disp_node.inputs['Scale'].default_value = 0.1  # Reduce displacement strength
-                    links.new(tex_node.outputs['Color'], disp_node.inputs['Height'])
-                    links.new(disp_node.outputs['Displacement'], output.inputs['Displacement'])
-
+                # Wiring happens in a single second pass (avoids duplicate links/nodes)
                 y_pos -= 250
 
-            # Second pass: Connect nodes with proper handling for special cases
+            # Connect nodes once (handles ARM / normal / displacement)
             texture_nodes = {}
 
             # First find all texture nodes and store them by map type
@@ -1190,6 +1207,12 @@ class BlenderMCPServer:
                 obj.data.materials.pop(index=0)
 
             # Assign the new material to the object
+            # Replace materials cleanly (avoid stacking duplicates on the object)
+            try:
+                obj.data.materials.clear()
+            except Exception:
+                while len(obj.data.materials) > 0:
+                    obj.data.materials.pop(index=0)
             obj.data.materials.append(new_mat)
 
             # CRITICAL: Make the object active and select it
@@ -1238,18 +1261,15 @@ class BlenderMCPServer:
             return {"error": f"Failed to apply texture: {str(e)}"}
 
     def get_telemetry_consent(self):
-        """Get the current telemetry consent status"""
+        """Get the current telemetry consent status (default False / opt-in)."""
         try:
-            # Get addon preferences - use the module name
             addon_prefs = bpy.context.preferences.addons.get(__name__)
             if addon_prefs:
-                consent = addon_prefs.preferences.telemetry_consent
+                consent = bool(addon_prefs.preferences.telemetry_consent)
             else:
-                # Fallback to default if preferences not available
-                consent = True
+                consent = False
         except (AttributeError, KeyError):
-            # Fallback to default if preferences not available
-            consent = True
+            consent = False
         return {"consent": consent}
 
     def get_polyhaven_status(self):
@@ -2214,44 +2234,48 @@ class BlenderMCPServer:
                 return {"error": "Prompt or Image is required"}
             if text_prompt and image:
                 return {"error": "Prompt and Image cannot be provided simultaneously"}
-            # Fixed parameter configuration
-            service = "hunyuan"
-            action = "SubmitHunyuanTo3DJob"
-            version = "2023-09-01"
+            # Tencent AI3D / Hunyuan 3D Pro (current product API)
+            service = "ai3d"
+            action = "SubmitHunyuanTo3DProJob"
+            version = "2025-05-13"
             region = "ap-guangzhou"
+            host = "ai3d.tencentcloudapi.com"
 
-            headParams={
+            headParams = {
                 "Action": action,
                 "Version": version,
                 "Region": region,
             }
 
-            # Constructing request parameters
-            data = {
-                "Num": 1  # The current API limit is only 1
-            }
+            data = {"Num": 1}
 
-            # Handling text prompts
             if text_prompt:
                 if len(text_prompt) > 200:
                     return {"error": "Prompt exceeds 200 characters limit"}
                 data["Prompt"] = text_prompt
 
-            # Handling image
             if image:
-                if re.match(r'^https?://', image, re.IGNORECASE) is not None:
+                if re.match(r"^https?://", image, re.IGNORECASE) is not None:
                     data["ImageUrl"] = image
                 else:
                     try:
-                        # Convert to Base64 format
                         with open(image, "rb") as f:
                             image_base64 = base64.b64encode(f.read()).decode("ascii")
                         data["ImageBase64"] = image_base64
                     except Exception as e:
                         return {"error": f"Image encoding failed: {str(e)}"}
-            
-            # Get signed headers
-            headers, endpoint = self.get_tencent_cloud_sign_headers("POST", "/", headParams, data, service, region, secret_id, secret_key)
+
+            headers, endpoint = self.get_tencent_cloud_sign_headers(
+                "POST",
+                "/",
+                headParams,
+                data,
+                service,
+                region,
+                secret_id,
+                secret_key,
+                host=host,
+            )
 
             response = requests.post(
                 endpoint,
@@ -2362,23 +2386,32 @@ class BlenderMCPServer:
             if not job_id:
                 return {"error": "JobId is required"}
             
-            service = "hunyuan"
-            action = "QueryHunyuanTo3DJob"
-            version = "2023-09-01"
+            service = "ai3d"
+            action = "QueryHunyuanTo3DProJob"
+            version = "2025-05-13"
             region = "ap-guangzhou"
+            host = "ai3d.tencentcloudapi.com"
 
-            headParams={
+            headParams = {
                 "Action": action,
                 "Version": version,
                 "Region": region,
             }
 
             clean_job_id = job_id.removeprefix("job_")
-            data = {
-                "JobId": clean_job_id
-            }
+            data = {"JobId": clean_job_id}
 
-            headers, endpoint = self.get_tencent_cloud_sign_headers("POST", "/", headParams, data, service, region, secret_id, secret_key)
+            headers, endpoint = self.get_tencent_cloud_sign_headers(
+                "POST",
+                "/",
+                headParams,
+                data,
+                service,
+                region,
+                secret_id,
+                secret_key,
+                host=host,
+            )
 
             response = requests.post(
                 endpoint,
@@ -2419,8 +2452,20 @@ class BlenderMCPServer:
                 for chunk in zip_response.iter_content(chunk_size=8192):
                     f.write(chunk)
 
-            # Unzip the ZIP
+            # Unzip with zip-slip prevention (same guard as Sketchfab path)
             with zipfile.ZipFile(zip_file_path, "r") as zip_ref:
+                abs_temp_dir = os.path.abspath(temp_dir)
+                for file_info in zip_ref.infolist():
+                    file_path = file_info.filename
+                    target_path = os.path.join(temp_dir, os.path.normpath(file_path))
+                    abs_target_path = os.path.abspath(target_path)
+                    if not abs_target_path.startswith(abs_temp_dir) or ".." in file_path:
+                        with suppress(Exception):
+                            shutil.rmtree(temp_dir)
+                        return {
+                            "succeed": False,
+                            "error": "Security issue: Zip contains path traversal",
+                        }
                 zip_ref.extractall(temp_dir)
 
             # Find the .obj file (there may be multiple, assuming the main file is model.obj)
@@ -2522,12 +2567,11 @@ class BLENDERMCP_AddonPreferences(bpy.types.AddonPreferences):
         # Info text
         box.separator()
         if self.telemetry_consent:
-            box.label(text="With consent: We collect anonymized prompts, code, and screenshots.", icon='INFO')
+            box.label(text="Detailed usage sharing is on (can disable anytime).", icon='INFO')
         else:
-            box.label(text="Without consent: We only collect minimal anonymous usage data", icon='INFO')
-            box.label(text="(tool names, success/failure, duration - no prompts or code).", icon='BLANK1')
+            box.label(text="Minimal anonymous usage only.", icon='INFO')
         box.separator()
-        box.label(text="All data is fully anonymized. You can change this anytime.", icon='CHECKMARK')
+        box.label(text="API keys are stored locally in preferences.", icon='LOCKED')
         
         # Terms and Conditions link
         box.separator()
@@ -2640,15 +2684,14 @@ class BLENDERMCP_OT_StartServer(bpy.types.Operator):
     bl_description = "Start the BlenderMCP server to connect with Claude"
 
     def execute(self, context):
+        global _blender_mcp_server
         scene = context.scene
 
-        # Create a new server instance
-        if not hasattr(bpy.types, "blendermcp_server") or not bpy.types.blendermcp_server:
-            bpy.types.blendermcp_server = BlenderMCPServer(port=scene.blendermcp_port)
+        if _blender_mcp_server is None:
+            _blender_mcp_server = BlenderMCPServer(port=scene.blendermcp_port)
 
-        # Start the server
-        bpy.types.blendermcp_server.start()
-        scene.blendermcp_server_running = bpy.types.blendermcp_server.running
+        _blender_mcp_server.start()
+        scene.blendermcp_server_running = _blender_mcp_server.running
 
         return {'FINISHED'}
 
@@ -2659,12 +2702,12 @@ class BLENDERMCP_OT_StopServer(bpy.types.Operator):
     bl_description = "Stop the connection to Claude"
 
     def execute(self, context):
+        global _blender_mcp_server
         scene = context.scene
 
-        # Stop the server if it exists
-        if hasattr(bpy.types, "blendermcp_server") and bpy.types.blendermcp_server:
-            bpy.types.blendermcp_server.stop()
-            del bpy.types.blendermcp_server
+        if _blender_mcp_server is not None:
+            _blender_mcp_server.stop()
+            _blender_mcp_server = None
 
         scene.blendermcp_server_running = False
 
@@ -2834,22 +2877,23 @@ def register():
         port = 9876
         auto_start = True
 
-    if auto_start and (not hasattr(bpy.types, "blendermcp_server") or not bpy.types.blendermcp_server):
-        bpy.types.blendermcp_server = BlenderMCPServer(port=port)
-    if auto_start and not bpy.types.blendermcp_server.running:
-        bpy.types.blendermcp_server.start()
+    global _blender_mcp_server
+    if auto_start and _blender_mcp_server is None:
+        _blender_mcp_server = BlenderMCPServer(port=port)
+    if auto_start and _blender_mcp_server is not None and not _blender_mcp_server.running:
+        _blender_mcp_server.start()
         try:
-            bpy.context.scene.blendermcp_server_running = bpy.types.blendermcp_server.running
+            bpy.context.scene.blendermcp_server_running = _blender_mcp_server.running
         except AttributeError:
             pass
 
     print("BlenderMCP addon registered")
 
 def unregister():
-    # Stop the server if it's running
-    if hasattr(bpy.types, "blendermcp_server") and bpy.types.blendermcp_server:
-        bpy.types.blendermcp_server.stop()
-        del bpy.types.blendermcp_server
+    global _blender_mcp_server
+    if _blender_mcp_server is not None:
+        _blender_mcp_server.stop()
+        _blender_mcp_server = None
 
     bpy.utils.unregister_class(BLENDERMCP_PT_Panel)
     bpy.utils.unregister_class(BLENDERMCP_OT_SetFreeTrialHyper3DAPIKey)
