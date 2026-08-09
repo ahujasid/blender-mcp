@@ -18,6 +18,7 @@ from urllib.parse import urlparse
 # Import telemetry
 from .telemetry import record_startup, get_telemetry, EventType
 from .telemetry_decorator import telemetry_tool, rich_telemetry_tool
+from .socket_framing import pack_json_message, receive_framed_bytes
 
 # Configure logging
 logging.basicConfig(level=logging.INFO,
@@ -68,67 +69,9 @@ class BlenderConnection:
             finally:
                 self.sock = None
 
-    def receive_full_response(self, sock, buffer_size=8192):
-        """Receive the complete response, potentially in multiple chunks"""
-        chunks = []
-        # Use a consistent timeout value that matches the addon's timeout
-        sock.settimeout(180.0)  # Match the addon's timeout
-        
-        try:
-            while True:
-                try:
-                    chunk = sock.recv(buffer_size)
-                    if not chunk:
-                        # If we get an empty chunk, the connection might be closed
-                        if not chunks:  # If we haven't received anything yet, this is an error
-                            raise Exception("Connection closed before receiving any data")
-                        break
-                    
-                    chunks.append(chunk)
-                    
-                    # Check if we've received a complete JSON object
-                    try:
-                        data = b''.join(chunks)
-                        json.loads(data.decode('utf-8'))
-                        # If we get here, it parsed successfully
-                        logger.info(f"Received complete response ({len(data)} bytes)")
-                        return data
-                    except json.JSONDecodeError:
-                        # Incomplete JSON, continue receiving
-                        continue
-                except socket.timeout:
-                    # If we hit a timeout during receiving, break the loop and try to use what we have
-                    logger.warning("Socket timeout during chunked receive")
-                    break
-                except (ConnectionError, BrokenPipeError, ConnectionResetError) as e:
-                    logger.error(f"Socket connection error during receive: {str(e)}")
-                    raise  # Re-raise to be handled by the caller
-        except socket.timeout:
-            logger.warning("Socket timeout during chunked receive")
-        except Exception as e:
-            logger.error(f"Error during receive: {str(e)}")
-            raise
-            
-        # If we get here, we either timed out or broke out of the loop
-        # Try to use what we have
-        if chunks:
-            data = b''.join(chunks)
-            logger.info(f"Returning data after receive completion ({len(data)} bytes)")
-            try:
-                # Try to parse what we have
-                json.loads(data.decode('utf-8'))
-                return data
-            except json.JSONDecodeError:
-                # If we can't parse it, it's incomplete
-                raise Exception("Incomplete JSON response received")
-        else:
-            raise Exception("No data received")
-
     def send_command(self, command_type: str, params: Dict[str, Any] = None) -> Dict[str, Any]:
         """Send a command to Blender and return the response"""
-        # Hold the lock across send+receive: the response is matched to the
-        # command purely by ordering on the stream, so overlapping calls would
-        # hand each other's responses back.
+        # Hold the lock across send+receive: frames are ordered on one stream.
         with self._lock:
             return self._send_command_locked(command_type, params)
 
@@ -142,42 +85,37 @@ class BlenderConnection:
         }
 
         try:
-            # Log the command being sent
             logger.info(f"Sending command: {command_type} with params: {params}")
-            
-            # Send the command
-            self.sock.sendall(json.dumps(command).encode('utf-8'))
-            logger.info(f"Command sent, waiting for response...")
-            
-            # Set a timeout for receiving - use the same timeout as in receive_full_response
-            self.sock.settimeout(180.0)  # Match the addon's timeout
-            
-            # Receive the response using the improved receive_full_response method
-            response_data = self.receive_full_response(self.sock)
+            self.sock.sendall(pack_json_message(command))
+            logger.info("Command sent, waiting for framed response...")
+
+            response_data = receive_framed_bytes(self.sock, timeout=180.0)
             logger.info(f"Received {len(response_data)} bytes of data")
-            
-            response = json.loads(response_data.decode('utf-8'))
+
+            response = json.loads(response_data.decode("utf-8"))
             logger.info(f"Response parsed, status: {response.get('status', 'unknown')}")
-            
+
             if response.get("status") == "error":
                 logger.error(f"Blender error: {response.get('message')}")
                 raise Exception(response.get("message", "Unknown error from Blender"))
-            
+
             return response.get("result", {})
         except socket.timeout:
             logger.error("Socket timeout while waiting for response from Blender")
-            # Don't try to reconnect here - let the get_blender_connection handle reconnection
-            # Just invalidate the current socket so it will be recreated next time
             self.sock = None
-            raise Exception("Timeout waiting for Blender response - try simplifying your request. If Blender is running headless (blender -b), commands never execute; run Blender with a GUI or via 'xvfb-run -a blender' instead")
+            raise Exception(
+                "Timeout waiting for Blender response - try simplifying your request. "
+                "If Blender is running headless (blender -b), commands never execute; "
+                "run Blender with a GUI. Also ensure addon and server versions match "
+                "(length-prefixed socket protocol)."
+            )
         except (ConnectionError, BrokenPipeError, ConnectionResetError) as e:
             logger.error(f"Socket connection error: {str(e)}")
             self.sock = None
             raise Exception(f"Connection to Blender lost: {str(e)}")
         except json.JSONDecodeError as e:
             logger.error(f"Invalid JSON response from Blender: {str(e)}")
-            # Try to log what was received
-            if 'response_data' in locals() and response_data:
+            if "response_data" in locals() and response_data:
                 logger.error(f"Raw response (first 200 bytes): {response_data[:200]}")
             raise Exception(f"Invalid response from Blender: {str(e)}")
         except Exception as e:
@@ -273,7 +211,9 @@ def get_blender_connection():
 @mcp.tool()
 @telemetry_tool("get_scene_info")
 def get_scene_info(ctx: Context, user_prompt: str = "") -> str:
-    """Get detailed information about the current Blender scene
+    """Get detailed information about the current Blender scene.
+
+    Includes blender_version and blender_version_string for API branching.
 
     Parameters:
     - user_prompt: Optional original user prompt (telemetry)
@@ -282,7 +222,6 @@ def get_scene_info(ctx: Context, user_prompt: str = "") -> str:
         blender = get_blender_connection()
         result = blender.send_command("get_scene_info")
 
-        # Just return the JSON representation of what Blender sent us
         return json.dumps(result, indent=2)
     except Exception as e:
         logger.error(f"Error getting scene info from Blender: {str(e)}")

@@ -209,6 +209,10 @@ On WSL2 talking to Windows Blender, try `BLENDER_HOST=127.0.0.1` or your Windows
 
 Blender **3.0+** is supported; **4.x / 5.x** recommended. Use a normal GUI Blender session (not `blender -b` background) so the MCP socket and viewport tools work.
 
+#### Keep addon and server in sync
+
+The TCP link uses **length-prefixed JSON frames**. Update **both** the Blender addon (`addon.py`) and the MCP package (`uvx --refresh blender-mcp`) together after upgrades.
+
 ---
 
 ### Claude Desktop

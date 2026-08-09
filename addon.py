@@ -6,6 +6,7 @@ import mathutils
 import json
 import threading
 import socket
+import struct
 import time
 import requests
 import tempfile
@@ -38,6 +39,33 @@ REQ_HEADERS.update({"User-Agent": "blender-mcp"})
 
 # Module-level server handle — do NOT hang this on bpy.types (breaks theme presets).
 _blender_mcp_server = None
+
+_FRAME_HDR = ">I"
+_MAX_FRAME = 64 * 1024 * 1024
+
+
+def _recv_exact(sock, n):
+    buf = b""
+    while len(buf) < n:
+        chunk = sock.recv(n - len(buf))
+        if not chunk:
+            raise ConnectionError("client closed")
+        buf += chunk
+    return buf
+
+
+def _recv_framed_json(sock):
+    header = _recv_exact(sock, 4)
+    (length,) = struct.unpack(_FRAME_HDR, header)
+    if length <= 0 or length > _MAX_FRAME:
+        raise ValueError("invalid frame length")
+    body = _recv_exact(sock, length)
+    return json.loads(body.decode("utf-8"))
+
+
+def _send_framed_json(sock, payload):
+    body = json.dumps(payload).encode("utf-8")
+    sock.sendall(struct.pack(_FRAME_HDR, len(body)) + body)
 
 
 def get_blendermcp_addon_preferences(context=None):
@@ -219,63 +247,43 @@ class BlenderMCPServer:
         print("Server thread stopped")
 
     def _handle_client(self, client):
-        """Handle connected client"""
+        """Handle connected client (length-prefixed JSON frames)."""
         print("Client handler started")
-        client.settimeout(None)  # No timeout
-        buffer = b''
+        client.settimeout(None)
 
         try:
             while self.running:
-                # Receive data
                 try:
-                    data = client.recv(8192)
-                    if not data:
-                        print("Client disconnected")
-                        break
-
-                    buffer += data
-                    try:
-                        # Try to parse command
-                        command = json.loads(buffer.decode('utf-8'))
-                        buffer = b''
-
-                        # Execute command in Blender's main thread
-                        def execute_wrapper():
-                            try:
-                                response = self.execute_command(command)
-                                response_json = json.dumps(response)
-                                try:
-                                    client.sendall(response_json.encode('utf-8'))
-                                except:
-                                    print("Failed to send response - client disconnected")
-                            except Exception as e:
-                                print(f"Error executing command: {str(e)}")
-                                traceback.print_exc()
-                                try:
-                                    error_response = {
-                                        "status": "error",
-                                        "message": str(e)
-                                    }
-                                    client.sendall(json.dumps(error_response).encode('utf-8'))
-                                except:
-                                    pass
-                            return None
-
-                        # Schedule execution in main thread
-                        bpy.app.timers.register(execute_wrapper, first_interval=0.0)
-                    except json.JSONDecodeError:
-                        # Incomplete data, wait for more
-                        pass
+                    command = _recv_framed_json(client)
                 except Exception as e:
-                    print(f"Error receiving data: {str(e)}")
+                    print(f"Client disconnected or bad frame: {e}")
                     break
+
+                def execute_wrapper(cmd=command):
+                    try:
+                        response = self.execute_command(cmd)
+                        try:
+                            _send_framed_json(client, response)
+                        except Exception:
+                            print("Failed to send response - client disconnected")
+                    except Exception as e:
+                        print(f"Error executing command: {str(e)}")
+                        traceback.print_exc()
+                        try:
+                            _send_framed_json(
+                                client,
+                                {"status": "error", "message": str(e)},
+                            )
+                        except Exception:
+                            pass
+                    return None
+
+                bpy.app.timers.register(execute_wrapper, first_interval=0.0)
         except Exception as e:
             print(f"Error in client handler: {str(e)}")
         finally:
-            try:
+            with suppress(Exception):
                 client.close()
-            except:
-                pass
             print("Client handler stopped")
 
     def execute_command(self, command):
@@ -373,6 +381,8 @@ class BlenderMCPServer:
                 "object_count": len(bpy.context.scene.objects),
                 "objects": [],
                 "materials_count": len(bpy.data.materials),
+                "blender_version": list(bpy.app.version),
+                "blender_version_string": bpy.app.version_string,
             }
 
             # Collect minimal object information (limit to first 10 objects)
