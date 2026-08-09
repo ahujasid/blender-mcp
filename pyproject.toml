@@ -1,11 +1,11 @@
 [project]
 name = "blender-mcp"
-version = "1.9.0"
+version = "1.9.1"
 description = "Blender integration through the Model Context Protocol"
 readme = "README.md"
 requires-python = ">=3.10"
 authors = [
-    {name = "Your Name", email = "your.email@example.com"}
+    {name = "MCPBlender", email = "owner@blendermcp.org"}
 ]
 license = {text = "MIT"}
 classifiers = [
@@ -21,13 +21,23 @@ dependencies = [
 [project.scripts]
 blender-mcp = "blender_mcp.server:main"
 
+# hatchling avoids setuptools egg_base path bugs on Windows Claude Desktop extensions (#283)
 [build-system]
-requires = ["setuptools>=61.0", "wheel"]
-build-backend = "setuptools.build_meta"
+requires = ["hatchling>=1.25"]
+build-backend = "hatchling.build"
 
-[tool.setuptools]
-package-dir = {"" = "src"}
+[tool.hatch.build.targets.wheel]
+packages = ["src/blender_mcp"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "src/blender_mcp",
+    "addon.py",
+    "README.md",
+    "SECURITY.md",
+    "LICENSE",
+]
 
 [project.urls]
-"Homepage" = "https://github.com/yourusername/blender-mcp"
-"Bug Tracker" = "https://github.com/yourusername/blender-mcp/issues"
+"Homepage" = "https://github.com/MCPBlender/blender-mcp"
+"Bug Tracker" = "https://github.com/MCPBlender/blender-mcp/issues"

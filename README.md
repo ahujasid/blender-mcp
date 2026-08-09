@@ -213,6 +213,18 @@ Blender **3.0+** is supported; **4.x / 5.x** recommended. Use a normal GUI Blend
 
 The TCP link uses **length-prefixed JSON frames**. Update **both** the Blender addon (`addon.py`) and the MCP package (`uvx --refresh blender-mcp`) together after upgrades.
 
+#### Windows: Claude Extension `egg_base '.' does not exist`
+
+If Claude Desktop’s built-in extension fails to build with `egg_base` / wrong path under `Packages\Claude_...`, skip the extension launcher and run the package via **uvx** (config above). That path is the supported install on Windows.
+
+```powershell
+uv tool install blender-mcp
+uv tool upgrade blender-mcp
+uvx --refresh blender-mcp
+```
+
+`blender-mcp` does **not** depend on `pywin32`. If uv tries to install a locked `pywin32` wheel from an old env, clear the stuck build cache or use a fresh `uvx`/`uv tool` install rather than a partial site-packages tree.
+
 ---
 
 ### Claude Desktop
