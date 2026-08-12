@@ -43,9 +43,16 @@ def get_blendermcp_addon_preferences(context=None):
     addon = context.preferences.addons.get(__name__)
     return addon.preferences if addon else None
 
+
+def get_server_host():
+    """Keep the server local unless WSL needs to reach Blender over the network."""
+    wsl_networking = os.getenv("WSL_NETWORKING", "").lower()
+    return "0.0.0.0" if wsl_networking in {"1", "true", "yes", "on"} else "localhost"
+
+
 class BlenderMCPServer:
-    def __init__(self, host='localhost', port=9876):
-        self.host = host
+    def __init__(self, host=None, port=9876):
+        self.host = host or get_server_host()
         self.port = port
         self.running = False
         self.socket = None
