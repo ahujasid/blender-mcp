@@ -129,12 +129,23 @@ The following environment variables can be used to configure the Blender connect
 
 - `BLENDER_HOST`: Host address for Blender socket server (default: "localhost")
 - `BLENDER_PORT`: Port number for Blender socket server (default: 9876)
+- `WSL_NETWORKING`: Set to `true` only when the MCP client runs in WSL and Blender runs on Windows. The Blender add-on then listens on `0.0.0.0` instead of `localhost` (default: `false`).
 
 Example:
 ```bash
 export BLENDER_HOST='host.docker.internal'
 export BLENDER_PORT=9876
 ```
+
+#### WSL and Windows Blender
+
+When Blender runs on Windows and the MCP client runs in WSL, set `WSL_NETWORKING=true` in the Windows environment that launches Blender, then restart Blender. Configure the MCP client to use the Windows host IP, which is the WSL default gateway:
+
+```bash
+ip route show default
+```
+
+Use the address following `via` as `BLENDER_HOST` and allow Blender through Windows Firewall on private networks. `WSL_NETWORKING` is disabled by default so non-WSL installations remain bound to localhost.
 
 ### Claude for Desktop Integration
 
