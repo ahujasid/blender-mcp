@@ -14,3 +14,10 @@ wheels/
 
 # Local config secrets
 src/blender_mcp/config.py
+
+test_*.py
+.pytest_cache/
+
+supabase/
+
+scripts/
