@@ -2274,7 +2274,7 @@ class BlenderMCPServer:
         api_key = self._get_sketchfab_api_key()
 
         # Test the API key if present
-        if api_key:
+        if api_key and enabled:
             try:
                 headers = {
                     "Authorization": f"Token {api_key}"
