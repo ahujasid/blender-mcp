@@ -22,6 +22,7 @@ blender-mcp = "blender_mcp.server:main"
 
 [tool.pytest.ini_options]
 python_files = ["test_*.py"]
+testpaths = ["tests"]
 
 [build-system]
 requires = ["setuptools>=77.0", "wheel"]

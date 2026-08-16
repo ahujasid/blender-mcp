@@ -1,10 +1,9 @@
 """Regression coverage for Sketchfab availability reporting."""
 import importlib.util
-import pathlib
 import sys
 import types
 
-ADDON = pathlib.Path(__file__).with_name("addon.py")
+from conftest import ROOT_ADDON as ADDON
 
 
 def _load_addon(monkeypatch, scene):

@@ -1,12 +1,11 @@
 """Regression coverage for Hunyuan import URL routing and zip-slip checks."""
 import importlib.util
 import io
-import pathlib
 import sys
 import types
 import zipfile
 
-ADDON = pathlib.Path(__file__).with_name("addon.py")
+from conftest import ROOT_ADDON as ADDON
 
 
 def _install_bpy_stubs(monkeypatch, scene):
