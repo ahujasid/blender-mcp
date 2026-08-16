@@ -3048,9 +3048,10 @@ class BlenderMCPServer:
         # Validate URL
         if not re.match(r'^https?://', zip_file_url, re.IGNORECASE):
             return {"error": "Invalid URL format. Must start with http:// or https://"}
-        
+
         # Prefer GLB (self-contained with materials) over OBJ/ZIP (API 3.0 returns .glb URLs)
-        if zip_file_url.endswith('.glb') or '.glb?' in zip_file_url:
+        url_path = zip_file_url.split('?', 1)[0].split('#', 1)[0].lower()
+        if url_path.endswith('.glb'):
             temp_dir = tempfile.mkdtemp(prefix="hunyuan_glb_")
             glb_path = osp.join(temp_dir, "model.glb")
             try:
@@ -3078,11 +3079,8 @@ class BlenderMCPServer:
             except Exception as e:
                 return {"succeed": False, "error": str(e)}
             finally:
-                try:
-                    if os.path.exists(glb_path):
-                        os.remove(glb_path)
-                except Exception:
-                    pass
+                with suppress(Exception):
+                    shutil.rmtree(temp_dir)
 
         # Fallback: ZIP/OBJ import (legacy)
         temp_dir = tempfile.mkdtemp(prefix="tencent_obj_")
@@ -3095,6 +3093,22 @@ class BlenderMCPServer:
                 for chunk in zip_response.iter_content(chunk_size=8192):
                     f.write(chunk)
             with zipfile.ZipFile(zip_file_path, "r") as zip_ref:
+                # Mirror the Sketchfab zip-slip checks before extractall.
+                abs_temp_dir = os.path.abspath(temp_dir)
+                for file_info in zip_ref.infolist():
+                    file_path = file_info.filename
+                    target_path = os.path.join(temp_dir, os.path.normpath(file_path))
+                    abs_target_path = os.path.abspath(target_path)
+                    if not abs_target_path.startswith(abs_temp_dir + os.sep) and abs_target_path != abs_temp_dir:
+                        return {
+                            "succeed": False,
+                            "error": "Security issue: Zip contains files with path traversal attempt",
+                        }
+                    if ".." in file_path:
+                        return {
+                            "succeed": False,
+                            "error": "Security issue: Zip contains files with directory traversal sequence",
+                        }
                 zip_ref.extractall(temp_dir)
             for file in os.listdir(temp_dir):
                 if file.endswith(".obj"):
@@ -3123,13 +3137,8 @@ class BlenderMCPServer:
         except Exception as e:
             return {"succeed": False, "error": str(e)}
         finally:
-            try:
-                if os.path.exists(zip_file_path):
-                    os.remove(zip_file_path)
-                if os.path.exists(obj_file_path):
-                    os.remove(obj_file_path)
-            except Exception as e:
-                print(f"Failed to clean up temporary directory {temp_dir}: {e}")
+            with suppress(Exception):
+                shutil.rmtree(temp_dir)
     #endregion
 
 # Blender Addon Preferences

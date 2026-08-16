@@ -1262,8 +1262,8 @@ def poll_hunyuan_job_status(
 
         Returns the generation task status. The task is done if status is "DONE".
         The task is in progress if status is "RUN".
-        If status is "DONE", returns ResultFile3Ds, which is the generated ZIP model path
-        When the status is "DONE", the response includes a field named ResultFile3Ds that contains the generated ZIP file path of the 3D model in OBJ format.
+        If status is "DONE", returns ResultFile3Ds with one or more downloadable model URLs.
+        Prefer a .glb URL when present (self-contained with materials); otherwise use a .zip/.obj asset URL.
         This is a polling API, so only proceed if the status are finally determined ("DONE" or some failed state).
     """
     try:
@@ -1289,7 +1289,7 @@ async def import_generated_asset_hunyuan(
 
     Parameters:
     - name: The name of the object in scene
-    - zip_file_url: The zip_file_url given in the generate model step.
+    - zip_file_url: A model URL from ResultFile3Ds. Prefer a .glb URL when available; .zip/.obj URLs still work as a fallback.
 
     Return if the asset has been imported successfully.
     """
@@ -1419,7 +1419,7 @@ def asset_creation_strategy() -> str:
                         2. Poll the status
                             - Use poll_hunyuan_job_status() to check if the generation task has completed or failed
                         3. Import the asset
-                            - Use import_generated_asset_hunyuan() to import the generated OBJ model the asset
+                            - Use import_generated_asset_hunyuan() with a ResultFile3Ds URL (prefer .glb, else .zip/.obj)
                     if Hunyuan3D mode is "LOCAL_API":
                         - For objects/models, do the following steps:
                         1. Create the model generation task

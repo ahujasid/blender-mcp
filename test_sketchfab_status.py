@@ -22,8 +22,28 @@ def _load_addon(monkeypatch, scene):
         setattr(props, name, lambda **_kwargs: None)
     bpy.props = props
 
+    handlers = types.ModuleType("bpy.app.handlers")
+    handlers.persistent = lambda fn: fn
+    handlers.undo_post = []
+    handlers.redo_post = []
+    handlers.depsgraph_update_post = []
+
+    app = types.ModuleType("bpy.app")
+    app.version = (4, 2, 0)
+    app.version_string = "4.2.0"
+    app.background = False
+    app.handlers = handlers
+    app.timers = types.SimpleNamespace(
+        is_registered=lambda *_a, **_k: False,
+        register=lambda *_a, **_k: None,
+        unregister=lambda *_a, **_k: None,
+    )
+    bpy.app = app
+
     monkeypatch.setitem(sys.modules, "bpy", bpy)
     monkeypatch.setitem(sys.modules, "bpy.props", props)
+    monkeypatch.setitem(sys.modules, "bpy.app", app)
+    monkeypatch.setitem(sys.modules, "bpy.app.handlers", handlers)
     monkeypatch.setitem(sys.modules, "mathutils", types.ModuleType("mathutils"))
 
     requests = types.ModuleType("requests")

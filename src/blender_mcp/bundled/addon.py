@@ -2274,7 +2274,7 @@ class BlenderMCPServer:
         api_key = self._get_sketchfab_api_key()
 
         # Test the API key if present
-        if api_key:
+        if api_key and enabled:
             try:
                 headers = {
                     "Authorization": f"Token {api_key}"
@@ -2859,10 +2859,10 @@ class BlenderMCPServer:
                 return {"error": "Prompt or Image is required"}
             if text_prompt and image:
                 return {"error": "Prompt and Image cannot be provided simultaneously"}
-            # Fixed parameter configuration
-            service = "hunyuan"
-            action = "SubmitHunyuanTo3DJob"
-            version = "2023-09-01"
+            # Updated to Tencent Cloud AI3D API 3.0 (2025-05-13)
+            service = "ai3d"
+            action = "SubmitHunyuanTo3DProJob"
+            version = "2025-05-13"
             region = "ap-guangzhou"
 
             headParams={
@@ -2872,14 +2872,12 @@ class BlenderMCPServer:
             }
 
             # Constructing request parameters
-            data = {
-                "Num": 1  # The current API limit is only 1
-            }
+            data = {}
 
             # Handling text prompts
             if text_prompt:
-                if len(text_prompt) > 200:
-                    return {"error": "Prompt exceeds 200 characters limit"}
+                if len(text_prompt) > 1024:
+                    return {"error": "Prompt exceeds 1024 characters limit"}
                 data["Prompt"] = text_prompt
 
             # Handling image
@@ -3007,9 +3005,10 @@ class BlenderMCPServer:
             if not job_id:
                 return {"error": "JobId is required"}
             
-            service = "hunyuan"
-            action = "QueryHunyuanTo3DJob"
-            version = "2023-09-01"
+            # Updated to Tencent Cloud AI3D API 3.0 (2025-05-13)
+            service = "ai3d"
+            action = "QueryHunyuanTo3DProJob"
+            version = "2025-05-13"
             region = "ap-guangzhou"
 
             headParams={
@@ -3042,78 +3041,104 @@ class BlenderMCPServer:
     def import_generated_asset_hunyuan(self, *args, **kwargs):
         return self.import_generated_asset_hunyuan_ai(*args, **kwargs)
             
-    def import_generated_asset_hunyuan_ai(self, name: str , zip_file_url: str):
+    def import_generated_asset_hunyuan_ai(self, name: str, zip_file_url: str):
         if not zip_file_url:
-            return {"error": "Zip file not found"}
+            return {"error": "No file URL provided"}
         
         # Validate URL
         if not re.match(r'^https?://', zip_file_url, re.IGNORECASE):
             return {"error": "Invalid URL format. Must start with http:// or https://"}
-        
-        # Create a temporary directory
+
+        # Prefer GLB (self-contained with materials) over OBJ/ZIP (API 3.0 returns .glb URLs)
+        url_path = zip_file_url.split('?', 1)[0].split('#', 1)[0].lower()
+        if url_path.endswith('.glb'):
+            temp_dir = tempfile.mkdtemp(prefix="hunyuan_glb_")
+            glb_path = osp.join(temp_dir, "model.glb")
+            try:
+                glb_response = requests.get(zip_file_url, stream=True)
+                glb_response.raise_for_status()
+                with open(glb_path, "wb") as f:
+                    for chunk in glb_response.iter_content(chunk_size=8192):
+                        f.write(chunk)
+                bpy.ops.import_scene.gltf(filepath=glb_path)
+                imported_objs = [obj for obj in bpy.context.selected_objects if obj.type == 'MESH']
+                if not imported_objs:
+                    return {"succeed": False, "error": "No mesh objects imported from GLB"}
+                obj = imported_objs[0]
+                if name:
+                    obj.name = name
+                result = {
+                    "name": obj.name, "type": obj.type,
+                    "location": [obj.location.x, obj.location.y, obj.location.z],
+                    "rotation": [obj.rotation_euler.x, obj.rotation_euler.y, obj.rotation_euler.z],
+                    "scale": [obj.scale.x, obj.scale.y, obj.scale.z],
+                }
+                if obj.type == "MESH":
+                    result["world_bounding_box"] = self._get_aabb(obj)
+                return {"succeed": True, **result}
+            except Exception as e:
+                return {"succeed": False, "error": str(e)}
+            finally:
+                with suppress(Exception):
+                    shutil.rmtree(temp_dir)
+
+        # Fallback: ZIP/OBJ import (legacy)
         temp_dir = tempfile.mkdtemp(prefix="tencent_obj_")
         zip_file_path = osp.join(temp_dir, "model.zip")
         obj_file_path = osp.join(temp_dir, "model.obj")
-        mtl_file_path = osp.join(temp_dir, "model.mtl")
-
         try:
-            # Download ZIP file
             zip_response = requests.get(zip_file_url, stream=True)
             zip_response.raise_for_status()
             with open(zip_file_path, "wb") as f:
                 for chunk in zip_response.iter_content(chunk_size=8192):
                     f.write(chunk)
-
-            # Unzip the ZIP
             with zipfile.ZipFile(zip_file_path, "r") as zip_ref:
+                # Mirror the Sketchfab zip-slip checks before extractall.
+                abs_temp_dir = os.path.abspath(temp_dir)
+                for file_info in zip_ref.infolist():
+                    file_path = file_info.filename
+                    target_path = os.path.join(temp_dir, os.path.normpath(file_path))
+                    abs_target_path = os.path.abspath(target_path)
+                    if not abs_target_path.startswith(abs_temp_dir + os.sep) and abs_target_path != abs_temp_dir:
+                        return {
+                            "succeed": False,
+                            "error": "Security issue: Zip contains files with path traversal attempt",
+                        }
+                    if ".." in file_path:
+                        return {
+                            "succeed": False,
+                            "error": "Security issue: Zip contains files with directory traversal sequence",
+                        }
                 zip_ref.extractall(temp_dir)
-
-            # Find the .obj file (there may be multiple, assuming the main file is model.obj)
             for file in os.listdir(temp_dir):
                 if file.endswith(".obj"):
                     obj_file_path = osp.join(temp_dir, file)
-
             if not osp.exists(obj_file_path):
                 return {"succeed": False, "error": "OBJ file not found after extraction"}
-
-            # Import obj file
             if bpy.app.version>=(4, 0, 0):
                 bpy.ops.wm.obj_import(filepath=obj_file_path)
             else:
                 bpy.ops.import_scene.obj(filepath=obj_file_path)
-
             imported_objs = [obj for obj in bpy.context.selected_objects if obj.type == 'MESH']
             if not imported_objs:
                 return {"succeed": False, "error": "No mesh objects imported"}
-
             obj = imported_objs[0]
             if name:
                 obj.name = name
-
             result = {
-                "name": obj.name,
-                "type": obj.type,
+                "name": obj.name, "type": obj.type,
                 "location": [obj.location.x, obj.location.y, obj.location.z],
                 "rotation": [obj.rotation_euler.x, obj.rotation_euler.y, obj.rotation_euler.z],
                 "scale": [obj.scale.x, obj.scale.y, obj.scale.z],
             }
-
             if obj.type == "MESH":
-                bounding_box = self._get_aabb(obj)
-                result["world_bounding_box"] = bounding_box
-
+                result["world_bounding_box"] = self._get_aabb(obj)
             return {"succeed": True, **result}
         except Exception as e:
             return {"succeed": False, "error": str(e)}
         finally:
-            #  Clean up temporary zip and obj, save texture and mtl
-            try:
-                if os.path.exists(zip_file_path):
-                    os.remove(zip_file_path) 
-                if os.path.exists(obj_file_path):
-                    os.remove(obj_file_path)
-            except Exception as e:
-                print(f"Failed to clean up temporary directory {temp_dir}: {e}")
+            with suppress(Exception):
+                shutil.rmtree(temp_dir)
     #endregion
 
 # Blender Addon Preferences
