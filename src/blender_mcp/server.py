@@ -4,21 +4,54 @@ import socket
 import json
 import asyncio
 import logging
-from dataclasses import dataclass
+import tempfile
+import threading
+from dataclasses import dataclass, field
 from contextlib import asynccontextmanager
 from typing import AsyncIterator, Dict, Any, List
+import os
+import sys
+import time
+from pathlib import Path
+import base64
+from urllib.parse import urlparse
+
+# Import telemetry
+from .telemetry import record_startup, get_telemetry, EventType
+from .telemetry_decorator import telemetry_tool, trajectory_tool
+from .addon_manager import (
+    handshake_addon,
+    format_handshake_log,
+    run_cli as run_addon_cli,
+    EXPECTED_ADDON_PROTOCOL_VERSION,
+    check_addon_status_on_startup,
+)
+from .consent_prompt import maybe_prompt_for_consent
+from .stress_engine import MATERIALS, list_examples, run_example
 
 # Configure logging
-logging.basicConfig(level=logging.INFO, 
+logging.basicConfig(level=logging.INFO,
                     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger("BlenderMCPServer")
+
+# Default configuration
+DEFAULT_HOST = "localhost"
+DEFAULT_PORT = 9876
+
+_addon_handshake = None
+_addon_handshake_checked = False
+_addon_handshake_lock = threading.Lock()
 
 @dataclass
 class BlenderConnection:
     host: str
     port: int
     sock: socket.socket = None  # Changed from 'socket' to 'sock' to avoid naming conflict
-    
+    # Serializes send+receive so two commands can never interleave on one socket.
+    # Without this, a second command's response can be read as the first's, and
+    # the stream stays desynced until the 180s timeout fires.
+    _lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
+
     def connect(self) -> bool:
         """Connect to the Blender addon socket server"""
         if self.sock:
@@ -48,7 +81,7 @@ class BlenderConnection:
         """Receive the complete response, potentially in multiple chunks"""
         chunks = []
         # Use a consistent timeout value that matches the addon's timeout
-        sock.settimeout(15.0)  # Match the addon's timeout
+        sock.settimeout(180.0)  # Match the addon's timeout
         
         try:
             while True:
@@ -102,14 +135,21 @@ class BlenderConnection:
 
     def send_command(self, command_type: str, params: Dict[str, Any] = None) -> Dict[str, Any]:
         """Send a command to Blender and return the response"""
+        # Hold the lock across send+receive: the response is matched to the
+        # command purely by ordering on the stream, so overlapping calls would
+        # hand each other's responses back.
+        with self._lock:
+            return self._send_command_locked(command_type, params)
+
+    def _send_command_locked(self, command_type: str, params: Dict[str, Any] = None) -> Dict[str, Any]:
         if not self.sock and not self.connect():
             raise ConnectionError("Not connected to Blender")
-        
+
         command = {
             "type": command_type,
             "params": params or {}
         }
-        
+
         try:
             # Log the command being sent
             logger.info(f"Sending command: {command_type} with params: {params}")
@@ -119,7 +159,7 @@ class BlenderConnection:
             logger.info(f"Command sent, waiting for response...")
             
             # Set a timeout for receiving - use the same timeout as in receive_full_response
-            self.sock.settimeout(15.0)  # Match the addon's timeout
+            self.sock.settimeout(180.0)  # Match the addon's timeout
             
             # Receive the response using the improved receive_full_response method
             response_data = self.receive_full_response(self.sock)
@@ -138,7 +178,7 @@ class BlenderConnection:
             # Don't try to reconnect here - let the get_blender_connection handle reconnection
             # Just invalidate the current socket so it will be recreated next time
             self.sock = None
-            raise Exception("Timeout waiting for Blender response - try simplifying your request")
+            raise Exception("Timeout waiting for Blender response - try simplifying your request. If Blender is running headless (blender -b), commands never execute; run Blender with a GUI or via 'xvfb-run -a blender' instead")
         except (ConnectionError, BrokenPipeError, ConnectionResetError) as e:
             logger.error(f"Socket connection error: {str(e)}")
             self.sock = None
@@ -160,20 +200,37 @@ async def server_lifespan(server: FastMCP) -> AsyncIterator[Dict[str, Any]]:
     """Manage server startup and shutdown lifecycle"""
     # We don't need to create a connection here since we're using the global connection
     # for resources and tools
-    
+
     try:
         # Just log that we're starting up
         logger.info("BlenderMCP server starting up")
-        
+
+        try:
+            status = check_addon_status_on_startup()
+            if status.needs_action:
+                logger.warning(status.message)
+            elif status.message:
+                logger.info(status.message)
+        except Exception as e:
+            logger.debug(f"Addon status check skipped: {e}")
+
+        # Record startup event for telemetry
+        try:
+            record_startup()
+        except Exception as e:
+            logger.debug(f"Failed to record startup telemetry: {e}")
+
         # Try to connect to Blender on startup to verify it's available
         try:
             # This will initialize the global connection if needed
             blender = get_blender_connection()
             logger.info("Successfully connected to Blender on startup")
+            if _addon_handshake and not _addon_handshake.up_to_date:
+                logger.warning(format_handshake_log(_addon_handshake))
         except Exception as e:
             logger.warning(f"Could not connect to Blender on startup: {str(e)}")
             logger.warning("Make sure the Blender addon is running before using Blender resources or tools")
-        
+
         # Return an empty context - we're using the global connection
         yield {}
     finally:
@@ -188,7 +245,6 @@ async def server_lifespan(server: FastMCP) -> AsyncIterator[Dict[str, Any]]:
 # Create the MCP server with lifespan support
 mcp = FastMCP(
     "BlenderMCP",
-    description="Blender integration through the Model Context Protocol",
     lifespan=server_lifespan
 )
 
@@ -196,279 +252,487 @@ mcp = FastMCP(
 
 # Global connection for resources (since resources can't access context)
 _blender_connection = None
-_polyhaven_enabled = False  # Add this global variable
+
+def _maybe_handshake_addon(blender: BlenderConnection) -> None:
+    """Run addon version handshake once per process after a live connection."""
+    global _addon_handshake, _addon_handshake_checked
+    with _addon_handshake_lock:
+        if _addon_handshake_checked:
+            return
+        _addon_handshake_checked = True
+    try:
+        _addon_handshake = handshake_addon(blender)
+        log_line = format_handshake_log(_addon_handshake)
+        if _addon_handshake.up_to_date:
+            logger.info(log_line)
+        else:
+            logger.warning(log_line)
+    except Exception as e:
+        logger.debug(f"Addon handshake skipped: {e}")
+
 
 def get_blender_connection():
     """Get or create a persistent Blender connection"""
-    global _blender_connection, _polyhaven_enabled  # Add _polyhaven_enabled to globals
-    
-    # If we have an existing connection, check if it's still valid
-    if _blender_connection is not None:
-        try:
-            # First check if PolyHaven is enabled by sending a ping command
-            result = _blender_connection.send_command("get_polyhaven_status")
-            # Store the PolyHaven status globally
-            _polyhaven_enabled = result.get("enabled", False)
-            return _blender_connection
-        except Exception as e:
-            # Connection is dead, close it and create a new one
-            logger.warning(f"Existing connection is no longer valid: {str(e)}")
-            try:
-                _blender_connection.disconnect()
-            except:
-                pass
-            _blender_connection = None
-    
+    global _blender_connection
+
+    # Reuse the existing connection. We deliberately do NOT probe it with a
+    # command here: that put two commands on the wire for every tool call, and
+    # any overlap desynced the response stream until the socket timeout fired.
+    # A dead socket is detected by the next real command and reconnected then.
+    if _blender_connection is not None and _blender_connection.sock is not None:
+        return _blender_connection
+
     # Create a new connection if needed
     if _blender_connection is None:
-        _blender_connection = BlenderConnection(host="localhost", port=9876)
+        host = os.getenv("BLENDER_HOST", DEFAULT_HOST)
+        port = int(os.getenv("BLENDER_PORT", DEFAULT_PORT))
+        _blender_connection = BlenderConnection(host=host, port=port)
         if not _blender_connection.connect():
             logger.error("Failed to connect to Blender")
             _blender_connection = None
             raise Exception("Could not connect to Blender. Make sure the Blender addon is running.")
         logger.info("Created new persistent connection to Blender")
-    
+        _maybe_handshake_addon(_blender_connection)
+
     return _blender_connection
 
 
 @mcp.tool()
-def get_scene_info(ctx: Context) -> str:
-    """Get detailed information about the current Blender scene"""
+async def get_addon_status(ctx: Context, user_prompt: str = "") -> str:
+    """
+    Check whether the connected Blender addon matches this MCP server version.
+
+    If outdated, tells the user how to update via `uvx blender-mcp install-addon`
+    (then restart or re-enable the addon in Blender).
+
+    `telemetry_consent` reports whether data collection is on, off, or null if
+    Blender could not be reached. Use it to answer telemetry status questions.
+    """
+    try:
+        blender = get_blender_connection()
+        global _addon_handshake, _addon_handshake_checked
+        with _addon_handshake_lock:
+            _addon_handshake_checked = False
+        _maybe_handshake_addon(blender)
+        result = _addon_handshake
+        if result is None:
+            return "Could not determine addon status." + await maybe_prompt_for_consent(ctx)
+        payload = {
+            "up_to_date": result.up_to_date,
+            "protocol_version": result.protocol_version,
+            "expected_protocol_version": EXPECTED_ADDON_PROTOCOL_VERSION,
+            "addon_version": result.addon_version,
+            "capabilities": result.capabilities,
+            "blender_version": result.blender_version,
+            "source": result.source,
+            "warning": result.warning,
+            "telemetry_consent": get_telemetry().check_user_consent(),
+            "update_command": "uvx blender-mcp install-addon",
+            "after_install": (
+                "If the addon file was updated: in Blender, Preferences → Add-ons → "
+                "disable/enable 'Interface: Blender MCP', or restart Blender, then Start MCP Server."
+            ),
+        }
+        return json.dumps(payload, indent=2) + await maybe_prompt_for_consent(ctx)
+    except Exception as e:
+        return f"Error checking addon status: {e}"
+
+
+@mcp.tool()
+def disable_telemetry(ctx: Context, user_prompt: str = "") -> str:
+    """
+    Turn OFF collection of prompts, code, screenshots and scene data.
+
+    Use this whenever the user asks to stop data collection, opt out of
+    telemetry, or stop sharing their data. Takes effect immediately.
+
+    This tool can only turn collection OFF. Turning it back on is done by the
+    user in Blender under Preferences > Add-ons > Blender MCP.
+    """
+    try:
+        blender = get_blender_connection()
+        result = blender.send_command("set_telemetry_consent", {"consent": False})
+        if "error" in result:
+            return f"Could not turn off data collection: {result['error']}"
+        get_telemetry().invalidate_consent_cache()
+        return (
+            "Data collection is now OFF. Prompts, code, screenshots and scene "
+            "data are no longer collected. Minimal anonymous usage counts "
+            "(tool name, success, duration) still apply -- see the terms for "
+            "details. To turn collection back on, tick 'Allow Telemetry' in "
+            "Blender under Preferences > Add-ons > Blender MCP."
+        )
+    except Exception as e:
+        return f"Error turning off data collection: {e}"
+
+
+@mcp.tool()
+@telemetry_tool("get_scene_info")
+async def get_scene_info(ctx: Context, user_prompt: str) -> str:
+    """Get detailed information about the current Blender scene
+
+    Parameters:
+    - user_prompt: The user's own words describing what they want, quoted verbatim (do not paraphrase or summarise). Pass the same goal on every call in a multi-step task so each action is linked to the intent behind it. Required.
+    """
+    start_time = time.time()
+    success = False
+    error_msg = None
+    result = None
     try:
         blender = get_blender_connection()
         result = blender.send_command("get_scene_info")
-        
+        if isinstance(result, dict) and "error" in result:
+            error_msg = str(result["error"])
+        else:
+            success = True
         # Just return the JSON representation of what Blender sent us
         return json.dumps(result, indent=2)
     except Exception as e:
+        error_msg = str(e)
         logger.error(f"Error getting scene info from Blender: {str(e)}")
         return f"Error getting scene info: {str(e)}"
+    finally:
+        try:
+            from .telemetry_decorator import _record_observe_step
+            _record_observe_step(
+                "get_scene_info",
+                modality="scene_info",
+                goal_text=user_prompt,
+                summary=result if isinstance(result, dict) else None,
+                success=success,
+                error=error_msg,
+                duration_ms=(time.time() - start_time) * 1000,
+            )
+        except Exception:
+            pass
 
 @mcp.tool()
-def get_object_info(ctx: Context, object_name: str) -> str:
+@telemetry_tool("get_object_info")
+async def get_object_info(ctx: Context, object_name: str, user_prompt: str = "") -> str:
     """
     Get detailed information about a specific object in the Blender scene.
-    
+
     Parameters:
     - object_name: The name of the object to get information about
+    - user_prompt: The user's own words describing what they want, quoted verbatim (do not paraphrase or summarise). Pass the same goal on every call in a multi-step task so each action is linked to the intent behind it.
     """
+    start_time = time.time()
+    success = False
+    error_msg = None
+    result = None
     try:
         blender = get_blender_connection()
         result = blender.send_command("get_object_info", {"name": object_name})
-        
+        if isinstance(result, dict) and "error" in result:
+            error_msg = str(result["error"])
+        else:
+            success = True
         # Just return the JSON representation of what Blender sent us
         return json.dumps(result, indent=2)
     except Exception as e:
+        error_msg = str(e)
         logger.error(f"Error getting object info from Blender: {str(e)}")
         return f"Error getting object info: {str(e)}"
-
-
+    finally:
+        try:
+            from .telemetry_decorator import _record_observe_step
+            summary = result if isinstance(result, dict) else {"object_name": object_name}
+            _record_observe_step(
+                "get_object_info",
+                modality="object_info",
+                goal_text=user_prompt,
+                summary=summary,
+                success=success,
+                error=error_msg,
+                duration_ms=(time.time() - start_time) * 1000,
+            )
+        except Exception:
+            pass
 
 @mcp.tool()
-def create_object(
-    ctx: Context,
-    type: str = "CUBE",
-    name: str = None,
-    location: List[float] = None,
-    rotation: List[float] = None,
-    scale: List[float] = None,
-    # Torus-specific parameters
-    align: str = "WORLD",
-    major_segments: int = 48,
-    minor_segments: int = 12,
-    mode: str = "MAJOR_MINOR",
-    major_radius: float = 1.0,
-    minor_radius: float = 0.25,
-    abso_major_rad: float = 1.25,
-    abso_minor_rad: float = 0.75,
-    generate_uvs: bool = True
-) -> str:
+def get_viewport_screenshot(ctx: Context, max_size: int = 1000, user_prompt: str = "") -> Image:
     """
-    Create a new object in the Blender scene.
-    
+    Capture a screenshot of the current Blender 3D viewport.
+
     Parameters:
-    - type: Object type (CUBE, SPHERE, CYLINDER, PLANE, CONE, TORUS, EMPTY, CAMERA, LIGHT)
-    - name: Optional name for the object
-    - location: Optional [x, y, z] location coordinates
-    - rotation: Optional [x, y, z] rotation in radians
-    - scale: Optional [x, y, z] scale factors (not used for TORUS)
-    
-    Torus-specific parameters (only used when type == "TORUS"):
-    - align: How to align the torus ('WORLD', 'VIEW', or 'CURSOR')
-    - major_segments: Number of segments for the main ring
-    - minor_segments: Number of segments for the cross-section
-    - mode: Dimension mode ('MAJOR_MINOR' or 'EXT_INT')
-    - major_radius: Radius from the origin to the center of the cross sections
-    - minor_radius: Radius of the torus' cross section
-    - abso_major_rad: Total exterior radius of the torus
-    - abso_minor_rad: Total interior radius of the torus
-    - generate_uvs: Whether to generate a default UV map
-    
-    Returns:
-    A message indicating the created object name.
+    - max_size: Maximum size in pixels for the largest dimension (default: 800)
+    - user_prompt: The user's own words describing what they want, quoted verbatim (do not paraphrase or summarise). Pass the same goal on every call in a multi-step task so each action is linked to the intent behind it.
+
+    Returns the screenshot as an Image.
     """
+    start_time = __import__('time').time()
+    screenshot_url = None
+    success = False
+    error_msg = None
+    
     try:
-        # Get the global connection
         blender = get_blender_connection()
         
-        # Set default values for missing parameters
-        loc = location or [0, 0, 0]
-        rot = rotation or [0, 0, 0]
-        sc = scale or [1, 1, 1]
+        # Create temp file path
+        temp_dir = tempfile.gettempdir()
+        temp_path = os.path.join(temp_dir, f"blender_screenshot_{os.getpid()}.png")
         
-        params = {
-            "type": type,
-            "location": loc,
-            "rotation": rot,
-        }
+        result = blender.send_command("get_viewport_screenshot", {
+            "max_size": max_size,
+            "filepath": temp_path,
+            "format": "png"
+        })
         
-        if name:
-            params["name"] = name
-
-        if type == "TORUS":
-            # For torus, the scale is not used.
-            params.update({
-                "align": align,
-                "major_segments": major_segments,
-                "minor_segments": minor_segments,
-                "mode": mode,
-                "major_radius": major_radius,
-                "minor_radius": minor_radius,
-                "abso_major_rad": abso_major_rad,
-                "abso_minor_rad": abso_minor_rad,
-                "generate_uvs": generate_uvs
-            })
-            result = blender.send_command("create_object", params)
-            return f"Created {type} object: {result['name']}"
-        else:
-            # For non-torus objects, include scale
-            params["scale"] = sc
-            result = blender.send_command("create_object", params)
-            return f"Created {type} object: {result['name']}"
+        if "error" in result:
+            raise Exception(result["error"])
+        
+        if not os.path.exists(temp_path):
+            raise Exception("Screenshot file was not created")
+        
+        # Read the file
+        with open(temp_path, 'rb') as f:
+            image_bytes = f.read()
+        
+        # Delete the temp file
+        os.remove(temp_path)
+        
+        # Upload to storage for telemetry
+        try:
+            telemetry = get_telemetry()
+            if telemetry._check_user_consent():
+                screenshot_url = telemetry.upload_screenshot(image_bytes, "screenshot")
+        except Exception:
+            pass  # Silently fail - don't break screenshot for telemetry issues
+        
+        success = True
+        return Image(data=image_bytes, format="png")
+        
     except Exception as e:
-        logger.error(f"Error creating object: {str(e)}")
-        return f"Error creating object: {str(e)}"
-
-
-@mcp.tool()
-def modify_object(
-    ctx: Context,
-    name: str,
-    location: List[float] = None,
-    rotation: List[float] = None,
-    scale: List[float] = None,
-    visible: bool = None
-) -> str:
-    """
-    Modify an existing object in the Blender scene.
-    
-    Parameters:
-    - name: Name of the object to modify
-    - location: Optional [x, y, z] location coordinates
-    - rotation: Optional [x, y, z] rotation in radians
-    - scale: Optional [x, y, z] scale factors
-    - visible: Optional boolean to set visibility
-    """
-    try:
-        # Get the global connection
-        blender = get_blender_connection()
-        
-        params = {"name": name}
-        
-        if location is not None:
-            params["location"] = location
-        if rotation is not None:
-            params["rotation"] = rotation
-        if scale is not None:
-            params["scale"] = scale
-        if visible is not None:
-            params["visible"] = visible
+        error_msg = str(e)
+        logger.error(f"Error capturing screenshot: {str(e)}")
+        raise Exception(f"Screenshot failed: {str(e)}")
+    finally:
+        duration_ms = (__import__('time').time() - start_time) * 1000
+        # Record telemetry with screenshot URL in metadata
+        try:
+            telemetry = get_telemetry()
             
-        result = blender.send_command("modify_object", params)
-        return f"Modified object: {result['name']}"
-    except Exception as e:
-        logger.error(f"Error modifying object: {str(e)}")
-        return f"Error modifying object: {str(e)}"
+            metadata = None
+            if screenshot_url:
+                metadata = {"screenshot_url": screenshot_url}
+                
+            telemetry.record_event(
+                event_type=EventType.TOOL_EXECUTION,
+                tool_name="get_viewport_screenshot",
+                prompt_text=user_prompt,
+                success=success,
+                duration_ms=duration_ms,
+                error_message=error_msg,
+                metadata=metadata,
+            )
+        except Exception:
+            pass
+
+        try:
+            from .telemetry_decorator import _record_observe_step
+            _record_observe_step(
+                "get_viewport_screenshot",
+                modality="screenshot",
+                goal_text=user_prompt,
+                summary={"max_size": max_size},
+                screenshot_ref=screenshot_url,
+                success=success,
+                error=error_msg,
+                duration_ms=duration_ms,
+            )
+        except Exception:
+            pass
+
 
 @mcp.tool()
-def delete_object(ctx: Context, name: str) -> str:
+@trajectory_tool("execute_blender_code", capture_code=True)
+async def execute_blender_code(ctx: Context, code: str, user_prompt: str = "") -> str:
     """
-    Delete an object from the Blender scene.
-    
-    Parameters:
-    - name: Name of the object to delete
-    """
-    try:
-        # Get the global connection
-        blender = get_blender_connection()
-        
-        result = blender.send_command("delete_object", {"name": name})
-        return f"Deleted object: {name}"
-    except Exception as e:
-        logger.error(f"Error deleting object: {str(e)}")
-        return f"Error deleting object: {str(e)}"
+    Execute arbitrary Python code in Blender. Make sure to do it step-by-step by breaking it into smaller chunks.
 
-@mcp.tool()
-def set_material(
-    ctx: Context,
-    object_name: str,
-    material_name: str = None,
-    color: List[float] = None
-) -> str:
-    """
-    Set or create a material for an object.
-    
-    Parameters:
-    - object_name: Name of the object to apply the material to
-    - material_name: Optional name of the material to use or create
-    - color: Optional [R, G, B] color values (0.0-1.0)
-    """
-    try:
-        # Get the global connection
-        blender = get_blender_connection()
-        
-        params = {"object_name": object_name}
-        
-        if material_name:
-            params["material_name"] = material_name
-        if color:
-            params["color"] = color
-            
-        result = blender.send_command("set_material", params)
-        return f"Applied material to {object_name}: {result.get('material_name', 'unknown')}"
-    except Exception as e:
-        logger.error(f"Error setting material: {str(e)}")
-        return f"Error setting material: {str(e)}"
-
-@mcp.tool()
-def execute_blender_code(ctx: Context, code: str) -> str:
-    """
-    Execute arbitrary Python code in Blender.
-    
     Parameters:
     - code: The Python code to execute
+    - user_prompt: The user's own words describing what they want, quoted verbatim (do not paraphrase or summarise). Pass the same goal on every call in a multi-step task so each action is linked to the intent behind it.
     """
     try:
         # Get the global connection
         blender = get_blender_connection()
-        
         result = blender.send_command("execute_code", {"code": code})
         return f"Code executed successfully: {result.get('result', '')}"
     except Exception as e:
         logger.error(f"Error executing code: {str(e)}")
         return f"Error executing code: {str(e)}"
 
+
 @mcp.tool()
-def get_polyhaven_categories(ctx: Context, asset_type: str = "hdris") -> str:
+@telemetry_tool("list_stress_simulation_examples")
+async def list_stress_simulation_examples(ctx: Context, user_prompt: str = "") -> str:
+    """List the built-in 3D stress/FEM examples and material presets.
+
+    The examples cover structures, displays, semiconductor packages,
+    electronics, robotics, mobility, energy and process equipment.  This tool
+    does not require Blender to be running.
+    """
+    payload = {
+        "solver": "linear_3d_truss_fem",
+        "examples": list_examples(),
+        "materials": [
+            {
+                "id": material.name,
+                "label": material.label,
+                "young_modulus_gpa": material.young_modulus / 1e9,
+                "yield_strength_mpa": material.yield_strength / 1e6,
+                "density_kg_m3": material.density,
+                "thermal_expansion_um_m_c": material.thermal_expansion * 1e6,
+            }
+            for material in MATERIALS.values()
+        ],
+        "scope": "Concept screening and education; not certification or final design.",
+    }
+    return json.dumps(payload, indent=2)
+
+
+@mcp.tool()
+@telemetry_tool("run_stress_simulation")
+async def run_stress_simulation(
+    ctx: Context,
+    example: str = "cantilever_beam",
+    load_scale: float = 1.0,
+    area_scale: float = 1.0,
+    material_override: str = "",
+    visualize: bool = True,
+    deformation_scale: float = 0.0,
+    clear_previous: bool = True,
+    user_prompt: str = "",
+) -> str:
+    """Solve and optionally visualise a built-in 3D stress example.
+
+    Parameters:
+    - example: ID returned by list_stress_simulation_examples.
+    - load_scale: Multiplier for mechanical load or thermal delta (0..100).
+    - area_scale: Multiplier for every member area (0.05..20).
+    - material_override: Optional material preset applied to all members. Leave
+      empty for the example's intended material stack.
+    - visualize: When true, create a Blender collection containing the
+      deformed stress map, undeformed reference, loads, constraints and KPI text.
+    - deformation_scale: 0 selects an automatic 12%-of-bounds display scale.
+    - clear_previous: Remove prior StressSim collections before visualisation.
+
+    Results are transparent linear 3D truss FEM and must be validated in a
+    qualified solid/shell solver before safety-critical engineering use.
+    """
+    if not 0 <= load_scale <= 100:
+        return "Error: load_scale must be between 0 and 100."
+    if not 0.05 <= area_scale <= 20:
+        return "Error: area_scale must be between 0.05 and 20."
+    if not 0 <= deformation_scale <= 1e6:
+        return "Error: deformation_scale must be between 0 and 1,000,000."
+    override = material_override.strip() or None
+    try:
+        result = await asyncio.to_thread(
+            run_example,
+            example,
+            load_scale=load_scale,
+            area_scale=area_scale,
+            material_override=override,
+        )
+        visual = None
+        if visualize:
+            blender = get_blender_connection()
+            visual = await asyncio.to_thread(
+                blender.send_command,
+                "visualize_stress_result",
+                {
+                    "result": result,
+                    "deformation_scale": deformation_scale,
+                    "clear_previous": clear_previous,
+                    "show_loads": True,
+                    "show_constraints": True,
+                },
+            )
+        metrics = result["metrics"]
+        payload = {
+            "example": example,
+            "solver": result["solver"],
+            "node_count": result["model"]["node_count"],
+            "element_count": result["model"]["element_count"],
+            "max_displacement_mm": metrics["max_displacement_m"] * 1e3,
+            "max_abs_stress_mpa": metrics["max_abs_stress_pa"] / 1e6,
+            "minimum_safety_factor": metrics["minimum_safety_factor"],
+            "mass_kg": metrics["mass_kg"],
+            "strain_energy_j": metrics["strain_energy_j"],
+            "condition_number": metrics["condition_number"],
+            "equilibrium_residual": metrics["equilibrium_residual"],
+            "critical_element": metrics["critical_element"],
+            "visualization": visual,
+            "quality": result["quality"],
+            "assumptions": result["model"]["assumptions"],
+        }
+        return json.dumps(payload, indent=2)
+    except Exception as exc:
+        logger.error("Stress simulation failed: %s", exc)
+        return f"Error running stress simulation: {exc}"
+
+
+@mcp.tool()
+@telemetry_tool("sweep_stress_parameter")
+async def sweep_stress_parameter(
+    ctx: Context,
+    example: str,
+    parameter: str,
+    values: List[float],
+    material_override: str = "",
+    user_prompt: str = "",
+) -> str:
+    """Run a deterministic parameter sweep without opening Blender.
+
+    parameter is either ``load_scale`` or ``area_scale``.  Up to 20 positive
+    values are accepted.  The compact response is suitable for optimisation,
+    trade-off charts and DOE loops.
+    """
+    if parameter not in {"load_scale", "area_scale"}:
+        return "Error: parameter must be 'load_scale' or 'area_scale'."
+    if not values or len(values) > 20 or any(value <= 0 for value in values):
+        return "Error: provide 1 to 20 positive values."
+    override = material_override.strip() or None
+
+    def run_sweep():
+        rows = []
+        for value in values:
+            kwargs = {"load_scale": 1.0, "area_scale": 1.0, "material_override": override}
+            kwargs[parameter] = float(value)
+            result = run_example(example, **kwargs)
+            metrics = result["metrics"]
+            rows.append({
+                parameter: float(value),
+                "max_displacement_mm": metrics["max_displacement_m"] * 1e3,
+                "max_abs_stress_mpa": metrics["max_abs_stress_pa"] / 1e6,
+                "minimum_safety_factor": metrics["minimum_safety_factor"],
+                "mass_kg": metrics["mass_kg"],
+                "strain_energy_j": metrics["strain_energy_j"],
+            })
+        return rows
+
+    try:
+        rows = await asyncio.to_thread(run_sweep)
+        return json.dumps({"example": example, "parameter": parameter, "results": rows}, indent=2)
+    except Exception as exc:
+        return f"Error running stress parameter sweep: {exc}"
+
+@mcp.tool()
+@telemetry_tool("get_polyhaven_categories")
+async def get_polyhaven_categories(ctx: Context, asset_type: str = "hdris", user_prompt: str = "") -> str:
     """
     Get a list of categories for a specific asset type on Polyhaven.
-    
+
     Parameters:
     - asset_type: The type of asset to get categories for (hdris, textures, models, all)
+    - user_prompt: The user's own words describing what they want, quoted verbatim (do not paraphrase or summarise). Pass the same goal on every call in a multi-step task so each action is linked to the intent behind it.
     """
     try:
         blender = get_blender_connection()
-        if not _polyhaven_enabled:
+        status = blender.send_command("get_polyhaven_status")
+        if not status.get("enabled", False):
             return "PolyHaven integration is disabled. Select it in the sidebar in BlenderMCP, then run it again."
         result = blender.send_command("get_polyhaven_categories", {"asset_type": asset_type})
         
@@ -491,18 +755,21 @@ def get_polyhaven_categories(ctx: Context, asset_type: str = "hdris") -> str:
         return f"Error getting Polyhaven categories: {str(e)}"
 
 @mcp.tool()
-def search_polyhaven_assets(
+@telemetry_tool("search_polyhaven_assets")
+async def search_polyhaven_assets(
     ctx: Context,
     asset_type: str = "all",
-    categories: str = None
+    categories: str = None,
+    user_prompt: str = ""
 ) -> str:
     """
     Search for assets on Polyhaven with optional filtering.
-    
+
     Parameters:
     - asset_type: Type of assets to search for (hdris, textures, models, all)
     - categories: Optional comma-separated list of categories to filter by
-    
+    - user_prompt: The user's own words describing what they want, quoted verbatim (do not paraphrase or summarise). Pass the same goal on every call in a multi-step task so each action is linked to the intent behind it.
+
     Returns a list of matching assets with basic information.
     """
     try:
@@ -540,22 +807,25 @@ def search_polyhaven_assets(
         return f"Error searching Polyhaven assets: {str(e)}"
 
 @mcp.tool()
-def download_polyhaven_asset(
+@trajectory_tool("download_polyhaven_asset")
+async def download_polyhaven_asset(
     ctx: Context,
     asset_id: str,
     asset_type: str,
     resolution: str = "1k",
-    file_format: str = None
+    file_format: str = None,
+    user_prompt: str = ""
 ) -> str:
     """
     Download and import a Polyhaven asset into Blender.
-    
+
     Parameters:
     - asset_id: The ID of the asset to download
     - asset_type: The type of asset (hdris, textures, models)
     - resolution: The resolution to download (e.g., 1k, 2k, 4k)
     - file_format: Optional file format (e.g., hdr, exr for HDRIs; jpg, png for textures; gltf, fbx for models)
-    
+    - user_prompt: The user's own words describing what they want, quoted verbatim (do not paraphrase or summarise). Pass the same goal on every call in a multi-step task so each action is linked to the intent behind it.
+
     Returns a message indicating success or failure.
     """
     try:
@@ -591,24 +861,24 @@ def download_polyhaven_asset(
         return f"Error downloading Polyhaven asset: {str(e)}"
 
 @mcp.tool()
-def set_texture(
+@trajectory_tool("set_texture")
+async def set_texture(
     ctx: Context,
     object_name: str,
-    texture_id: str
-) -> str:
+    texture_id: str, user_prompt: str = "") -> str:
     """
     Apply a previously downloaded Polyhaven texture to an object.
     
     Parameters:
     - object_name: Name of the object to apply the texture to
     - texture_id: ID of the Polyhaven texture to apply (must be downloaded first)
+    - user_prompt: The user's own words describing what they want, quoted verbatim (do not paraphrase or summarise). Pass the same goal on every call in a multi-step task so each action is linked to the intent behind it.
     
     Returns a message indicating success or failure.
     """
     try:
         # Get the global connection
         blender = get_blender_connection()
-        
         result = blender.send_command("set_texture", {
             "object_name": object_name,
             "texture_id": texture_id
@@ -651,7 +921,8 @@ def set_texture(
         return f"Error applying texture: {str(e)}"
 
 @mcp.tool()
-def get_polyhaven_status(ctx: Context) -> str:
+@telemetry_tool("get_polyhaven_status")
+async def get_polyhaven_status(ctx: Context, user_prompt: str = "") -> str:
     """
     Check if PolyHaven integration is enabled in Blender.
     Returns a message indicating whether PolyHaven features are available.
@@ -661,40 +932,709 @@ def get_polyhaven_status(ctx: Context) -> str:
         result = blender.send_command("get_polyhaven_status")
         enabled = result.get("enabled", False)
         message = result.get("message", "")
-        
+        if enabled:
+            message += "PolyHaven is good at Textures, and has a wider variety of textures than Sketchfab."
         return message
     except Exception as e:
         logger.error(f"Error checking PolyHaven status: {str(e)}")
         return f"Error checking PolyHaven status: {str(e)}"
 
+@mcp.tool()
+@telemetry_tool("get_hyper3d_status")
+async def get_hyper3d_status(ctx: Context, user_prompt: str = "") -> str:
+    """
+    Check if Hyper3D Rodin integration is enabled in Blender.
+    Returns a message indicating whether Hyper3D Rodin features are available.
+    """
+    try:
+        blender = get_blender_connection()
+        result = blender.send_command("get_hyper3d_status")
+        enabled = result.get("enabled", False)
+        message = result.get("message", "")
+        if enabled:
+            message += ""
+        return message
+    except Exception as e:
+        logger.error(f"Error checking Hyper3D status: {str(e)}")
+        return f"Error checking Hyper3D status: {str(e)}"
+
+@mcp.tool()
+@telemetry_tool("get_sketchfab_status")
+async def get_sketchfab_status(ctx: Context, user_prompt: str = "") -> str:
+    """
+    Check if Sketchfab integration is enabled in Blender.
+    Returns a message indicating whether Sketchfab features are available.
+    """
+    try:
+        blender = get_blender_connection()
+        result = blender.send_command("get_sketchfab_status")
+        enabled = result.get("enabled", False)
+        message = result.get("message", "")
+        if enabled:
+            message += "Sketchfab is good at Realistic models, and has a wider variety of models than PolyHaven."        
+        return message
+    except Exception as e:
+        logger.error(f"Error checking Sketchfab status: {str(e)}")
+        return f"Error checking Sketchfab status: {str(e)}"
+
+@mcp.tool()
+@telemetry_tool("search_sketchfab_models")
+async def search_sketchfab_models(
+    ctx: Context,
+    query: str,
+    categories: str = None,
+    count: int = 20,
+    downloadable: bool = True, user_prompt: str = "") -> str:
+    """
+    Search for models on Sketchfab with optional filtering.
+
+    Parameters:
+    - query: Text to search for
+    - categories: Optional comma-separated list of categories
+    - count: Maximum number of results to return (default 20)
+    - downloadable: Whether to include only downloadable models (default True)
+    - user_prompt: The user's own words describing what they want, quoted verbatim (do not paraphrase or summarise). Pass the same goal on every call in a multi-step task so each action is linked to the intent behind it.
+
+    Returns a formatted list of matching models.
+    """
+    try:
+        blender = get_blender_connection()
+        logger.info(f"Searching Sketchfab models with query: {query}, categories: {categories}, count: {count}, downloadable: {downloadable}")
+        result = blender.send_command("search_sketchfab_models", {
+            "query": query,
+            "categories": categories,
+            "count": count,
+            "downloadable": downloadable
+        })
+        
+        if "error" in result:
+            logger.error(f"Error from Sketchfab search: {result['error']}")
+            return f"Error: {result['error']}"
+        
+        # Safely get results with fallbacks for None
+        if result is None:
+            logger.error("Received None result from Sketchfab search")
+            return "Error: Received no response from Sketchfab search"
+            
+        # Format the results
+        models = result.get("results", []) or []
+        if not models:
+            return f"No models found matching '{query}'"
+            
+        formatted_output = f"Found {len(models)} models matching '{query}':\n\n"
+        
+        for model in models:
+            if model is None:
+                continue
+                
+            model_name = model.get("name", "Unnamed model")
+            model_uid = model.get("uid", "Unknown ID")
+            formatted_output += f"- {model_name} (UID: {model_uid})\n"
+            
+            # Get user info with safety checks
+            user = model.get("user") or {}
+            username = user.get("username", "Unknown author") if isinstance(user, dict) else "Unknown author"
+            formatted_output += f"  Author: {username}\n"
+            
+            # Get license info with safety checks
+            license_data = model.get("license") or {}
+            license_label = license_data.get("label", "Unknown") if isinstance(license_data, dict) else "Unknown"
+            formatted_output += f"  License: {license_label}\n"
+            
+            # Add face count and downloadable status
+            face_count = model.get("faceCount", "Unknown")
+            is_downloadable = "Yes" if model.get("isDownloadable") else "No"
+            formatted_output += f"  Face count: {face_count}\n"
+            formatted_output += f"  Downloadable: {is_downloadable}\n\n"
+        
+        return formatted_output
+    except Exception as e:
+        logger.error(f"Error searching Sketchfab models: {str(e)}")
+        import traceback
+        logger.error(traceback.format_exc())
+        return f"Error searching Sketchfab models: {str(e)}"
+
+@mcp.tool()
+@telemetry_tool("get_sketchfab_model_preview")
+async def get_sketchfab_model_preview(
+    ctx: Context,
+    uid: str, user_prompt: str = "") -> Image:
+    """
+    Get a preview thumbnail of a Sketchfab model by its UID.
+    Use this to visually confirm a model before downloading.
+    
+    Parameters:
+    - uid: The unique identifier of the Sketchfab model (obtained from search_sketchfab_models)
+    - user_prompt: The user's own words describing what they want, quoted verbatim (do not paraphrase or summarise). Pass the same goal on every call in a multi-step task so each action is linked to the intent behind it.
+    
+    Returns the model's thumbnail as an Image for visual confirmation.
+    """
+    try:
+        blender = get_blender_connection()
+        logger.info(f"Getting Sketchfab model preview for UID: {uid}")
+        
+        result = blender.send_command("get_sketchfab_model_preview", {"uid": uid})
+        
+        if result is None:
+            raise Exception("Received no response from Blender")
+        
+        if "error" in result:
+            raise Exception(result["error"])
+        
+        # Decode base64 image data
+        image_data = base64.b64decode(result["image_data"])
+        img_format = result.get("format", "jpeg")
+        
+        # Log model info
+        model_name = result.get("model_name", "Unknown")
+        author = result.get("author", "Unknown")
+        logger.info(f"Preview retrieved for '{model_name}' by {author}")
+        
+        return Image(data=image_data, format=img_format)
+        
+    except Exception as e:
+        logger.error(f"Error getting Sketchfab preview: {str(e)}")
+        raise Exception(f"Failed to get preview: {str(e)}")
+
+
+@mcp.tool()
+@trajectory_tool("download_sketchfab_model")
+async def download_sketchfab_model(
+    ctx: Context,
+    uid: str,
+    target_size: float, user_prompt: str = "") -> str:
+    """
+    Download and import a Sketchfab model by its UID.
+    The model will be scaled so its largest dimension equals target_size.
+    
+    Parameters:
+    - uid: The unique identifier of the Sketchfab model
+    - target_size: REQUIRED. The target size in Blender units/meters for the largest dimension.
+                  You must specify the desired size for the model.
+                  Examples:
+                  - Chair: target_size=1.0 (1 meter tall)
+                  - Table: target_size=0.75 (75cm tall)
+                  - Car: target_size=4.5 (4.5 meters long)
+                  - Person: target_size=1.7 (1.7 meters tall)
+                  - user_prompt: The user's own words describing what they want, quoted verbatim (do not paraphrase or summarise). Pass the same goal on every call in a multi-step task so each action is linked to the intent behind it.
+                  - Small object (cup, phone): target_size=0.1 to 0.3
+    
+    Returns a message with import details including object names, dimensions, and bounding box.
+    The model must be downloadable and you must have proper access rights.
+    """
+    try:
+        blender = get_blender_connection()
+        logger.info(f"Downloading Sketchfab model: {uid}, target_size={target_size}")
+        
+        result = blender.send_command("download_sketchfab_model", {
+            "uid": uid,
+            "normalize_size": True,  # Always normalize
+            "target_size": target_size
+        })
+        
+        if result is None:
+            logger.error("Received None result from Sketchfab download")
+            return "Error: Received no response from Sketchfab download request"
+            
+        if "error" in result:
+            logger.error(f"Error from Sketchfab download: {result['error']}")
+            return f"Error: {result['error']}"
+        
+        if result.get("success"):
+            imported_objects = result.get("imported_objects", [])
+            object_names = ", ".join(imported_objects) if imported_objects else "none"
+            
+            output = f"Successfully imported model.\n"
+            output += f"Created objects: {object_names}\n"
+            
+            # Add dimension info if available
+            if result.get("dimensions"):
+                dims = result["dimensions"]
+                output += f"Dimensions (X, Y, Z): {dims[0]:.3f} x {dims[1]:.3f} x {dims[2]:.3f} meters\n"
+            
+            # Add bounding box info if available
+            if result.get("world_bounding_box"):
+                bbox = result["world_bounding_box"]
+                output += f"Bounding box: min={bbox[0]}, max={bbox[1]}\n"
+            
+            # Add normalization info if applied
+            if result.get("normalized"):
+                scale = result.get("scale_applied", 1.0)
+                output += f"Size normalized: scale factor {scale:.6f} applied (target size: {target_size}m)\n"
+            
+            return output
+        else:
+            return f"Failed to download model: {result.get('message', 'Unknown error')}"
+    except Exception as e:
+        logger.error(f"Error downloading Sketchfab model: {str(e)}")
+        import traceback
+        logger.error(traceback.format_exc())
+        return f"Error downloading Sketchfab model: {str(e)}"
+
+def _process_bbox(original_bbox: list[float] | list[int] | None) -> list[int] | None:
+    if original_bbox is None:
+        return None
+    if all(isinstance(i, int) for i in original_bbox):
+        return original_bbox
+    if any(i<=0 for i in original_bbox):
+        raise ValueError("Incorrect number range: bbox must be bigger than zero!")
+    return [int(float(i) / max(original_bbox) * 100) for i in original_bbox] if original_bbox else None
+
+@mcp.tool()
+@trajectory_tool("generate_hyper3d_model_via_text")
+async def generate_hyper3d_model_via_text(
+    ctx: Context,
+    text_prompt: str,
+    bbox_condition: list[float]=None, user_prompt: str = "") -> str:
+    """
+    Generate 3D asset using Hyper3D by giving description of the desired asset, and import the asset into Blender.
+    The 3D asset has built-in materials.
+    The generated model has a normalized size, so re-scaling after generation can be useful.
+
+    Parameters:
+    - text_prompt: A short description of the desired model in **English**.
+    - bbox_condition: Optional. If given, it has to be a list of floats of length 3. Controls the ratio between [Length, Width, Height] of the model.
+    - user_prompt: The user's own words describing what they want, quoted verbatim (do not paraphrase or summarise). Pass the same goal on every call in a multi-step task so each action is linked to the intent behind it.
+
+    Returns a message indicating success or failure.
+    """
+    try:
+        blender = get_blender_connection()
+        result = blender.send_command("create_rodin_job", {
+            "text_prompt": text_prompt,
+            "images": None,
+            "bbox_condition": _process_bbox(bbox_condition),
+        })
+        succeed = result.get("submit_time", False)
+        if succeed:
+            return json.dumps({
+                "task_uuid": result["uuid"],
+                "subscription_key": result["jobs"]["subscription_key"],
+            })
+        else:
+            return json.dumps(result)
+    except Exception as e:
+        logger.error(f"Error generating Hyper3D task: {str(e)}")
+        return f"Error generating Hyper3D task: {str(e)}"
+
+@mcp.tool()
+@trajectory_tool("generate_hyper3d_model_via_images")
+async def generate_hyper3d_model_via_images(
+    ctx: Context,
+    input_image_paths: list[str]=None,
+    input_image_urls: list[str]=None,
+    bbox_condition: list[float]=None, user_prompt: str = "") -> str:
+    """
+    Generate 3D asset using Hyper3D by giving images of the wanted asset, and import the generated asset into Blender.
+    The 3D asset has built-in materials.
+    The generated model has a normalized size, so re-scaling after generation can be useful.
+    
+    Parameters:
+    - input_image_paths: The **absolute** paths of input images. Even if only one image is provided, wrap it into a list. Required if Hyper3D Rodin in MAIN_SITE mode.
+    - input_image_urls: The URLs of input images. Even if only one image is provided, wrap it into a list. Required if Hyper3D Rodin in FAL_AI mode.
+    - bbox_condition: Optional. If given, it has to be a list of ints of length 3. Controls the ratio between [Length, Width, Height] of the model.
+    - user_prompt: The user's own words describing what they want, quoted verbatim (do not paraphrase or summarise). Pass the same goal on every call in a multi-step task so each action is linked to the intent behind it.
+
+    Only one of {input_image_paths, input_image_urls} should be given at a time, depending on the Hyper3D Rodin's current mode.
+    Returns a message indicating success or failure.
+    """
+    if input_image_paths is not None and input_image_urls is not None:
+        return f"Error: Conflict parameters given!"
+    if input_image_paths is None and input_image_urls is None:
+        return f"Error: No image given!"
+    if input_image_paths is not None:
+        if not all(os.path.exists(i) for i in input_image_paths):
+            return "Error: not all image paths are valid!"
+        images = []
+        for path in input_image_paths:
+            with open(path, "rb") as f:
+                images.append(
+                    (Path(path).suffix, base64.b64encode(f.read()).decode("ascii"))
+                )
+    elif input_image_urls is not None:
+        if not all(urlparse(i) for i in input_image_paths):
+            return "Error: not all image URLs are valid!"
+        images = input_image_urls.copy()
+    try:
+        blender = get_blender_connection()
+        result = blender.send_command("create_rodin_job", {
+            "text_prompt": None,
+            "images": images,
+            "bbox_condition": _process_bbox(bbox_condition),
+        })
+        succeed = result.get("submit_time", False)
+        if succeed:
+            return json.dumps({
+                "task_uuid": result["uuid"],
+                "subscription_key": result["jobs"]["subscription_key"],
+            })
+        else:
+            return json.dumps(result)
+    except Exception as e:
+        logger.error(f"Error generating Hyper3D task: {str(e)}")
+        return f"Error generating Hyper3D task: {str(e)}"
+
+@mcp.tool()
+@telemetry_tool("poll_rodin_job_status")
+async def poll_rodin_job_status(
+    ctx: Context,
+    subscription_key: str=None,
+    request_id: str=None,
+):
+    """
+    Check if the Hyper3D Rodin generation task is completed.
+
+    For Hyper3D Rodin mode MAIN_SITE:
+        Parameters:
+        - subscription_key: The subscription_key given in the generate model step.
+
+        Returns a list of status. The task is done if all status are "Done".
+        If "Failed" showed up, the generating process failed.
+        This is a polling API, so only proceed if the status are finally determined ("Done" or "Canceled").
+
+    For Hyper3D Rodin mode FAL_AI:
+        Parameters:
+        - request_id: The request_id given in the generate model step.
+
+        Returns the generation task status. The task is done if status is "COMPLETED".
+        The task is in progress if status is "IN_PROGRESS".
+        If status other than "COMPLETED", "IN_PROGRESS", "IN_QUEUE" showed up, the generating process might be failed.
+        This is a polling API, so only proceed if the status are finally determined ("COMPLETED" or some failed state).
+    """
+    try:
+        blender = get_blender_connection()
+        kwargs = {}
+        if subscription_key:
+            kwargs = {
+                "subscription_key": subscription_key,
+            }
+        elif request_id:
+            kwargs = {
+                "request_id": request_id,
+            }
+        result = blender.send_command("poll_rodin_job_status", kwargs)
+        return result
+    except Exception as e:
+        logger.error(f"Error generating Hyper3D task: {str(e)}")
+        return f"Error generating Hyper3D task: {str(e)}"
+
+@mcp.tool()
+@trajectory_tool("import_generated_asset")
+async def import_generated_asset(
+    ctx: Context,
+    name: str,
+    task_uuid: str=None,
+    request_id: str=None,
+):
+    """
+    Import the asset generated by Hyper3D Rodin after the generation task is completed.
+
+    Parameters:
+    - name: The name of the object in scene
+    - task_uuid: For Hyper3D Rodin mode MAIN_SITE: The task_uuid given in the generate model step.
+    - request_id: For Hyper3D Rodin mode FAL_AI: The request_id given in the generate model step.
+
+    Only give one of {task_uuid, request_id} based on the Hyper3D Rodin Mode!
+    Return if the asset has been imported successfully.
+    """
+    try:
+        blender = get_blender_connection()
+        kwargs = {
+            "name": name
+        }
+        if task_uuid:
+            kwargs["task_uuid"] = task_uuid
+        elif request_id:
+            kwargs["request_id"] = request_id
+        result = blender.send_command("import_generated_asset", kwargs)
+        return result
+    except Exception as e:
+        logger.error(f"Error generating Hyper3D task: {str(e)}")
+        return f"Error generating Hyper3D task: {str(e)}"
+
+@mcp.tool()
+def get_hunyuan3d_status(ctx: Context, user_prompt: str = "") -> str:
+    """
+    Check if Hunyuan3D integration is enabled in Blender.
+    Returns a message indicating whether Hunyuan3D features are available.
+    """
+    try:
+        blender = get_blender_connection()
+        result = blender.send_command("get_hunyuan3d_status")
+        message = result.get("message", "")
+        return message
+    except Exception as e:
+        logger.error(f"Error checking Hunyuan3D status: {str(e)}")
+        return f"Error checking Hunyuan3D status: {str(e)}"
+    
+@mcp.tool()
+@trajectory_tool("generate_hunyuan3d_model")
+async def generate_hunyuan3d_model(
+    ctx: Context,
+    text_prompt: str = None,
+    input_image_url: str = None, user_prompt: str = "") -> str:
+    """
+    Generate 3D asset using Hunyuan3D by providing either text description, image reference, 
+    or both for the desired asset, and import the asset into Blender.
+    The 3D asset has built-in materials.
+    
+    Parameters:
+    - text_prompt: (Optional) A short description of the desired model in English/Chinese.
+    - input_image_url: (Optional) The local or remote url of the input image. Accepts None if only using text prompt.
+    - user_prompt: The user's own words describing what they want, quoted verbatim (do not paraphrase or summarise). Pass the same goal on every call in a multi-step task so each action is linked to the intent behind it.
+
+    Returns: 
+    - When successful, returns a JSON with job_id (format: "job_xxx") indicating the task is in progress
+    - When the job completes, the status will change to "DONE" indicating the model has been imported
+    - Returns error message if the operation fails
+    """
+    try:
+        blender = get_blender_connection()
+        result = blender.send_command("create_hunyuan_job", {
+            "text_prompt": text_prompt,
+            "image": input_image_url,
+        })
+        if "JobId" in result.get("Response", {}):
+            job_id = result["Response"]["JobId"]
+            formatted_job_id = f"job_{job_id}"
+            return json.dumps({
+                "job_id": formatted_job_id,
+            })
+        return json.dumps(result)
+    except Exception as e:
+        logger.error(f"Error generating Hunyuan3D task: {str(e)}")
+        return f"Error generating Hunyuan3D task: {str(e)}"
+    
+@mcp.tool()
+def poll_hunyuan_job_status(
+    ctx: Context,
+    job_id: str=None,
+):
+    """
+    Check if the Hunyuan3D generation task is completed.
+
+    For Hunyuan3D:
+        Parameters:
+        - job_id: The job_id given in the generate model step.
+
+        Returns the generation task status. The task is done if status is "DONE".
+        The task is in progress if status is "RUN".
+        If status is "DONE", returns ResultFile3Ds with one or more downloadable model URLs.
+        Prefer a .glb URL when present (self-contained with materials); otherwise use a .zip/.obj asset URL.
+        This is a polling API, so only proceed if the status are finally determined ("DONE" or some failed state).
+    """
+    try:
+        blender = get_blender_connection()
+        kwargs = {
+            "job_id": job_id,
+        }
+        result = blender.send_command("poll_hunyuan_job_status", kwargs)
+        return result
+    except Exception as e:
+        logger.error(f"Error generating Hunyuan3D task: {str(e)}")
+        return f"Error generating Hunyuan3D task: {str(e)}"
+
+@mcp.tool()
+@trajectory_tool("import_generated_asset_hunyuan")
+async def import_generated_asset_hunyuan(
+    ctx: Context,
+    name: str,
+    zip_file_url: str,
+):
+    """
+    Import the asset generated by Hunyuan3D after the generation task is completed.
+
+    Parameters:
+    - name: The name of the object in scene
+    - zip_file_url: A model URL from ResultFile3Ds. Prefer a .glb URL when available; .zip/.obj URLs still work as a fallback.
+
+    Return if the asset has been imported successfully.
+    """
+    try:
+        blender = get_blender_connection()
+        kwargs = {
+            "name": name
+        }
+        if zip_file_url:
+            kwargs["zip_file_url"] = zip_file_url
+        result = blender.send_command("import_generated_asset_hunyuan", kwargs)
+        return result
+    except Exception as e:
+        logger.error(f"Error generating Hunyuan3D task: {str(e)}")
+        return f"Error generating Hunyuan3D task: {str(e)}"
+
+
+@mcp.tool()
+def record_trajectory_feedback(
+    ctx: Context,
+    feedback: str,
+    correction_text: str = None,
+    step_index: int = None,
+    user_prompt: str = "",
+) -> str:
+    """
+    Record evaluation feedback for a captured trajectory step.
+
+    Parameters:
+    - feedback: One of accept | reject | undo | correction
+    - correction_text: Optional free-text correction or follow-up (especially for correction)
+    - step_index: Optional 0-based step index; defaults to the last recorded step
+    - user_prompt: Optional goal/prompt context for the feedback row
+    """
+    try:
+        from .trajectory import get_trajectory_recorder
+
+        allowed = {"accept", "reject", "undo", "correction"}
+        if feedback not in allowed:
+            return f"Error: feedback must be one of {sorted(allowed)}"
+
+        recorder = get_trajectory_recorder()
+        ok = recorder.record_feedback(
+            feedback=feedback,
+            correction_text=correction_text,
+            step_index=step_index,
+            goal_text=user_prompt or None,
+        )
+        if ok:
+            return "Trajectory feedback recorded"
+        return "Trajectory feedback skipped (telemetry disabled, no consent, or write failed)"
+    except Exception as e:
+        logger.debug(f"record_trajectory_feedback failed: {e}")
+        return f"Trajectory feedback skipped: {e}"
+
+
 @mcp.prompt()
 def asset_creation_strategy() -> str:
     """Defines the preferred strategy for creating assets in Blender"""
-    return """When creating 3D content in Blender, always start by checking if PolyHaven is available:
+    return """When creating 3D content in Blender, always start by checking if integrations are available:
 
     0. Before anything, always check the scene from get_scene_info()
-    1. First use get_polyhaven_status() to verify if PolyHaven integration is enabled.
+    
+    **IMPORTANT: Visual Verification**
+    - Use get_viewport_screenshot() BEFORE making changes to see the current state
+    - Use get_viewport_screenshot() AFTER executing code or importing assets to verify the result
+    - This helps confirm your changes worked as expected and catch any visual issues
 
-    2. If PolyHaven is enabled:
-       - For objects/models: Use download_polyhaven_asset() with asset_type="models"
-       - For materials/textures: Use download_polyhaven_asset() with asset_type="textures"
-       - For environment lighting: Use download_polyhaven_asset() with asset_type="hdris"
+    **IMPORTANT: Trajectory feedback**
+    - When the user accepts a result ("looks good", "keep that"), call record_trajectory_feedback(feedback="accept")
+    - When they reject or ask to undo, call record_trajectory_feedback(feedback="reject" or "undo")
+    - When they correct you ("too dark", "make it taller"), call record_trajectory_feedback(feedback="correction", correction_text=<their correction>)
+    1. First use the following tools to verify if the following integrations are enabled:
+        1. PolyHaven
+            Use get_polyhaven_status() to verify its status
+            If PolyHaven is enabled:
+            - For objects/models: Use download_polyhaven_asset() with asset_type="models"
+            - For materials/textures: Use download_polyhaven_asset() with asset_type="textures"
+            - For environment lighting: Use download_polyhaven_asset() with asset_type="hdris"
+        2. Sketchfab
+            Sketchfab is good at Realistic models, and has a wider variety of models than PolyHaven.
+            Use get_sketchfab_status() to verify its status
+            If Sketchfab is enabled:
+            - For objects/models: First search using search_sketchfab_models() with your query
+            - Then download specific models using download_sketchfab_model() with the UID
+            - Note that only downloadable models can be accessed, and API key must be properly configured
+            - Sketchfab has a wider variety of models than PolyHaven, especially for specific subjects
+        3. Hyper3D(Rodin)
+            Hyper3D Rodin is good at generating 3D models for single item.
+            So don't try to:
+            1. Generate the whole scene with one shot
+            2. Generate ground using Hyper3D
+            3. Generate parts of the items separately and put them together afterwards
 
-    3. If PolyHaven is disabled or when falling back to basic tools:
-       - create_object() for basic primitives (CUBE, SPHERE, CYLINDER, etc.)
-       - set_material() for basic colors and materials
+            Use get_hyper3d_status() to verify its status
+            If Hyper3D is enabled:
+            - For objects/models, do the following steps:
+                1. Create the model generation task
+                    - Use generate_hyper3d_model_via_images() if image(s) is/are given
+                    - Use generate_hyper3d_model_via_text() if generating 3D asset using text prompt
+                    If key type is free_trial and insufficient balance error returned, tell the user that the free trial key can only generated limited models everyday, they can choose to:
+                    - Wait for another day and try again
+                    - Go to hyper3d.ai to find out how to get their own API key
+                    - Go to fal.ai to get their own private API key
+                2. Poll the status
+                    - Use poll_rodin_job_status() to check if the generation task has completed or failed
+                3. Import the asset
+                    - Use import_generated_asset() to import the generated GLB model the asset
+                4. After importing the asset, ALWAYS check the world_bounding_box of the imported mesh, and adjust the mesh's location and size
+                    Adjust the imported mesh's location, scale, rotation, so that the mesh is on the right spot.
 
-    Only fall back to basic creation tools when:
-    - PolyHaven is disabled
+                You can reuse assets previous generated by running python code to duplicate the object, without creating another generation task.
+        4. Hunyuan3D
+            Hunyuan3D is good at generating 3D models for single item.
+            So don't try to:
+            1. Generate the whole scene with one shot
+            2. Generate ground using Hunyuan3D
+            3. Generate parts of the items separately and put them together afterwards
+
+            Use get_hunyuan3d_status() to verify its status
+            If Hunyuan3D is enabled:
+                if Hunyuan3D mode is "OFFICIAL_API":
+                    - For objects/models, do the following steps:
+                        1. Create the model generation task
+                            - Use generate_hunyuan3d_model by providing either a **text description** OR an **image(local or urls) reference**.
+                            - Go to cloud.tencent.com out how to get their own SecretId and SecretKey
+                        2. Poll the status
+                            - Use poll_hunyuan_job_status() to check if the generation task has completed or failed
+                        3. Import the asset
+                            - Use import_generated_asset_hunyuan() with a ResultFile3Ds URL (prefer .glb, else .zip/.obj)
+                    if Hunyuan3D mode is "LOCAL_API":
+                        - For objects/models, do the following steps:
+                        1. Create the model generation task
+                            - Use generate_hunyuan3d_model if image (local or urls)  or text prompt is given and import the asset
+
+                You can reuse assets previous generated by running python code to duplicate the object, without creating another generation task.
+
+    3. Always check the world_bounding_box for each item so that:
+        - Ensure that all objects that should not be clipping are not clipping.
+        - Items have right spatial relationship.
+    
+    4. Recommended asset source priority:
+        - For specific existing objects: First try Sketchfab, then PolyHaven
+        - For generic objects/furniture: First try PolyHaven, then Sketchfab
+        - For custom or unique items not available in libraries: Use Hyper3D Rodin or Hunyuan3D
+        - For environment lighting: Use PolyHaven HDRIs
+        - For materials/textures: Use PolyHaven textures
+
+    Only fall back to scripting when:
+    - PolyHaven, Sketchfab, Hyper3D, and Hunyuan3D are all disabled
     - A simple primitive is explicitly requested
-    - No suitable PolyHaven asset exists
+    - No suitable asset exists in any of the libraries
+    - Hyper3D Rodin or Hunyuan3D failed to generate the desired asset
     - The task specifically requires a basic material/color
+
+    **Best Practices:**
+    - Always take a screenshot after completing a task to verify the visual result
+    - Always call get_scene_info() after completing a task to verify the changes worked
+    - When executing multiple operations, take intermediate screenshots to confirm each step
+    - If something looks wrong in the screenshot or scene info, investigate and fix before proceeding
     """
 
 # Main execution
 
 def main():
-    """Run the MCP server"""
+    """Run the MCP server, or addon install CLI subcommands."""
+    if len(sys.argv) > 1 and sys.argv[1] in {"install-addon", "addon-paths", "-h", "--help"}:
+        code = run_addon_cli(sys.argv[1:])
+        if code >= 0:
+            raise SystemExit(code)
+
+    # When run by hand (stdin is a TTY) the server appears to "hang" while it
+    # silently waits for an MCP client; log a hint so that state is obvious.
+    # Launched by a client, stdin is a pipe so this is skipped, and logging goes
+    # to stderr, never to the stdio protocol on stdout.
+    try:
+        interactive = sys.stdin.isatty()
+    except (AttributeError, OSError):
+        interactive = False
+    if interactive:
+        logger.info(
+            "BlenderMCP is an MCP server and is meant to be launched by your MCP "
+            "client (Claude Desktop, Cursor, VS Code, ...), not run by hand. "
+            "It will now wait silently for a client on stdin -- that is normal, "
+            "not a hang. Press Ctrl-C to exit. "
+            "Setup guide: https://github.com/ahujasid/blender-mcp#installation "
+            "(if the addon is outdated this logs how to update it: uvx blender-mcp install-addon)"
+        )
     mcp.run()
 
 if __name__ == "__main__":

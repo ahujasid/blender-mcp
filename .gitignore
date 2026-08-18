@@ -8,3 +8,16 @@ wheels/
 
 # Virtual environments
 .venv
+
+# macOS
+.DS_Store
+
+src/blender_mcp/config.py
+
+local_tests/
+/test_*.py
+.pytest_cache/
+
+supabase/
+
+scripts/
