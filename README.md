@@ -65,8 +65,6 @@ powershell -c "irm https://astral.sh/uv/install.ps1 | iex"
             "args": [
                 "--from",
                 "git+https://github.com/waterfirst/blender-mcp.git",
-                "--from",
-                "git+https://github.com/waterfirst/blender-mcp.git",
                 "blender-mcp"
             ]
         }
@@ -244,7 +242,7 @@ On every OS, use uv's **official installer above — not `pip install uv`**, whi
 MCP clients started from a GUI (Claude Desktop, Cursor, VS Code from the Dock/Start menu) do **not** inherit your terminal's PATH, so a bare `"command": "uvx"` can fail with **`spawn uvx ENOENT`** even though `uvx` works in your terminal. If that happens:
 
 - Find uvx's full path — `which uvx` (macOS/Linux) or `where uvx` (Windows) — and use it as `"command"`, e.g. `/opt/homebrew/bin/uvx` or `C:\Users\<you>\.local\bin\uvx.exe`.
-- On Windows you can instead wrap it: `"command": "cmd", "args": ["/c", "uvx", "blender-mcp"]`.
+- On Windows you can instead wrap it: `"command": "cmd", "args": ["/c", "uvx", "--from", "git+https://github.com/waterfirst/blender-mcp.git", "blender-mcp"]`.
 - After any PATH or config change, **fully quit and relaunch** the client (Windows: quit from the system tray, not just the window; macOS: <kbd>Cmd</kbd>+<kbd>Q</kbd>).
 
 ### Pin the Python version
@@ -258,7 +256,7 @@ uv chooses which Python runs the server. On machines with conda (auto-activated 
     "mcpServers": {
         "blender": {
             "command": "uvx",
-            "args": ["--python", "3.11", "blender-mcp"],
+            "args": ["--python", "3.11", "--from", "git+https://github.com/waterfirst/blender-mcp.git", "blender-mcp"],
             "env": { "UV_PYTHON_PREFERENCE": "only-managed" }
         }
     }
@@ -315,9 +313,7 @@ Go to **Claude → Settings → Developer → Edit Config → `claude_desktop_co
     "mcpServers": {
         "blender": {
             "command": "uvx",
-            "args": [
-                "blender-mcp"
-            ]
+            "args": ["--from", "git+https://github.com/waterfirst/blender-mcp.git", "blender-mcp"]
         }
     }
 }
@@ -335,7 +331,7 @@ claude mcp add blender -- uvx --from git+https://github.com/waterfirst/blender-m
 
 ### Cursor
 
-[![Install MCP Server](https://cursor.com/deeplink/mcp-install-dark.svg)](https://cursor.com/link/mcp%2Finstall?name=blender&config=eyJjb21tYW5kIjoidXZ4IGJsZW5kZXItbWNwIn0%3D)
+Use the JSON below; upstream one-click installers do not include this fork's stress lab.
 
 **macOS** — go to **Settings → MCP** and paste the following:
 
@@ -347,9 +343,7 @@ claude mcp add blender -- uvx --from git+https://github.com/waterfirst/blender-m
     "mcpServers": {
         "blender": {
             "command": "uvx",
-            "args": [
-                "blender-mcp"
-            ]
+            "args": ["--from", "git+https://github.com/waterfirst/blender-mcp.git", "blender-mcp"]
         }
     }
 }
@@ -365,6 +359,8 @@ claude mcp add blender -- uvx --from git+https://github.com/waterfirst/blender-m
             "args": [
                 "/c",
                 "uvx",
+                "--from",
+                "git+https://github.com/waterfirst/blender-mcp.git",
                 "blender-mcp"
             ]
         }
@@ -380,7 +376,8 @@ claude mcp add blender -- uvx --from git+https://github.com/waterfirst/blender-m
 
 *Prerequisites*: Make sure you have [Visual Studio Code](https://code.visualstudio.com/) installed before proceeding.
 
-[![Install in VS Code](https://img.shields.io/badge/VS_Code-Install_blender--mcp_server-0098FF?style=flat-square&logo=visualstudiocode&logoColor=ffffff)](vscode:mcp/install?%7B%22name%22%3A%22blender-mcp%22%2C%22type%22%3A%22stdio%22%2C%22command%22%3A%22uvx%22%2C%22args%22%3A%5B%22blender-mcp%22%5D%7D)
+Use the same `uvx --from git+https://github.com/waterfirst/blender-mcp.git blender-mcp`
+command in VS Code's MCP configuration.
 
 ### OpenCode
 
@@ -389,7 +386,7 @@ claude mcp add blender -- uvx --from git+https://github.com/waterfirst/blender-m
   "mcp": {
     "blender-mcp": {
       "type": "local",
-      "command": ["uvx", "blender-mcp"],
+      "command": ["uvx", "--from", "git+https://github.com/waterfirst/blender-mcp.git", "blender-mcp"],
       "enabled": true,
       "environment": {
         "BLENDER_HOST": "localhost",
