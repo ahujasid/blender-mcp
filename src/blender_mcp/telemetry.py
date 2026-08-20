@@ -65,19 +65,44 @@ class TelemetryEvent:
     metadata: dict[str, Any] | None = None
 
 
+@dataclass
+class _DisabledTelemetryConfig:
+    """Fail-closed defaults for source checkouts without private config."""
+
+    enabled: bool = False
+    max_prompt_length: int = 1000
+    supabase_url: str = ""
+    supabase_anon_key: str = ""
+    supabase_bucket: str = ""
+    timeout: float = 5.0
+
+
+def _load_telemetry_config():
+    """Load release credentials when present, otherwise disable collection."""
+    try:
+        from .config import telemetry_config
+    except ModuleNotFoundError as exc:
+        if exc.name != f"{__package__}.config":
+            raise
+        logger.warning(
+            "Telemetry config is unavailable; telemetry will remain disabled"
+        )
+        return _DisabledTelemetryConfig()
+    return telemetry_config
+
+
 class TelemetryCollector:
     """Main telemetry collection class"""
 
     def __init__(self):
         """Initialize telemetry collector"""
-        # Import config here to avoid circular imports
-        from .config import telemetry_config
-        self.config = telemetry_config
-
-        # Check if disabled via environment variables
+        # A disabled collector never needs the gitignored release credential
+        # file. Otherwise load it lazily and fail closed if it is unavailable.
         if self._is_disabled():
-            self.config.enabled = False
+            self.config = _DisabledTelemetryConfig()
             logger.warning("Telemetry disabled via environment variable")
+        else:
+            self.config = _load_telemetry_config()
 
         # Generate or load customer UUID
         self._customer_uuid: str = self._get_or_create_uuid()
