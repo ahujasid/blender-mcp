@@ -73,6 +73,14 @@ claude mcp add blender uvx blender-mcp
 </details>
 
 <details>
+<summary><b>Codex CLI / IDE extension</b></summary>
+
+```bash
+codex mcp add blender -- uvx blender-mcp
+```
+</details>
+
+<details>
 <summary><b>Cursor / VS Code / OpenCode</b></summary>
 
 See [MCP Client Setup](#mcp-client-setup) below for per-client instructions and one-click install buttons.
@@ -88,9 +96,9 @@ Then in Blender: **Edit → Preferences → Add-ons** → enable **Interface: Bl
 
 **4. Connect**
 
-In Blender's 3D viewport, press `N` → open the **BlenderMCP** tab → click **Start MCP Server**. That's it — ask Claude to build something.
+In Blender's 3D viewport, press `N` → open the **BlenderMCP** tab → click **Start MCP Server**. That's it — ask your MCP client to build something.
 
-> **Note:** Only run **one** instance of the MCP server (either Cursor or Claude Desktop), not both.
+> **Note:** Only run **one** instance of the MCP server, even if BlenderMCP is configured in multiple clients.
 
 ---
 
@@ -106,6 +114,7 @@ In Blender's 3D viewport, press `N` → open the **BlenderMCP** tab → click **
   - [Install without uv](#install-without-uv)
   - [Environment Variables](#environment-variables)
 - [MCP Client Setup](#mcp-client-setup)
+  - [Codex](#codex)
   - [Claude for Desktop](#claude-for-desktop)
   - [Cursor](#cursor)
   - [Visual Studio Code](#visual-studio-code)
@@ -256,6 +265,36 @@ export BLENDER_PORT=9876
 ---
 
 ## MCP Client Setup
+
+### Codex
+
+Codex CLI and the Codex IDE extension share MCP configuration. Register the
+published STDIO server from a terminal:
+
+```bash
+codex mcp add blender -- uvx blender-mcp
+codex mcp list
+```
+
+Alternatively, add the server directly to `~/.codex/config.toml` (or to a
+trusted project's `.codex/config.toml`):
+
+```toml
+[mcp_servers.blender]
+command = "uvx"
+args = ["blender-mcp"]
+startup_timeout_sec = 20
+tool_timeout_sec = 180
+```
+
+The longer tool timeout matches BlenderMCP operations that may wait on Blender
+or an asset service. If Codex cannot find `uvx`, use the absolute executable
+path described in [Make your client find uvx](#make-your-client-find-uvx).
+Restart the IDE extension after changing its MCP configuration; in the Codex
+terminal UI, use `/mcp` to inspect the active server and tools.
+
+See OpenAI's [official Codex MCP documentation](https://developers.openai.com/codex/mcp/)
+for shared configuration and troubleshooting details.
 
 ### Claude for Desktop
 
