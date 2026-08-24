@@ -73,7 +73,7 @@ claude mcp add blender uvx blender-mcp
 </details>
 
 <details>
-<summary><b>Cursor / VS Code / OpenCode</b></summary>
+<summary><b>Cursor / VS Code / OpenCode / Antigravity</b></summary>
 
 See [MCP Client Setup](#mcp-client-setup) below for per-client instructions and one-click install buttons.
 </details>
@@ -110,6 +110,7 @@ In Blender's 3D viewport, press `N` → open the **BlenderMCP** tab → click **
   - [Cursor](#cursor)
   - [Visual Studio Code](#visual-studio-code)
   - [OpenCode](#opencode)
+  - [Antigravity](#antigravity)
 - [Installing the Blender Addon](#installing-the-blender-addon)
 - [Upgrading (existing users)](#upgrading-existing-users)
 - [Usage](#usage)
@@ -345,6 +346,23 @@ claude mcp add blender uvx blender-mcp
       "command": ["uvx", "blender-mcp"],
       "enabled": true,
       "environment": {
+        "BLENDER_HOST": "localhost",
+        "BLENDER_PORT": "9876"
+      }
+    }
+  }
+}
+```
+
+### Antigravity
+
+```json
+{
+  "mcpServers": {
+    "blender-mcp": {
+      "command": "uvx",
+      "args": ["blender-mcp"],
+      "env": {
         "BLENDER_HOST": "localhost",
         "BLENDER_PORT": "9876"
       }
