@@ -8,6 +8,7 @@ to Supabase only (no local/JSONL storage). Reuses telemetry config + consent.
 from __future__ import annotations
 
 import contextlib
+import json
 import logging
 import platform
 import queue
@@ -33,11 +34,26 @@ TRAJECTORY_FEEDBACK_TABLE = "trajectory_feedback"
 # explicit objects_truncated/objects_listed pair. At <=3 truncation could only
 # be inferred from object_count > 50, and the objects kept were whatever
 # scene.objects happened to yield first.
-SCHEMA_VERSION = 4
+# 5: rows carry task_id/client/rows_attempted, each observation is stored whole
+# once on its own OBSERVE row (observation.payload, 20k cap) while the rolling
+# buffer keeps 2k summaries, episode_end rows close each task with a final
+# snapshot and render, human operator batches carry before/after state on their
+# last row, and snapshots include mesh counts, material/world fingerprints and
+# project_id.
+SCHEMA_VERSION = 5
 MAX_RAW_CODE_LENGTH = 8000
 MAX_AGENT_OBS_BUFFER = 8
 MAX_OBS_SUMMARY_CHARS = 2000
+MAX_OBS_PAYLOAD_CHARS = 20000
 MAX_PENDING_ROWS = 256
+IDLE_EPISODE_TIMEOUT = 600.0
+
+# Byte budgets matched to the trajectory_steps_size_guard DB constraint
+# (raw JSON length overestimates pg_column_size, so staying under these keeps
+# every row insertable). Snapshots that exceed the budget drop trailing
+# objects and set objects_truncated, exactly like the object-count cap.
+SNAPSHOT_BYTE_BUDGET = 250_000
+OBSERVATION_BYTE_BUDGET = 40_000
 
 # Per-snapshot object cap. Two snapshots ride on every step row, and object
 # entries run ~400 bytes each, so this bounds a row at roughly 1.5 MB. The old
@@ -172,6 +188,7 @@ SEMANTIC_ACTIONS: dict[str, str] = {
     "get_scene_info": "OBSERVE",
     "get_object_info": "OBSERVE",
     "get_viewport_screenshot": "OBSERVE",
+    "episode_end": "EPISODE_END",
 }
 
 
@@ -257,15 +274,62 @@ def compute_state_delta(
                 "after": after_objs[name],
             })
 
+    before_fps = before.get("material_fps") or {}
+    after_fps = after.get("material_fps") or {}
+    materials_changed = sorted(
+        name
+        for name in set(before_fps) | set(after_fps)
+        if before_fps.get(name) != after_fps.get(name)
+    )
+
     return {
         "objects_added": objects_added,
         "objects_removed": objects_removed,
         "objects_changed": objects_changed,
+        "materials_changed": materials_changed,
+        "world_changed": before.get("world_fp") != after.get("world_fp"),
         "selection_changed": before.get("selected") != after.get("selected"),
         "camera_changed": before.get("active_camera") != after.get("active_camera"),
         "object_count_before": before.get("object_count"),
         "object_count_after": after.get("object_count"),
     }
+
+
+def _json_size(value: Any) -> int:
+    try:
+        return len(json.dumps(value, default=str))
+    except Exception:
+        return 0
+
+
+def _fit_snapshot(snapshot: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Shrink a snapshot to SNAPSHOT_BYTE_BUDGET by dropping trailing objects.
+
+    Objects are name-sorted at capture, so before/after snapshots of one step
+    keep the same subset and deltas stay meaningful."""
+    if not isinstance(snapshot, dict):
+        return snapshot
+    objects = snapshot.get("objects")
+    if not objects or _json_size(snapshot) <= SNAPSHOT_BYTE_BUDGET:
+        return snapshot
+    budget = SNAPSHOT_BYTE_BUDGET - (_json_size(snapshot) - _json_size(objects))
+    kept: list[Any] = []
+    used = 2
+    for obj in objects:
+        used += _json_size(obj) + 2
+        if used > budget:
+            break
+        kept.append(obj)
+    fitted = {
+        **snapshot,
+        "objects": kept,
+        "objects_listed": len(kept),
+        "objects_truncated": True,
+    }
+    while kept and _json_size(fitted) > SNAPSHOT_BYTE_BUDGET:
+        kept.pop()
+        fitted["objects_listed"] = len(kept)
+    return fitted
 
 
 def _normalize_goal(goal: str | None) -> str:
@@ -324,6 +388,13 @@ class TrajectoryRecorder:
         self._trajectory_id: str = str(uuid.uuid4())
         self._step_index: int = 0
         self._current_goal: str | None = None
+        self._task_id: str = uuid.uuid4().hex[:12]
+        self._task_step_count: int = 0
+        self._human_after_agent: bool = False
+        self._last_state_after: dict[str, Any] | None = None
+        self._client: dict[str, Any] | None = None
+        self._rows_attempted: int = 0
+        self._idle_timer: threading.Timer | None = None
         # What the agent requested, not the privileged full state.
         self._agent_obs: deque[dict[str, Any]] = deque(maxlen=MAX_AGENT_OBS_BUFFER)
         self._last_screenshot_ref: str | None = None
@@ -406,12 +477,16 @@ class TrajectoryRecorder:
         }
 
     def snapshot_world_state(self) -> dict[str, Any] | None:
-        """Fetch a compact world snapshot from Blender. Never raises.
+        """Fetch a compact world snapshot from Blender, fitted to the row size
+        budget. Never raises.
 
         Prefer native addon handler; if the installed addon is older and lacks
         get_world_state_snapshot (common when users only update the MCP server),
         fall back to execute_code, then get_scene_info.
         """
+        return _fit_snapshot(self._snapshot_world_state())
+
+    def _snapshot_world_state(self) -> dict[str, Any] | None:
         try:
             from .server import get_blender_connection
 
@@ -478,6 +553,55 @@ class TrajectoryRecorder:
             self._last_auto_capture = now
         return True
 
+    def _render_frame(self, prefix: str) -> str | None:
+        """Render + upload one offscreen viewport frame. Never raises."""
+        try:
+            import os
+            import tempfile
+
+            from .server import get_blender_connection
+
+            blender = get_blender_connection()
+            temp_path = os.path.join(
+                tempfile.gettempdir(),
+                f"blender_mcp_{prefix}_{os.getpid()}_{uuid.uuid4().hex[:8]}.png",
+            )
+            try:
+                result = blender.send_command(
+                    "get_viewport_screenshot",
+                    {
+                        "max_size": AUTO_CAPTURE_MAX_SIZE,
+                        "filepath": temp_path,
+                        "format": "png",
+                    },
+                )
+                if not isinstance(result, dict) or "error" in result:
+                    logger.debug(f"Frame capture declined: {result}")
+                    return None
+                if not os.path.exists(temp_path):
+                    return None
+                with open(temp_path, "rb") as handle:
+                    image_bytes = handle.read()
+            finally:
+                with contextlib.suppress(Exception):
+                    os.remove(temp_path)
+
+            if not image_bytes:
+                return None
+            ref = self._telemetry().upload_screenshot(image_bytes, prefix)
+            if not ref:
+                return None
+            with self._lock:
+                self._last_screenshot_ref = ref
+            return ref
+        except Exception as e:
+            msg = str(e).lower()
+            # No GPU/viewport in this install: stop retrying for the session.
+            if "no 3d viewport" in msg or "unknown command" in msg:
+                self._auto_capture_supported = False
+            logger.debug(f"Frame capture failed: {e}")
+            return None
+
     def maybe_auto_capture(self, state_delta: dict[str, Any] | None) -> str | None:
         """Render + upload a frame for a step the agent did not screenshot.
 
@@ -493,55 +617,111 @@ class TrajectoryRecorder:
                 delta.get("objects_added")
                 or delta.get("objects_removed")
                 or delta.get("objects_changed")
+                or delta.get("materials_changed")
+                or delta.get("world_changed")
             )
             if not self._should_auto_capture(changed):
                 return None
-
-            import os
-            import tempfile
-
-            from .server import get_blender_connection
-
-            blender = get_blender_connection()
-            temp_path = os.path.join(
-                tempfile.gettempdir(),
-                f"blender_mcp_auto_{os.getpid()}_{uuid.uuid4().hex[:8]}.png",
-            )
-            try:
-                result = blender.send_command(
-                    "get_viewport_screenshot",
-                    {
-                        "max_size": AUTO_CAPTURE_MAX_SIZE,
-                        "filepath": temp_path,
-                        "format": "png",
-                    },
-                )
-                if not isinstance(result, dict) or "error" in result:
-                    logger.debug(f"Auto-capture declined: {result}")
-                    return None
-                if not os.path.exists(temp_path):
-                    return None
-                with open(temp_path, "rb") as handle:
-                    image_bytes = handle.read()
-            finally:
-                with contextlib.suppress(Exception):
-                    os.remove(temp_path)
-
-            if not image_bytes:
-                return None
-            ref = self._telemetry().upload_screenshot(image_bytes, "auto")
-            if not ref:
-                return None
-            with self._lock:
-                self._last_screenshot_ref = ref
-            return ref
+            return self._render_frame("auto")
         except Exception as e:
-            msg = str(e).lower()
-            # No GPU/viewport in this install: stop retrying for the session.
-            if "no 3d viewport" in msg or "unknown command" in msg:
-                self._auto_capture_supported = False
             logger.debug(f"Auto-capture failed: {e}")
             return None
+
+    def note_client(self, name: str | None, version: str | None = None) -> None:
+        """Record which MCP client (and thus which agent) drives this session."""
+        if self._client is not None or not name:
+            return
+        with self._lock:
+            if self._client is None:
+                self._client = {"name": name, "version": version}
+
+    def note_goal(self, goal_text: str | None) -> None:
+        """Close the running episode when the verbatim goal changes.
+
+        Called before a tool executes, while the scene still shows the previous
+        task's end state. Never raises.
+        """
+        try:
+            normalized = _normalize_goal(goal_text)
+            if not normalized:
+                return
+            with self._lock:
+                current = self._current_goal
+                steps = self._task_step_count
+            if (
+                steps
+                and current
+                and normalized != current
+                and len(normalized) >= 12
+                and self._can_write()
+            ):
+                self.close_episode("goal_change")
+        except Exception as e:
+            logger.debug(f"Failed to note goal: {e}")
+
+    def close_episode(self, reason: str) -> bool:
+        """Write an episode_end row with a final snapshot and render, then
+        rotate task_id. Fires on goal change, idle timeout and shutdown.
+        Never raises."""
+        try:
+            if not self._can_write():
+                return False
+            with self._lock:
+                if not self._task_step_count:
+                    return False
+                if self._idle_timer:
+                    self._idle_timer.cancel()
+                    self._idle_timer = None
+            self.drain_human_activity()
+            state = self.snapshot_world_state()
+            ref = self._render_frame("episode") if self._auto_capture_supported else None
+            with self._lock:
+                trajectory_id = self._trajectory_id
+                task_id = self._task_id
+                goal = self._current_goal
+                human_after = self._human_after_agent
+                step_index = self._step_index
+                self._step_index += 1
+                agent_obs = list(self._agent_obs)
+                if state:
+                    self._last_state_after = state
+                self._task_id = uuid.uuid4().hex[:12]
+                self._task_step_count = 0
+                self._human_after_agent = False
+            payload = self.build_step_payload(
+                tool_name="episode_end",
+                goal_text=goal,
+                params={"reason": reason},
+                raw_code=None,
+                state_before=None,
+                state_after=state,
+                success=True,
+                error=None,
+                duration_ms=None,
+                screenshot_ref=ref,
+                trajectory_id=trajectory_id,
+                step_index=step_index,
+                agent_observations=agent_obs,
+                observation_kind="episode_end",
+                goal_source="session" if goal else "none",
+                screenshot_source="episode_end" if ref else None,
+                task_id=task_id,
+            )
+            payload["observation"]["human_steps_after_last_agent"] = human_after
+            return self._enqueue_row(self._steps_table(), payload)
+        except Exception as e:
+            logger.debug(f"Failed to close episode: {e}")
+            return False
+
+    def _reset_idle_timer(self) -> None:
+        with self._lock:
+            if self._idle_timer:
+                self._idle_timer.cancel()
+            self._idle_timer = threading.Timer(
+                IDLE_EPISODE_TIMEOUT, self.close_episode, args=("idle",)
+            )
+            self._idle_timer.daemon = True
+            self._idle_timer.start()
 
     def note_agent_observation(
         self,
@@ -575,10 +755,10 @@ class TrajectoryRecorder:
 
     def _begin_step_locked(
         self, goal_text: str | None
-    ) -> tuple[str, int, str | None, str]:
+    ) -> tuple[str, int, str | None, str, str]:
         """Advance step_index under lock.
 
-        Returns (trajectory_id, index, resolved_goal, goal_source).
+        Returns (trajectory_id, index, resolved_goal, goal_source, task_id).
 
         Trajectory id is session-scoped (one per MCP process recorder). We do
         NOT reset step_index when user_prompt/goal text changes — agents pass a
@@ -612,7 +792,8 @@ class TrajectoryRecorder:
         trajectory_id = self._trajectory_id
         step_index = self._step_index
         self._step_index += 1
-        return trajectory_id, step_index, resolved_goal, goal_source
+        self._task_step_count += 1
+        return trajectory_id, step_index, resolved_goal, goal_source, self._task_id
 
     def build_step_payload(
         self,
@@ -636,6 +817,7 @@ class TrajectoryRecorder:
         observation_kind: str = "action",
         goal_source: str | None = None,
         screenshot_source: str | None = None,
+        task_id: str | None = None,
     ) -> dict[str, Any]:
         """Build a trajectory_steps row dict (pure; no I/O)."""
         telemetry = self._telemetry()
@@ -660,6 +842,9 @@ class TrajectoryRecorder:
             state_before is not None or state_after is not None
         ):
             modalities.append("privileged_state")
+
+        while agent_obs and _json_size(agent_obs) > OBSERVATION_BYTE_BUDGET:
+            agent_obs = agent_obs[1:]
 
         max_goal = getattr(self._config(), "max_prompt_length", 1000)
         if not isinstance(max_goal, int):
@@ -687,8 +872,10 @@ class TrajectoryRecorder:
             "customer_uuid": customer_uuid or telemetry._customer_uuid,
             "session_id": session_id or telemetry._session_id,
             "trajectory_id": trajectory_id or self._trajectory_id,
+            "task_id": task_id or self._task_id,
             "step_index": step_index if step_index is not None else max(0, self._step_index - 1),
             "schema_version": SCHEMA_VERSION,
+            "client": self._client,
             # Overwritten to "human" for operators run directly in Blender.
             "actor": "agent",
             "goal_text": capped_goal,
@@ -762,10 +949,13 @@ class TrajectoryRecorder:
                         screenshot_ref = self._last_screenshot_ref
 
             with self._lock:
-                trajectory_id, step_index, resolved_goal, goal_source = (
+                trajectory_id, step_index, resolved_goal, goal_source, task_id = (
                     self._begin_step_locked(goal_text)
                 )
                 agent_obs = list(self._agent_obs)
+                self._human_after_agent = False
+                if state_after:
+                    self._last_state_after = state_after
 
             payload = self.build_step_payload(
                 tool_name=tool_name,
@@ -785,8 +975,11 @@ class TrajectoryRecorder:
                 observation_kind=observation_kind,
                 goal_source=goal_source,
                 screenshot_source="auto_capture" if auto_ref else None,
+                task_id=task_id,
             )
-            return self._enqueue_row(self._steps_table(), payload)
+            sent = self._enqueue_row(self._steps_table(), payload)
+            self._reset_idle_timer()
+            return sent
         except Exception as e:
             logger.debug(f"Failed to record trajectory step: {e}")
             return False
@@ -808,6 +1001,7 @@ class TrajectoryRecorder:
             if not self._can_write():
                 return False
 
+            self.note_goal(goal_text)
             entry = {
                 "modality": modality,
                 "tool_name": tool_name,
@@ -816,9 +1010,20 @@ class TrajectoryRecorder:
                 "timestamp": time.time(),
                 "source": "agent_tool",
             }
+            if summary is None:
+                full_payload = None
+            elif isinstance(summary, str):
+                full_payload = _cap_text(summary, MAX_OBS_PAYLOAD_CHARS)
+            else:
+                try:
+                    full_payload = _cap_text(
+                        json.dumps(summary, default=str), MAX_OBS_PAYLOAD_CHARS
+                    )
+                except Exception:
+                    full_payload = _cap_text(str(summary), MAX_OBS_PAYLOAD_CHARS)
 
             with self._lock:
-                trajectory_id, step_index, resolved_goal, goal_source = (
+                trajectory_id, step_index, resolved_goal, goal_source, task_id = (
                     self._begin_step_locked(goal_text)
                 )
                 self._agent_obs.append(entry)
@@ -842,8 +1047,13 @@ class TrajectoryRecorder:
                 agent_observations=agent_obs,
                 observation_kind="observe",
                 goal_source=goal_source,
+                task_id=task_id,
             )
-            return self._enqueue_row(self._steps_table(), payload)
+            if full_payload is not None:
+                payload["observation"]["payload"] = full_payload
+            sent = self._enqueue_row(self._steps_table(), payload)
+            self._reset_idle_timer()
+            return sent
         except Exception as e:
             logger.debug(f"Failed to record observe step: {e}")
             return False
@@ -869,27 +1079,38 @@ class TrajectoryRecorder:
             result = blender.send_command("drain_human_activity")
             if not isinstance(result, dict) or "error" in result:
                 return 0
-            events = result.get("events") or []
+            events = [e for e in result.get("events") or [] if isinstance(e, dict)]
             if not events:
                 return 0
 
+            operator_events = [e for e in events if e.get("kind") == "operator"]
+            batch_after = self.snapshot_world_state() if operator_events else None
+            with self._lock:
+                batch_before = self._last_state_after
+                if batch_after:
+                    self._last_state_after = batch_after
+
             recorded = 0
+            last_operator = operator_events[-1] if operator_events else None
             for event in events:
-                if not isinstance(event, dict):
-                    continue
                 kind = event.get("kind")
                 if kind in ("undo", "redo"):
-                    if self._record_human_undo(kind):
+                    if self._record_human_undo(kind, event.get("timestamp")):
                         recorded += 1
                 elif kind == "operator":
-                    if self._record_human_operator(event):
+                    is_last = event is last_operator
+                    if self._record_human_operator(
+                        event,
+                        state_before=batch_before if is_last else None,
+                        state_after=batch_after if is_last else None,
+                    ):
                         recorded += 1
             return recorded
         except Exception as e:
             logger.debug(f"Failed to drain human activity: {e}")
             return 0
 
-    def _record_human_undo(self, kind: str) -> bool:
+    def _record_human_undo(self, kind: str, timestamp: float | None = None) -> bool:
         """An undo right after an agent step is an implicit rejection."""
         with self._lock:
             target_step = max(0, self._step_index - 1)
@@ -897,24 +1118,34 @@ class TrajectoryRecorder:
             feedback="undo" if kind == "undo" else "redo",
             step_index=target_step,
             source="human_action",
+            event_timestamp=timestamp,
         )
 
-    def _record_human_operator(self, event: dict[str, Any]) -> bool:
-        """Record a human-performed Blender operator as a trajectory step."""
+    def _record_human_operator(
+        self,
+        event: dict[str, Any],
+        state_before: dict[str, Any] | None = None,
+        state_after: dict[str, Any] | None = None,
+    ) -> bool:
+        """Record a human-performed Blender operator as a trajectory step.
+
+        The last operator of a drained batch carries the batch's before/after
+        state, so each human block reads as one action→effect record."""
         bl_idname = event.get("bl_idname") or ""
         with self._lock:
-            trajectory_id, step_index, resolved_goal, goal_source = (
+            trajectory_id, step_index, resolved_goal, goal_source, task_id = (
                 self._begin_step_locked(None)
             )
             agent_obs = list(self._agent_obs)
+            self._human_after_agent = True
 
         payload = self.build_step_payload(
             tool_name=bl_idname,
             goal_text=resolved_goal,
             params=event.get("properties") or {},
             raw_code=None,
-            state_before=None,
-            state_after=None,
+            state_before=state_before,
+            state_after=state_after,
             success=True,
             error=None,
             duration_ms=None,
@@ -923,6 +1154,7 @@ class TrajectoryRecorder:
             agent_observations=agent_obs,
             observation_kind="human_action",
             goal_source=goal_source,
+            task_id=task_id,
         )
         # Semantic label comes from the operator id, not a tool name.
         payload["action"] = {
@@ -946,6 +1178,7 @@ class TrajectoryRecorder:
         step_index: int | None = None,
         goal_text: str | None = None,
         source: str = "agent_report",
+        event_timestamp: float | None = None,
     ) -> bool:
         """POST feedback for a step. Returns True if sent. Never raises.
 
@@ -965,6 +1198,7 @@ class TrajectoryRecorder:
             telemetry = self._telemetry()
             with self._lock:
                 trajectory_id = self._trajectory_id
+                task_id = self._task_id
                 resolved_step = (
                     step_index
                     if step_index is not None
@@ -977,14 +1211,15 @@ class TrajectoryRecorder:
                 "customer_uuid": telemetry._customer_uuid,
                 "session_id": telemetry._session_id,
                 "trajectory_id": trajectory_id,
+                "task_id": task_id,
                 "step_index": resolved_step,
                 "feedback": feedback,
                 "source": source,
-                "correction_text": correction_text,
-                "goal_text": goal_text,
+                "correction_text": _cap_text(correction_text, 3900),
+                "goal_text": _cap_text(goal_text, 1000),
                 "version": MCP_VERSION,
                 "platform": platform.system().lower(),
-                "event_timestamp": int(time.time()),
+                "event_timestamp": int(event_timestamp or time.time()),
             }
             return self._enqueue_row(self._feedback_table(), payload)
         except Exception as e:
@@ -1004,7 +1239,13 @@ class TrajectoryRecorder:
                     self._queue.task_done()
 
     def _enqueue_row(self, table: str, payload: dict[str, Any]) -> bool:
-        """Hand a row to the writer thread. Returns True if accepted."""
+        """Hand a row to the writer thread. Returns True if accepted.
+
+        rows_attempted counts every build, sent or dropped, so gaps from a full
+        queue are detectable downstream."""
+        with self._lock:
+            self._rows_attempted += 1
+            payload["rows_attempted"] = self._rows_attempted
         try:
             self._queue.put_nowait((table, payload))
             return True

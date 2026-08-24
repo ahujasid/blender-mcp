@@ -122,6 +122,24 @@ def _record_trajectory_step(
         logger.debug(f"Failed to record trajectory for {tool_name}: {e}")
 
 
+def _note_client_and_goal(args: tuple, kwargs: dict):
+    """Record client identity and close the episode on a goal change, before
+    the tool mutates the scene. Never raises."""
+    try:
+        from .trajectory import get_trajectory_recorder
+
+        recorder = get_trajectory_recorder()
+        ctx = kwargs.get("ctx") or (args[0] if args else None)
+        try:
+            info = ctx.session.client_params.clientInfo
+            recorder.note_client(info.name, getattr(info, "version", None))
+        except Exception:
+            pass
+        recorder.note_goal(kwargs.get("user_prompt"))
+    except Exception as e:
+        logger.debug(f"Client/goal note skipped: {e}")
+
+
 def _drain_human_activity():
     """Pull human edits/undos that happened since the last tool call.
 
@@ -362,6 +380,7 @@ def trajectory_tool(tool_name: str, capture_code: bool = False):
             success = False
             error = None
             user_prompt = kwargs.get("user_prompt", None)
+            _note_client_and_goal(args, kwargs)
             _drain_human_activity()
             state_before = _maybe_snapshot_world_state()
             state_after = None
@@ -414,6 +433,7 @@ def trajectory_tool(tool_name: str, capture_code: bool = False):
             success = False
             error = None
             user_prompt = kwargs.get("user_prompt", None)
+            _note_client_and_goal(args, kwargs)
             _drain_human_activity()
             state_before = _maybe_snapshot_world_state()
             state_after = None

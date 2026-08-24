@@ -13,7 +13,9 @@ import tempfile
 import traceback
 import os
 import shutil
+import uuid
 import zipfile
+import zlib
 from bpy.props import IntProperty, BoolProperty
 import io
 from datetime import datetime
@@ -890,6 +892,51 @@ class BlenderMCPServer:
         except Exception:
             return {}
 
+    @staticmethod
+    def _shader_fingerprint(id_block):
+        """Stable short hash of a node tree (material or world), or None.
+
+        Node identities plus rounded input values, so tweaking a color or
+        rewiring a link changes the fingerprint. Lets downstream deltas see
+        shader edits that leave every object transform untouched.
+        """
+        try:
+            if id_block is None:
+                return None
+            tree = id_block.node_tree if getattr(id_block, "use_nodes", False) else None
+            if tree is None:
+                color = getattr(id_block, "diffuse_color", None) or getattr(id_block, "color", None)
+                basis = str([round(float(v), 3) for v in color]) if color is not None else ""
+            else:
+                parts = []
+                for node in tree.nodes:
+                    values = []
+                    for sock in node.inputs:
+                        dv = getattr(sock, "default_value", None)
+                        if isinstance(dv, (int, float)):
+                            values.append(round(float(dv), 3))
+                        elif dv is not None:
+                            with suppress(TypeError, ValueError):
+                                values.extend(round(float(v), 3) for v in dv)
+                    parts.append(f"{node.bl_idname}{values}")
+                parts.sort()
+                parts.append(str(len(tree.links)))
+                basis = "|".join(parts)
+            return format(zlib.crc32(basis.encode("utf-8")), "08x")
+        except Exception:
+            return None
+
+    @staticmethod
+    def _project_id():
+        """Salted hash linking sessions on the same .blend without storing its path."""
+        try:
+            filepath = bpy.data.filepath
+            if not filepath:
+                return None
+            return hashlib.sha256(f"{uuid.getnode()}:{filepath}".encode("utf-8")).hexdigest()[:16]
+        except Exception:
+            return None
+
     def get_world_state_snapshot(self):
         """Compact world-state snapshot for trajectory capture (no mesh/shader detail)."""
         try:
@@ -941,6 +988,12 @@ class BlenderMCPServer:
                     entry.update(geometry)
                 entry.update(self._snapshot_relations(obj))
                 entry.update(self._snapshot_animation(obj))
+                data = getattr(obj, "data", None)
+                if obj.type == "MESH" and data is not None:
+                    entry["mesh"] = {
+                        "vertices": len(data.vertices),
+                        "polygons": len(data.polygons),
+                    }
                 objects.append(entry)
 
             camera = scene.camera
@@ -999,6 +1052,12 @@ class BlenderMCPServer:
                 "camera": camera_info,
                 "lights": lights,
                 "materials_count": len(bpy.data.materials),
+                "material_fps": {
+                    m.name: self._shader_fingerprint(m)
+                    for m in list(bpy.data.materials)[:200]
+                },
+                "world_fp": self._shader_fingerprint(scene.world),
+                "project_id": self._project_id(),
                 "blender_version": bpy.app.version_string,
                 "snapshot_source": "native",
             }
