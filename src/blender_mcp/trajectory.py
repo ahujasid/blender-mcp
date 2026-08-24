@@ -40,7 +40,13 @@ TRAJECTORY_FEEDBACK_TABLE = "trajectory_feedback"
 # snapshot and render, human operator batches carry before/after state on their
 # last row, and snapshots include mesh counts, material/world fingerprints and
 # project_id.
-SCHEMA_VERSION = 5
+# 6: snapshot `selected` capped at MAX_SNAPSHOT_SELECTED (name-sorted, with
+# selected_count/selected_truncated), and every row passes a byte-accurate
+# pre-insert guard mirroring the trajectory_steps_size_guard DB constraint —
+# a field that cannot be trimmed under its cap is replaced by a
+# {"size_guard_dropped": true, "original_bytes": N} stub instead of the row
+# being rejected.
+SCHEMA_VERSION = 6
 MAX_RAW_CODE_LENGTH = 8000
 MAX_AGENT_OBS_BUFFER = 8
 MAX_OBS_SUMMARY_CHARS = 2000
@@ -64,6 +70,13 @@ OBSERVATION_BYTE_BUDGET = 40_000
 # sides keep the same subset and the delta stays meaningful.
 MAX_SNAPSHOT_OBJECTS = 2000
 
+# Selected-name cap. `selected` rides on both snapshots of every step and,
+# unlike `objects`, was unbounded: select-all in a scene big enough to need
+# MAX_SNAPSHOT_OBJECTS puts thousands of names in it, and _fit_snapshot could
+# not shrink it — the one leak the 250k budget missed. Name-sorted so
+# before/after keep the same subset, like objects.
+MAX_SNAPSHOT_SELECTED = 200
+
 # Auto-capture: VLM-judged metrics need an image for the step being judged, but
 # the agent only screenshots when it chooses to, so most mutating steps have
 # none. Render a small offscreen frame ourselves — sampled, not every step, so
@@ -79,6 +92,11 @@ import mathutils
 
 scene = bpy.context.scene
 selected = [obj.name for obj in bpy.context.selected_objects]
+selected_count = len(selected)
+selected_truncated = selected_count > __MAX_SELECTED__
+if selected_truncated:
+    # Stable subset so before/after snapshots agree; see MAX_SNAPSHOT_SELECTED.
+    selected = sorted(selected)[:__MAX_SELECTED__]
 objects = []
 all_objects = list(scene.objects)
 truncated = len(all_objects) > __MAX_OBJECTS__
@@ -160,6 +178,8 @@ print(json.dumps({
     "objects_listed": len(objects),
     "objects_truncated": truncated,
     "selected": selected,
+    "selected_count": selected_count,
+    "selected_truncated": selected_truncated,
     "objects": objects,
     "active_camera": camera.name if camera else None,
     "camera": camera_info,
@@ -172,7 +192,7 @@ print(json.dumps({
 
 _SNAPSHOT_VIA_EXECUTE_CODE = _SNAPSHOT_VIA_EXECUTE_CODE_TEMPLATE.replace(
     "__MAX_OBJECTS__", str(MAX_SNAPSHOT_OBJECTS)
-)
+).replace("__MAX_SELECTED__", str(MAX_SNAPSHOT_SELECTED))
 
 
 SEMANTIC_ACTIONS: dict[str, str] = {
@@ -302,22 +322,35 @@ def _json_size(value: Any) -> int:
         return 0
 
 
-def _fit_snapshot(snapshot: dict[str, Any] | None) -> dict[str, Any] | None:
-    """Shrink a snapshot to SNAPSHOT_BYTE_BUDGET by dropping trailing objects.
+def _fit_snapshot(
+    snapshot: dict[str, Any] | None, budget: int = SNAPSHOT_BYTE_BUDGET
+) -> dict[str, Any] | None:
+    """Shrink a snapshot to the byte budget: cap the selected-name list, then
+    drop trailing objects.
 
     Objects are name-sorted at capture, so before/after snapshots of one step
-    keep the same subset and deltas stay meaningful."""
+    keep the same subset and deltas stay meaningful; the selected cap sorts
+    for the same reason. Old addons send `selected` uncapped, so this is
+    enforced server-side and not just at capture."""
     if not isinstance(snapshot, dict):
         return snapshot
+    selected = snapshot.get("selected")
+    if isinstance(selected, list) and len(selected) > MAX_SNAPSHOT_SELECTED:
+        snapshot = {
+            **snapshot,
+            "selected": sorted(str(name) for name in selected)[:MAX_SNAPSHOT_SELECTED],
+            "selected_count": snapshot.get("selected_count", len(selected)),
+            "selected_truncated": True,
+        }
     objects = snapshot.get("objects")
-    if not objects or _json_size(snapshot) <= SNAPSHOT_BYTE_BUDGET:
+    if not objects or _json_size(snapshot) <= budget:
         return snapshot
-    budget = SNAPSHOT_BYTE_BUDGET - (_json_size(snapshot) - _json_size(objects))
+    objects_budget = budget - (_json_size(snapshot) - _json_size(objects))
     kept: list[Any] = []
     used = 2
     for obj in objects:
         used += _json_size(obj) + 2
-        if used > budget:
+        if used > objects_budget:
             break
         kept.append(obj)
     fitted = {
@@ -326,10 +359,118 @@ def _fit_snapshot(snapshot: dict[str, Any] | None) -> dict[str, Any] | None:
         "objects_listed": len(kept),
         "objects_truncated": True,
     }
-    while kept and _json_size(fitted) > SNAPSHOT_BYTE_BUDGET:
+    while kept and _json_size(fitted) > budget:
         kept.pop()
         fitted["objects_listed"] = len(kept)
     return fitted
+
+
+# Per-field byte caps mirroring the trajectory_steps_size_guard DB constraint
+# (action 32768, observation 98304, state_before/state_after 393216 bytes).
+# Thresholds sit under the DB caps because json.dumps output only approximates
+# the jsonb text Postgres measures.
+DB_FIELD_BYTE_CAPS = {
+    "action": 30_000,
+    "observation": 90_000,
+    "state_before": 360_000,
+    "state_after": 360_000,
+}
+
+
+def _utf8_size(value: Any) -> int | None:
+    """Byte length of the JSON Postgres will store, or None if unserializable."""
+    try:
+        return len(json.dumps(value, ensure_ascii=False, default=str).encode("utf-8"))
+    except Exception:
+        return None
+
+
+def _exceeds(value: Any, cap: int) -> bool:
+    size = _utf8_size(value)
+    return size is None or size > cap
+
+
+def _trim_observation(observation: dict[str, Any], cap: int) -> dict[str, Any]:
+    """Halve the stored-whole payload, then drop it, then drop the oldest
+    agent observations, until the field fits."""
+    trimmed = dict(observation)
+    payload = trimmed.get("payload")
+    while isinstance(payload, str) and len(payload) > 512 and _exceeds(trimmed, cap):
+        payload = payload[: len(payload) // 2] + "..."
+        trimmed["payload"] = payload
+    if _exceeds(trimmed, cap):
+        trimmed.pop("payload", None)
+    agent_obs = trimmed.get("agent_observations")
+    while isinstance(agent_obs, list) and agent_obs and _exceeds(trimmed, cap):
+        agent_obs = agent_obs[1:]
+        trimmed["agent_observations"] = agent_obs
+    return trimmed
+
+
+def _trim_action(action: dict[str, Any], cap: int) -> dict[str, Any]:
+    """Cap string params, then drop params wholesale, then shorten raw_code."""
+    trimmed = dict(action)
+    params = trimmed.get("params")
+    if isinstance(params, dict) and _exceeds(trimmed, cap):
+        trimmed["params"] = {
+            key: _cap_text(value, 500) if isinstance(value, str) else value
+            for key, value in params.items()
+        }
+    if isinstance(params, dict) and _exceeds(trimmed, cap):
+        trimmed["params"] = {"params_dropped": True}
+    if isinstance(trimmed.get("raw_code"), str) and _exceeds(trimmed, cap):
+        trimmed["raw_code"] = _cap_text(trimmed["raw_code"], 2000)
+    return trimmed
+
+
+def _size_guard_stub(value: Any, size: int | None) -> dict[str, Any]:
+    stub: dict[str, Any] = {"size_guard_dropped": True, "original_bytes": size}
+    if isinstance(value, dict):
+        for key in ("kind", "semantic", "tool_name", "snapshot_source", "object_count"):
+            kept = value.get(key)
+            if isinstance(kept, (str, int, float, bool)):
+                stub[key] = kept
+    return stub
+
+
+def _enforce_db_size_guard(payload: dict[str, Any]) -> None:
+    """Last defence before insert: no field may violate the DB size guard.
+
+    Upstream budgets (_fit_snapshot, OBSERVATION_BYTE_BUDGET) keep normal rows
+    small; this catches whatever they miss, measured in the bytes Postgres
+    sees rather than Python characters, so an oversized field is trimmed — or
+    replaced with a stub — instead of the whole row being rejected. Mutates
+    payload in place. Never raises."""
+    sizes: dict[str, int | None] = {}
+    for field, cap in DB_FIELD_BYTE_CAPS.items():
+        try:
+            value = payload.get(field)
+            if value is None:
+                continue
+            size = _utf8_size(value)
+            sizes[field] = size
+            if size is not None and size <= cap:
+                continue
+            if field in ("state_before", "state_after") and isinstance(value, dict):
+                trimmed = _fit_snapshot(value, budget=min(cap, SNAPSHOT_BYTE_BUDGET))
+            elif field == "observation" and isinstance(value, dict):
+                trimmed = _trim_observation(value, cap)
+            elif field == "action" and isinstance(value, dict):
+                trimmed = _trim_action(value, cap)
+            else:
+                trimmed = None
+            if trimmed is None or _exceeds(trimmed, cap):
+                trimmed = _size_guard_stub(value, size)
+            payload[field] = trimmed
+            logger.warning(
+                f"Trajectory size guard: {field} was {size} bytes (cap {cap}); "
+                f"stored {_utf8_size(trimmed)} bytes"
+            )
+        except Exception as e:
+            logger.debug(f"Size guard failed for {field}: {e}")
+            payload[field] = {"size_guard_dropped": True, "original_bytes": None}
+    if sizes:
+        logger.debug(f"Trajectory row field bytes: {sizes}")
 
 
 def _normalize_goal(goal: str | None) -> str:
@@ -1268,6 +1409,9 @@ class TrajectoryRecorder:
         return False
 
     def _post_row(self, table: str, payload: dict[str, Any]) -> bool:
+        # Feedback rows carry none of the guarded fields, so this is a no-op
+        # for them.
+        _enforce_db_size_guard(payload)
         config = self._config()
         telemetry = self._telemetry()
         response = httpx.post(

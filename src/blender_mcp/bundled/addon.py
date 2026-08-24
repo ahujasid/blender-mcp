@@ -42,6 +42,11 @@ ADDON_PROTOCOL_VERSION = 4
 # blender_mcp.trajectory.MAX_SNAPSHOT_OBJECTS.
 MAX_SNAPSHOT_OBJECTS = 2000
 
+# Selected-name cap for get_world_state_snapshot: select-all in a large scene
+# would otherwise make `selected` the dominant field of both step snapshots.
+# Keep in sync with blender_mcp.trajectory.MAX_SNAPSHOT_SELECTED.
+MAX_SNAPSHOT_SELECTED = 200
+
 RODIN_FREE_TRIAL_KEY = "vibecoding"
 
 # Add User-Agent as required by Poly Haven API
@@ -945,6 +950,11 @@ class BlenderMCPServer:
         try:
             scene = bpy.context.scene
             selected = [obj.name for obj in bpy.context.selected_objects]
+            selected_count = len(selected)
+            selected_truncated = selected_count > MAX_SNAPSHOT_SELECTED
+            if selected_truncated:
+                # Sorted so before/after snapshots keep the same subset.
+                selected = sorted(selected)[:MAX_SNAPSHOT_SELECTED]
             objects = []
 
             all_objects = list(scene.objects)
@@ -1046,6 +1056,8 @@ class BlenderMCPServer:
                 "objects_listed": len(objects),
                 "objects_truncated": truncated,
                 "selected": selected,
+                "selected_count": selected_count,
+                "selected_truncated": selected_truncated,
                 "frame_current": scene.frame_current,
                 "frame_start": scene.frame_start,
                 "frame_end": scene.frame_end,
