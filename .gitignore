@@ -12,5 +12,12 @@ wheels/
 # macOS
 .DS_Store
 
-# Local config secrets
 src/blender_mcp/config.py
+
+local_tests/
+/test_*.py
+.pytest_cache/
+
+supabase/
+
+scripts/
