@@ -29,11 +29,24 @@ TRAJECTORY_FEEDBACK_TABLE = "trajectory_feedback"
 # 3: object entries carry aabb_min/aabb_max/dimensions and parent/constraint
 # relations. Rows at <=2 have positions but no geometry, so contact- and
 # collision-style analysis must filter on this.
-SCHEMA_VERSION = 3
+# 4: object cap raised from 50 to MAX_SNAPSHOT_OBJECTS, and snapshots carry an
+# explicit objects_truncated/objects_listed pair. At <=3 truncation could only
+# be inferred from object_count > 50, and the objects kept were whatever
+# scene.objects happened to yield first.
+SCHEMA_VERSION = 4
 MAX_RAW_CODE_LENGTH = 8000
 MAX_AGENT_OBS_BUFFER = 8
 MAX_OBS_SUMMARY_CHARS = 2000
 MAX_PENDING_ROWS = 256
+
+# Per-snapshot object cap. Two snapshots ride on every step row, and object
+# entries run ~400 bytes each, so this bounds a row at roughly 1.5 MB. The old
+# value of 50 silently truncated any real production scene, which made
+# state_delta report phantom adds/removes: scene.objects iterates in an order
+# that shifts as objects are created, so before/after kept *different* arbitrary
+# 50-object subsets. Snapshots that hit the cap now sort by name first, so both
+# sides keep the same subset and the delta stays meaningful.
+MAX_SNAPSHOT_OBJECTS = 2000
 
 # Auto-capture: VLM-judged metrics need an image for the step being judged, but
 # the agent only screenshots when it chooses to, so most mutating steps have
@@ -43,7 +56,7 @@ AUTO_CAPTURE_MAX_SIZE = 512
 AUTO_CAPTURE_MIN_INTERVAL = 20.0
 
 # Fallback probe for older addons lacking get_world_state_snapshot.
-_SNAPSHOT_VIA_EXECUTE_CODE = r'''
+_SNAPSHOT_VIA_EXECUTE_CODE_TEMPLATE = r'''
 import json
 import bpy
 import mathutils
@@ -51,9 +64,12 @@ import mathutils
 scene = bpy.context.scene
 selected = [obj.name for obj in bpy.context.selected_objects]
 objects = []
-for i, obj in enumerate(scene.objects):
-    if i >= 50:
-        break
+all_objects = list(scene.objects)
+truncated = len(all_objects) > __MAX_OBJECTS__
+if truncated:
+    # Stable subset so before/after snapshots agree; see MAX_SNAPSHOT_OBJECTS.
+    all_objects = sorted(all_objects, key=lambda o: o.name)[:__MAX_OBJECTS__]
+for obj in all_objects:
     materials = []
     if getattr(obj, "material_slots", None):
         materials = [slot.material.name for slot in obj.material_slots if slot.material]
@@ -125,6 +141,8 @@ for obj in scene.objects:
 print(json.dumps({
     "name": scene.name,
     "object_count": len(scene.objects),
+    "objects_listed": len(objects),
+    "objects_truncated": truncated,
     "selected": selected,
     "objects": objects,
     "active_camera": camera.name if camera else None,
@@ -135,6 +153,10 @@ print(json.dumps({
     "snapshot_source": "execute_code_fallback",
 }))
 '''
+
+_SNAPSHOT_VIA_EXECUTE_CODE = _SNAPSHOT_VIA_EXECUTE_CODE_TEMPLATE.replace(
+    "__MAX_OBJECTS__", str(MAX_SNAPSHOT_OBJECTS)
+)
 
 
 SEMANTIC_ACTIONS: dict[str, str] = {
@@ -363,9 +385,16 @@ class TrajectoryRecorder:
         if not isinstance(result, dict) or "error" in result:
             return None
         objects = result.get("objects") or []
+        total = result.get("object_count", len(objects))
         return {
             "name": result.get("name"),
-            "object_count": result.get("object_count", len(objects)),
+            "object_count": total,
+            # get_scene_info caps its own object list well below our snapshot
+            # cap, so this path is truncated whenever the scene outgrows it.
+            "objects_listed": len(objects),
+            "objects_truncated": bool(
+                isinstance(total, int) and total > len(objects)
+            ),
             "selected": [],
             "objects": objects,
             "active_camera": None,

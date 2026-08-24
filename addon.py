@@ -36,6 +36,10 @@ bl_info = {
 # Keep in sync with blender_mcp.addon_manager.EXPECTED_ADDON_PROTOCOL_VERSION.
 ADDON_PROTOCOL_VERSION = 4
 
+# Per-snapshot object cap for get_world_state_snapshot. Keep in sync with
+# blender_mcp.trajectory.MAX_SNAPSHOT_OBJECTS.
+MAX_SNAPSHOT_OBJECTS = 2000
+
 RODIN_FREE_TRIAL_KEY = "vibecoding"
 
 # Add User-Agent as required by Poly Haven API
@@ -893,10 +897,16 @@ class BlenderMCPServer:
             selected = [obj.name for obj in bpy.context.selected_objects]
             objects = []
 
-            for i, obj in enumerate(scene.objects):
-                if i >= 50:
-                    break
+            all_objects = list(scene.objects)
+            truncated = len(all_objects) > MAX_SNAPSHOT_OBJECTS
+            if truncated:
+                # scene.objects iterates in an order that shifts as objects are
+                # created, so an arbitrary prefix would leave the before/after
+                # snapshots of one step holding different subsets and the delta
+                # reporting phantom adds/removes. Sorting keeps them aligned.
+                all_objects = sorted(all_objects, key=lambda o: o.name)[:MAX_SNAPSHOT_OBJECTS]
 
+            for obj in all_objects:
                 materials = []
                 if getattr(obj, "material_slots", None):
                     materials = [
@@ -975,6 +985,10 @@ class BlenderMCPServer:
             return {
                 "name": scene.name,
                 "object_count": len(scene.objects),
+                # Explicit, so consumers never have to infer truncation from a
+                # hardcoded cap they might disagree with.
+                "objects_listed": len(objects),
+                "objects_truncated": truncated,
                 "selected": selected,
                 "frame_current": scene.frame_current,
                 "frame_start": scene.frame_start,
