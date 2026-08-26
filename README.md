@@ -11,7 +11,7 @@ Prompt-assisted 3D modeling, scene creation, and manipulation — driven by AI.
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Discord](https://img.shields.io/badge/Discord-join-5865F2?logo=discord&logoColor=white)](https://discord.gg/SNqPn4TcKQ)
 
-[**Website**](https://blendermcp.org/) · [**Full Tutorial**](https://www.youtube.com/watch?v=lCyQ717DuzQ) · [**Discord**](https://discord.gg/SNqPn4TcKQ) · [**Releases**](https://github.com/ahujasid/blender-mcp/releases) · [**Sponsor**](https://github.com/sponsors/ahujasid)
+[**Website**](https://blendermcp.org/) · [**Full Tutorial**](https://www.youtube.com/watch?v=lCyQ717DuzQ) · [**Discord**](https://discord.gg/SNqPn4TcKQ) · [**Sponsor**](https://github.com/sponsors/ahujasid) · [**Feedback**](https://cal.com/siddharth-ahuja/feedback-call)
 
 <a href="https://trendshift.io/repositories/14834?utm_source=repository-badge&amp;utm_medium=badge&amp;utm_campaign=badge-repository-14834" target="_blank" rel="noopener noreferrer"><img src="https://trendshift.io/api/badge/repositories/14834" alt="ahujasid%2Fblender-mcp | Trendshift" width="250" height="55"/></a>
 
