@@ -269,6 +269,69 @@ def test_parser_survives_missing_optional_fields(monkeypatch):
     assert row["Tags"] == []
 
 
+def test_zero_tri_count_is_reported_as_unknown_not_zero():
+    """The API reports "Tri Count": 0 for models that plainly have geometry.
+
+    Printing a bare 0 would invite picking it as the lowest-poly option, so the
+    search formatter shows it as Unknown instead.
+    """
+    import asyncio
+
+    from blender_mcp import server
+
+    sent = {}
+
+    class FakeBlender:
+        def send_command(self, _command, params=None):
+            sent["params"] = params
+            return {
+                "total": 2,
+                "results": [
+                    {"ID": "a", "Title": "Counted", "Tri Count": 216, "Licence": "CC0 1.0"},
+                    {"ID": "b", "Title": "Uncounted", "Tri Count": 0, "Licence": "CC0 1.0"},
+                ],
+            }
+
+    original = server.get_blender_connection
+    server.get_blender_connection = lambda: FakeBlender()
+    try:
+        out = asyncio.run(server.search_polypizza_models(None, query="thing", user_prompt=""))
+    finally:
+        server.get_blender_connection = original
+
+    assert "Tri count: 216" in out
+    assert "Tri count: Unknown" in out
+    assert "Tri count: 0" not in out
+
+
+def test_tool_boundary_converts_names_to_numeric_ids():
+    """search_polypizza_models accepts human-friendly filters and sends ids."""
+    import asyncio
+
+    from blender_mcp import server
+
+    sent = {}
+
+    class FakeBlender:
+        def send_command(self, _command, params=None):
+            sent.update(params or {})
+            return {"total": 0, "results": []}
+
+    original = server.get_blender_connection
+    server.get_blender_connection = lambda: FakeBlender()
+    try:
+        asyncio.run(
+            server.search_polypizza_models(
+                None, query="wolf", category="Animals", licence="CC0", user_prompt=""
+            )
+        )
+    finally:
+        server.get_blender_connection = original
+
+    assert sent["category"] == 7
+    assert sent["licence"] == 1
+
+
 # --- the CDN -----------------------------------------------------------------
 
 def test_cloudflare_challenge_gets_its_own_error(monkeypatch):

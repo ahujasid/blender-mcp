@@ -1202,7 +1202,8 @@ async def search_polypizza_models(
             formatted_output += f"- {model_name} (ID: {model_id})\n"
             formatted_output += f"  Author: {model.get('Creator') or 'Unknown author'}\n"
             formatted_output += f"  Licence: {model.get('Licence') or 'Unknown'}\n"
-            formatted_output += f"  Tri count: {model.get('Tri Count', 'Unknown')}\n"
+            tri_count = model.get("Tri Count")
+            formatted_output += f"  Tri count: {tri_count if tri_count else 'Unknown'}\n"
             formatted_output += f"  Category: {model.get('Category') or 'Unknown'}\n"
             formatted_output += f"  Animated: {'Yes' if model.get('Animated') else 'No'}\n\n"
 
@@ -1281,7 +1282,7 @@ async def download_polypizza_model(
             if result.get("title"):
                 output += f"Title: {result['title']}\n"
 
-            if result.get("tri_count") is not None:
+            if result.get("tri_count"):
                 output += f"Tri count: {result['tri_count']}\n"
 
             # Add dimension info if available
