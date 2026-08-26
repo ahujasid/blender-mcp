@@ -22,13 +22,14 @@ from datetime import datetime
 import hashlib, hmac, base64
 import os.path as osp
 from collections import deque
+from urllib.parse import quote
 from contextlib import contextmanager, redirect_stdout, suppress
 from bpy.app.handlers import persistent
 
 bl_info = {
     "name": "Blender MCP",
     "author": "BlenderMCP",
-    "version": (1, 5),
+    "version": (1, 6),
     "blender": (3, 0, 0),
     "location": "View3D > Sidebar > BlenderMCP",
     "description": "Connect Blender to Claude via MCP",
@@ -36,7 +37,7 @@ bl_info = {
 }
 
 # Keep in sync with blender_mcp.addon_manager.EXPECTED_ADDON_PROTOCOL_VERSION.
-ADDON_PROTOCOL_VERSION = 4
+ADDON_PROTOCOL_VERSION = 5
 
 # Per-snapshot object cap for get_world_state_snapshot. Keep in sync with
 # blender_mcp.trajectory.MAX_SNAPSHOT_OBJECTS.
@@ -52,6 +53,167 @@ RODIN_FREE_TRIAL_KEY = "vibecoding"
 # Add User-Agent as required by Poly Haven API
 REQ_HEADERS = requests.utils.default_headers()
 REQ_HEADERS.update({"User-Agent": "blender-mcp"})
+
+#region Poly Pizza constants and helpers
+
+POLYPIZZA_API_BASE = "https://api.poly.pizza/v1.1"
+
+# The API filters on numeric ids, not names. Lowercase parameter names
+# (`category=animals`) are accepted with HTTP 200 and then silently ignored, so
+# the capitalisation of the keys below is load-bearing.
+POLYPIZZA_CATEGORIES = {
+    "Food & Drink": 0,
+    "Clutter": 1,
+    "Weapons": 2,
+    "Transport": 3,
+    "Furniture & Decor": 4,
+    "Objects": 5,
+    "Nature": 6,
+    "Animals": 7,
+    "Buildings": 8,
+    "People & Characters": 9,
+    "Scenes & Levels": 10,
+    "Other": 11,
+}
+
+# Spellings a caller is likely to use, mapped onto the ids above.
+POLYPIZZA_CATEGORY_ALIASES = {
+    "food": 0, "drink": 0, "drinks": 0,
+    "weapon": 2,
+    "vehicle": 3, "vehicles": 3, "transportation": 3,
+    "furniture": 4, "decor": 4,
+    "object": 5, "prop": 5, "props": 5,
+    "plant": 6, "plants": 6,
+    "animal": 7,
+    "building": 8, "architecture": 8, "buildingsarchitecture": 8,
+    "person": 9, "character": 9, "characters": 9, "people": 9,
+    "scene": 10, "scenes": 10, "level": 10, "levels": 10,
+}
+
+
+def _polypizza_normalize(value):
+    """Fold a human-written filter value down to comparable characters."""
+    return "".join(ch for ch in str(value).lower() if ch.isalnum())
+
+
+def _polypizza_category_id(category):
+    """Coerce a category name or id into the numeric id the API expects."""
+    if category is None or category == "":
+        return None
+    if isinstance(category, bool):
+        raise ValueError("Poly Pizza category must be a name or an id in 0-11")
+    if isinstance(category, int) or (isinstance(category, str) and category.strip().lstrip("-").isdigit()):
+        value = int(category)
+        if not 0 <= value <= 11:
+            raise ValueError(f"Poly Pizza category id {value} is out of range (valid ids are 0-11)")
+        return value
+
+    key = _polypizza_normalize(category)
+    for name, value in POLYPIZZA_CATEGORIES.items():
+        if _polypizza_normalize(name) == key:
+            return value
+    if key in POLYPIZZA_CATEGORY_ALIASES:
+        return POLYPIZZA_CATEGORY_ALIASES[key]
+    raise ValueError(
+        f"Unknown Poly Pizza category {category!r}. Valid categories: "
+        + ", ".join(POLYPIZZA_CATEGORIES)
+    )
+
+
+def _polypizza_licence_id(licence):
+    """Coerce a licence name or id into the numeric id the API expects."""
+    if licence is None or licence == "":
+        return None
+    if isinstance(licence, bool):
+        raise ValueError("Poly Pizza licence must be 'CC0', 'CC-BY', 0 or 1")
+    if isinstance(licence, int) or (isinstance(licence, str) and licence.strip().lstrip("-").isdigit()):
+        value = int(licence)
+        if value not in (0, 1):
+            raise ValueError(f"Poly Pizza licence id {value} is invalid (0 = CC-BY, 1 = CC0)")
+        return value
+
+    key = _polypizza_normalize(licence)
+    if key.startswith("ccby"):
+        return 0
+    if key.startswith("cc0"):
+        return 1
+    raise ValueError(f"Unknown Poly Pizza licence {licence!r}. Use 'CC0' or 'CC-BY'.")
+
+
+def _polypizza_filter_params(category=None, licence=None, animated=False):
+    """Build the query filters for a Poly Pizza search.
+
+    Keys are Capitalized and values numeric because the API silently ignores
+    anything else. `Animated` is omitted unless animated-only results were asked
+    for: the server treats `Animated=0` as falsy and does not filter on it.
+    """
+    params = {}
+    category_id = _polypizza_category_id(category)
+    if category_id is not None:
+        params["Category"] = category_id
+    licence_id = _polypizza_licence_id(licence)
+    if licence_id is not None:
+        params["License"] = licence_id
+    if animated:
+        params["Animated"] = 1
+    return params
+
+
+def _polypizza_summarize_model(model):
+    """Trim an API record down to the fields worth sending back over MCP."""
+    creator = model.get("Creator") or {}
+    return {
+        "ID": model.get("ID"),
+        "Title": model.get("Title"),
+        "Creator": creator.get("Username") if isinstance(creator, dict) else None,
+        "Licence": model.get("Licence"),
+        "Tri Count": model.get("Tri Count"),
+        "Animated": bool(model.get("Animated")),
+        "Category": model.get("Category"),
+        "Tags": model.get("Tags") or [],
+        "Thumbnail": model.get("Thumbnail"),
+    }
+
+
+def _polypizza_cdn_error(status_code, headers, content):
+    """Describe a CDN response that is not a GLB, or None when it is one.
+
+    static.poly.pizza sits behind Cloudflare bot management and answers 403 with
+    an HTML challenge from datacenter IPs. That is neither an auth failure nor a
+    missing model, so it gets its own message.
+    """
+    if status_code == 200 and content[:4] == b"glTF":
+        return None
+
+    headers = headers or {}
+    content_type = ""
+    for key in ("Content-Type", "content-type"):
+        value = headers.get(key)
+        if value:
+            content_type = str(value).lower()
+            break
+
+    challenged = bool(headers.get("cf-mitigated") or headers.get("Cf-Mitigated"))
+    looks_like_html = "text/html" in content_type or content[:1] == b"<"
+
+    if challenged or (looks_like_html and status_code != 200):
+        return (
+            f"Poly Pizza's CDN returned a Cloudflare bot-protection challenge (HTTP {status_code}) "
+            "instead of the model file. This is not an API key problem - static.poly.pizza takes no "
+            "API key - and the model exists. The CDN blocks datacenter, VPN and cloud IPs; retry from "
+            "a residential connection, or download the .glb by hand from https://poly.pizza and import "
+            "it with File > Import > glTF 2.0."
+        )
+    if status_code != 200:
+        return f"Poly Pizza model file download failed with status code {status_code}"
+    if looks_like_html:
+        return (
+            "Poly Pizza's CDN returned an HTML page instead of a GLB file. The download link may have "
+            "expired; search again to get a fresh one."
+        )
+    return "Poly Pizza returned a file that is not a valid GLB (missing glTF magic bytes)"
+
+#endregion
 
 #region Manual edit capture
 # Records what the human does in Blender while an MCP session is live.
@@ -379,6 +541,13 @@ class BlenderMCPServer:
             "BLENDERMCP_SKETCHFAB_API_KEY",
         )
 
+    def _get_polypizza_api_key(self):
+        return self._get_config_value(
+            "blendermcp_polypizza_api_key",
+            "polypizza_api_key",
+            "BLENDERMCP_POLYPIZZA_API_KEY",
+        )
+
     def _get_hunyuan3d_secret_id(self):
         return self._get_config_value(
             "blendermcp_hunyuan3d_secret_id",
@@ -649,6 +818,7 @@ class BlenderMCPServer:
             "get_polyhaven_status": self.get_polyhaven_status,
             "get_hyper3d_status": self.get_hyper3d_status,
             "get_sketchfab_status": self.get_sketchfab_status,
+            "get_polypizza_status": self.get_polypizza_status,
             "get_hunyuan3d_status": self.get_hunyuan3d_status,
         }
 
@@ -679,7 +849,15 @@ class BlenderMCPServer:
                 "download_sketchfab_model": self.download_sketchfab_model,
             }
             handlers.update(sketchfab_handlers)
-        
+
+        # Add Poly Pizza handlers only if enabled
+        if bpy.context.scene.blendermcp_use_polypizza:
+            polypizza_handlers = {
+                "search_polypizza_models": self.search_polypizza_models,
+                "download_polypizza_model": self.download_polypizza_model,
+            }
+            handlers.update(polypizza_handlers)
+
         # Add Hunyuan3d handlers only if enabled
         if bpy.context.scene.blendermcp_use_hunyuan3d:
             hunyuan_handlers = {
@@ -2790,6 +2968,326 @@ class BlenderMCPServer:
             return {"error": f"Failed to download model: {str(e)}"}
     #endregion
 
+    #region Poly Pizza API
+    def get_polypizza_status(self):
+        """Get the current status of Poly Pizza integration"""
+        enabled = bpy.context.scene.blendermcp_use_polypizza
+        api_key = self._get_polypizza_api_key()
+
+        if enabled and api_key:
+            return {
+                "enabled": True,
+                "message": "Poly Pizza integration is enabled and ready to use."
+            }
+        elif enabled and not api_key:
+            return {
+                "enabled": False,
+                "message": """Poly Pizza integration is currently enabled, but API key is not given. To enable it:
+                            1. Get a free API key at https://poly.pizza/settings/api
+                            2. In the 3D Viewport, find the BlenderMCP panel in the sidebar (press N if hidden)
+                            3. Keep the 'Use Poly Pizza' checkbox checked
+                            4. Enter your Poly Pizza API Key
+                            5. Restart the connection to Claude"""
+            }
+        else:
+            return {
+                "enabled": False,
+                "message": """Poly Pizza integration is currently disabled. To enable it:
+                            1. Get a free API key at https://poly.pizza/settings/api
+                            2. In the 3D Viewport, find the BlenderMCP panel in the sidebar (press N if hidden)
+                            3. Check the 'Use assets from Poly Pizza' checkbox
+                            4. Enter your Poly Pizza API Key
+                            5. Restart the connection to Claude"""
+            }
+
+    def search_polypizza_models(self, query=None, category=None, licence=None,
+                                animated=False, limit=20, page=None):
+        """Search for models on Poly Pizza by keyword and/or filters
+
+        Parameters:
+        - query: Keyword to search for. When omitted, at least one filter is
+                 required: the bare /search endpoint answers 400 without one.
+        - category: Category name or numeric id (0-11)
+        - licence: 'CC0' or 'CC-BY' (or the numeric id: 0 = CC-BY, 1 = CC0)
+        - animated: When True, return only animated models
+        - limit: Maximum number of results to return
+        - page: Optional 1-based page number
+        """
+        try:
+            api_key = self._get_polypizza_api_key()
+            if not api_key:
+                return {"error": "Poly Pizza API key is not configured"}
+
+            try:
+                filters = _polypizza_filter_params(category, licence, animated)
+            except ValueError as e:
+                return {"error": str(e)}
+
+            keyword = (query or "").strip()
+            if not keyword and not filters:
+                return {"error": (
+                    "Poly Pizza needs a search keyword or at least one filter "
+                    "(category, licence, or animated=True). An unfiltered listing of the "
+                    "whole catalogue is rejected by the API with HTTP 400."
+                )}
+
+            params = dict(filters)
+            params["limit"] = limit
+            if page is not None:
+                params["page"] = page
+
+            headers = dict(REQ_HEADERS)
+            headers["x-auth-token"] = api_key
+
+            if keyword:
+                url = f"{POLYPIZZA_API_BASE}/search/{quote(keyword, safe='')}"
+            else:
+                url = f"{POLYPIZZA_API_BASE}/search"
+
+            response = requests.get(url, headers=headers, params=params, timeout=30)
+
+            if response.status_code in (401, 403):
+                return {"error": f"Poly Pizza authentication failed ({response.status_code}). Check your API key."}
+
+            if response.status_code == 400:
+                return {"error": (
+                    "Poly Pizza rejected the search parameters (400). Category must be an id in "
+                    "0-11 and licence 0 (CC-BY) or 1 (CC0)."
+                )}
+
+            if response.status_code == 429:
+                return {"error": "Poly Pizza rate limit exceeded (100 requests/second). Try again in a moment."}
+
+            if response.status_code != 200:
+                return {"error": f"Poly Pizza API request failed with status code {response.status_code}"}
+
+            response_data = response.json()
+
+            if response_data is None:
+                return {"error": "Received empty response from Poly Pizza API"}
+
+            results = response_data.get("results", [])
+            if not isinstance(results, list):
+                return {"error": f"Unexpected response format from Poly Pizza API: {response_data}"}
+
+            return {
+                "total": response_data.get("total", len(results)),
+                "results": [_polypizza_summarize_model(m) for m in results if isinstance(m, dict)],
+                "filters_applied": filters,
+            }
+
+        except requests.exceptions.Timeout:
+            return {"error": "Request timed out. Check your internet connection."}
+        except json.JSONDecodeError as e:
+            return {"error": f"Invalid JSON response from Poly Pizza API: {str(e)}"}
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            return {"error": str(e)}
+
+    def download_polypizza_model(self, model_id, normalize_size=False, target_size=1.0):
+        """Download a model from Poly Pizza by its ID
+
+        Parameters:
+        - model_id: The Poly Pizza model ID (from search_polypizza_models)
+        - normalize_size: If True, scale the model so its largest dimension equals target_size
+        - target_size: The target size in Blender units (meters) for the largest dimension
+        """
+        temp_dir = None
+        try:
+            api_key = self._get_polypizza_api_key()
+            if not api_key:
+                return {"error": "Poly Pizza API key is not configured"}
+
+            headers = dict(REQ_HEADERS)
+            headers["x-auth-token"] = api_key
+
+            response = requests.get(
+                f"{POLYPIZZA_API_BASE}/model/{quote(str(model_id), safe='')}",
+                headers=headers,
+                timeout=30
+            )
+
+            if response.status_code in (401, 403):
+                return {"error": f"Poly Pizza authentication failed ({response.status_code}). Check your API key."}
+
+            if response.status_code == 404:
+                return {"error": f"No Poly Pizza model found with ID '{model_id}'"}
+
+            if response.status_code != 200:
+                return {"error": f"Poly Pizza model lookup failed with status code {response.status_code}"}
+
+            model = response.json()
+
+            if not isinstance(model, dict):
+                return {"error": f"Unexpected response format from Poly Pizza API: {model}"}
+
+            download_url = model.get("Download")
+            if not download_url:
+                return {"error": f"Poly Pizza model '{model_id}' has no downloadable GLB file"}
+
+            # The CDN takes no API key and must never be sent one: it is a
+            # separate host from the API.
+            file_response = requests.get(download_url, headers=dict(REQ_HEADERS), timeout=60)
+
+            cdn_error = _polypizza_cdn_error(
+                file_response.status_code,
+                getattr(file_response, "headers", None),
+                file_response.content or b"",
+            )
+            if cdn_error:
+                return {"error": cdn_error}
+
+            # Every Poly Pizza model is a single self-contained .glb - no zip,
+            # no sidecar textures - so it goes straight to disk and into glTF import.
+            safe_id = re.sub(r"[^A-Za-z0-9_-]", "_", str(model_id)) or "model"
+            temp_dir = tempfile.mkdtemp()
+            glb_path = os.path.join(temp_dir, f"{safe_id}.glb")
+
+            with open(glb_path, "wb") as f:
+                f.write(file_response.content)
+
+            bpy.ops.import_scene.gltf(filepath=glb_path)
+
+            # Get the imported objects
+            imported_objects = list(bpy.context.selected_objects)
+            imported_object_names = [obj.name for obj in imported_objects]
+
+            # Clean up temporary files
+            with suppress(Exception):
+                shutil.rmtree(temp_dir)
+            temp_dir = None
+
+            # Find root objects (objects without parents in the imported set)
+            root_objects = [obj for obj in imported_objects if obj.parent is None]
+
+            # 69% of the catalogue is CC-BY, so the credit line has to outlive
+            # the session. Custom properties are saved into the .blend.
+            attribution = model.get("Attribution") or ""
+            licence = model.get("Licence") or ""
+            for root in root_objects:
+                root["polypizza_attribution"] = attribution
+                root["polypizza_id"] = model.get("ID") or str(model_id)
+                root["polypizza_licence"] = licence
+
+            # Helper function to recursively get all mesh children
+            def get_all_mesh_children(obj):
+                """Recursively collect all mesh objects in the hierarchy"""
+                meshes = []
+                if obj.type == 'MESH':
+                    meshes.append(obj)
+                for child in obj.children:
+                    meshes.extend(get_all_mesh_children(child))
+                return meshes
+
+            # Collect ALL meshes from the entire hierarchy (starting from roots)
+            all_meshes = []
+            for obj in root_objects:
+                all_meshes.extend(get_all_mesh_children(obj))
+
+            if all_meshes:
+                # Calculate combined world bounding box for all meshes
+                all_min = mathutils.Vector((float('inf'), float('inf'), float('inf')))
+                all_max = mathutils.Vector((float('-inf'), float('-inf'), float('-inf')))
+
+                for mesh_obj in all_meshes:
+                    # Get world-space bounding box corners
+                    for corner in mesh_obj.bound_box:
+                        world_corner = mesh_obj.matrix_world @ mathutils.Vector(corner)
+                        all_min.x = min(all_min.x, world_corner.x)
+                        all_min.y = min(all_min.y, world_corner.y)
+                        all_min.z = min(all_min.z, world_corner.z)
+                        all_max.x = max(all_max.x, world_corner.x)
+                        all_max.y = max(all_max.y, world_corner.y)
+                        all_max.z = max(all_max.z, world_corner.z)
+
+                # Calculate dimensions
+                dimensions = [
+                    all_max.x - all_min.x,
+                    all_max.y - all_min.y,
+                    all_max.z - all_min.z
+                ]
+                max_dimension = max(dimensions)
+
+                # Apply normalization if requested
+                scale_applied = 1.0
+                if normalize_size and max_dimension > 0:
+                    scale_factor = target_size / max_dimension
+                    scale_applied = scale_factor
+
+                    # Only apply scale to ROOT objects (not children!)
+                    # Child objects inherit parent's scale through matrix_world
+                    for root in root_objects:
+                        root.scale = (
+                            root.scale.x * scale_factor,
+                            root.scale.y * scale_factor,
+                            root.scale.z * scale_factor
+                        )
+
+                    # Update the scene to recalculate matrix_world for all objects
+                    bpy.context.view_layer.update()
+
+                    # Recalculate bounding box after scaling
+                    all_min = mathutils.Vector((float('inf'), float('inf'), float('inf')))
+                    all_max = mathutils.Vector((float('-inf'), float('-inf'), float('-inf')))
+
+                    for mesh_obj in all_meshes:
+                        for corner in mesh_obj.bound_box:
+                            world_corner = mesh_obj.matrix_world @ mathutils.Vector(corner)
+                            all_min.x = min(all_min.x, world_corner.x)
+                            all_min.y = min(all_min.y, world_corner.y)
+                            all_min.z = min(all_min.z, world_corner.z)
+                            all_max.x = max(all_max.x, world_corner.x)
+                            all_max.y = max(all_max.y, world_corner.y)
+                            all_max.z = max(all_max.z, world_corner.z)
+
+                    dimensions = [
+                        all_max.x - all_min.x,
+                        all_max.y - all_min.y,
+                        all_max.z - all_min.z
+                    ]
+
+                world_bounding_box = [[all_min.x, all_min.y, all_min.z], [all_max.x, all_max.y, all_max.z]]
+            else:
+                world_bounding_box = None
+                dimensions = None
+                scale_applied = 1.0
+
+            result = {
+                "success": True,
+                "message": "Model imported successfully",
+                "imported_objects": imported_object_names,
+                "model_id": model.get("ID") or str(model_id),
+                "title": model.get("Title"),
+                "licence": licence,
+                "attribution": attribution,
+                "tri_count": model.get("Tri Count"),
+            }
+
+            if world_bounding_box:
+                result["world_bounding_box"] = world_bounding_box
+            if dimensions:
+                result["dimensions"] = [round(d, 4) for d in dimensions]
+            if normalize_size:
+                result["scale_applied"] = round(scale_applied, 6)
+                result["normalized"] = True
+
+            return result
+
+        except requests.exceptions.Timeout:
+            return {"error": "Request timed out. Check your internet connection and try again."}
+        except json.JSONDecodeError as e:
+            return {"error": f"Invalid JSON response from Poly Pizza API: {str(e)}"}
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            return {"error": f"Failed to download model: {str(e)}"}
+        finally:
+            if temp_dir:
+                with suppress(Exception):
+                    shutil.rmtree(temp_dir)
+    #endregion
+
     #region Hunyuan3D
     def get_hunyuan3d_status(self):
         """Get the current status of Hunyuan3D integration"""
@@ -3257,6 +3755,12 @@ class BLENDERMCP_AddonPreferences(bpy.types.AddonPreferences):
         description="Persistent Sketchfab API Key",
         default=""
     )
+    polypizza_api_key: bpy.props.StringProperty(
+        name="Poly Pizza API Key",
+        subtype="PASSWORD",
+        description="Persistent Poly Pizza API Key",
+        default=""
+    )
     hunyuan3d_secret_id: bpy.props.StringProperty(
         name="Hunyuan3D SecretId",
         description="Persistent Hunyuan3D SecretId",
@@ -3304,6 +3808,7 @@ class BLENDERMCP_AddonPreferences(bpy.types.AddonPreferences):
         layout.label(text="Persistent API Credentials:", icon='LOCKED')
         cred_box = layout.box()
         cred_box.prop(self, "sketchfab_api_key", text="Sketchfab API Key")
+        cred_box.prop(self, "polypizza_api_key", text="Poly Pizza API Key")
         cred_box.prop(self, "hyper3d_api_key", text="Hyper3D API Key")
         cred_box.prop(self, "hunyuan3d_secret_id", text="Hunyuan3D SecretId")
         cred_box.prop(self, "hunyuan3d_secret_key", text="Hunyuan3D SecretKey")
@@ -3340,6 +3845,13 @@ class BLENDERMCP_PT_Panel(bpy.types.Panel):
                 layout.prop(prefs, "sketchfab_api_key", text="API Key")
             else:
                 layout.prop(scene, "blendermcp_sketchfab_api_key", text="API Key")
+
+        layout.prop(scene, "blendermcp_use_polypizza", text="Use assets from Poly Pizza")
+        if scene.blendermcp_use_polypizza:
+            if prefs:
+                layout.prop(prefs, "polypizza_api_key", text="API Key")
+            else:
+                layout.prop(scene, "blendermcp_polypizza_api_key", text="API Key")
 
         layout.prop(scene, "blendermcp_use_hunyuan3d", text="Use Tencent Hunyuan 3D model generation")
         if scene.blendermcp_use_hunyuan3d:
@@ -3582,6 +4094,19 @@ def register():
         default=""
     )
 
+    bpy.types.Scene.blendermcp_use_polypizza = bpy.props.BoolProperty(
+        name="Use Poly Pizza",
+        description="Enable Poly Pizza asset integration",
+        default=False
+    )
+
+    bpy.types.Scene.blendermcp_polypizza_api_key = bpy.props.StringProperty(
+        name="Poly Pizza API Key",
+        subtype="PASSWORD",
+        description="API Key provided by Poly Pizza",
+        default=""
+    )
+
     # Register preferences class
     bpy.utils.register_class(BLENDERMCP_AddonPreferences)
 
@@ -3635,6 +4160,8 @@ def unregister():
     del bpy.types.Scene.blendermcp_hyper3d_api_key
     del bpy.types.Scene.blendermcp_use_sketchfab
     del bpy.types.Scene.blendermcp_sketchfab_api_key
+    del bpy.types.Scene.blendermcp_use_polypizza
+    del bpy.types.Scene.blendermcp_polypizza_api_key
     del bpy.types.Scene.blendermcp_use_hunyuan3d
     del bpy.types.Scene.blendermcp_hunyuan3d_mode
     del bpy.types.Scene.blendermcp_hunyuan3d_secret_id
