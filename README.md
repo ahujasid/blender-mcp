@@ -436,6 +436,8 @@ Once the config file has been set on Claude, and the addon is running on Blender
 
 - Get scene and object information
 - Create, delete and modify shapes
+- Create primitives and edit meshes directly (extrude, inset, bevel, bridge, boolean, subdivide, remesh, solidify)
+- Higher-level modeling operations (mirror, array, radial array, symmetrize, blockout, refine, detail, match transform to a reference object)
 - Apply or create materials for objects
 - Execute any Python code in Blender
 - Download the right models, assets and HDRIs through [Poly Haven](https://polyhaven.com/)

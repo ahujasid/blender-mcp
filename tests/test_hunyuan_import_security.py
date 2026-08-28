@@ -55,6 +55,7 @@ def _install_bpy_stubs(monkeypatch, scene):
     monkeypatch.setitem(sys.modules, "bpy.app", app)
     monkeypatch.setitem(sys.modules, "bpy.app.handlers", handlers)
     monkeypatch.setitem(sys.modules, "mathutils", types.ModuleType("mathutils"))
+    monkeypatch.setitem(sys.modules, "bmesh", types.ModuleType("bmesh"))
 
     requests = types.ModuleType("requests")
     requests.utils = types.SimpleNamespace(default_headers=dict)

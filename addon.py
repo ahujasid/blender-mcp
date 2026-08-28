@@ -2,6 +2,7 @@
 
 import re
 import bpy
+import bmesh
 import mathutils
 import json
 import threading
@@ -324,6 +325,71 @@ def get_blendermcp_addon_preferences(context=None):
         context = bpy.context
     addon = context.preferences.addons.get(__name__)
     return addon.preferences if addon else None
+
+
+#region Mesh/model editing helpers
+def _get_mesh_object(name):
+    """Look up an object by name and require it to be a mesh."""
+    obj = bpy.data.objects.get(name)
+    if not obj:
+        raise ValueError(f"Object not found: {name}")
+    if obj.type != 'MESH':
+        raise ValueError(f"Object '{name}' is not a mesh (type={obj.type})")
+    return obj
+
+
+def _set_active(obj):
+    """Make obj the sole selected + active object."""
+    bpy.ops.object.select_all(action='DESELECT')
+    obj.select_set(True)
+    bpy.context.view_layer.objects.active = obj
+
+
+def _select_geometry(obj, vert_indices=None, edge_indices=None, face_indices=None):
+    """Enter edit mode on obj and select the given indices, or everything if none given."""
+    _set_active(obj)
+    bpy.ops.object.mode_set(mode='EDIT')
+    bm = bmesh.from_edit_mesh(obj.data)
+    bm.verts.ensure_lookup_table()
+    bm.edges.ensure_lookup_table()
+    bm.faces.ensure_lookup_table()
+    any_indices = bool(vert_indices or edge_indices or face_indices)
+    for v in bm.verts:
+        v.select = not any_indices
+    for e in bm.edges:
+        e.select = not any_indices
+    for f in bm.faces:
+        f.select = not any_indices
+    if vert_indices:
+        for i in vert_indices:
+            bm.verts[i].select = True
+    if edge_indices:
+        for i in edge_indices:
+            bm.edges[i].select = True
+    if face_indices:
+        for i in face_indices:
+            bm.faces[i].select = True
+    bm.select_flush(True)
+    bmesh.update_edit_mesh(obj.data)
+
+
+def _exit_edit_mode():
+    bpy.ops.object.mode_set(mode='OBJECT')
+
+
+def _mesh_counts(obj):
+    return {
+        "vertices": len(obj.data.vertices),
+        "edges": len(obj.data.edges),
+        "polygons": len(obj.data.polygons),
+    }
+
+
+def _apply_modifier(obj, modifier):
+    _set_active(obj)
+    bpy.ops.object.modifier_apply(modifier=modifier.name)
+#endregion
+
 
 class BlenderMCPServer:
     def __init__(self, host='localhost', port=9876):
@@ -650,6 +716,23 @@ class BlenderMCPServer:
             "get_hyper3d_status": self.get_hyper3d_status,
             "get_sketchfab_status": self.get_sketchfab_status,
             "get_hunyuan3d_status": self.get_hunyuan3d_status,
+            "create_primitive": self.create_primitive,
+            "mesh_extrude": self.mesh_extrude,
+            "mesh_inset": self.mesh_inset,
+            "mesh_bevel": self.mesh_bevel,
+            "mesh_bridge": self.mesh_bridge,
+            "mesh_boolean": self.mesh_boolean,
+            "mesh_subdivide": self.mesh_subdivide,
+            "mesh_remesh": self.mesh_remesh,
+            "mesh_solidify": self.mesh_solidify,
+            "model_match_reference": self.model_match_reference,
+            "model_blockout": self.model_blockout,
+            "model_refine": self.model_refine,
+            "model_detail": self.model_detail,
+            "model_symmetrize": self.model_symmetrize,
+            "model_mirror": self.model_mirror,
+            "model_array": self.model_array,
+            "model_radial_array": self.model_radial_array,
         }
 
         # Add Polyhaven handlers only if enabled
@@ -1137,6 +1220,226 @@ class BlenderMCPServer:
             }
 
         return obj_info
+
+    #region Mesh & model editing handlers
+    _PRIMITIVE_OPS = {
+        'CUBE': lambda size, location, rotation: bpy.ops.mesh.primitive_cube_add(
+            size=size, location=location, rotation=rotation),
+        'SPHERE': lambda size, location, rotation: bpy.ops.mesh.primitive_uv_sphere_add(
+            radius=size, location=location, rotation=rotation),
+        'CYLINDER': lambda size, location, rotation: bpy.ops.mesh.primitive_cylinder_add(
+            radius=size, depth=size * 2, location=location, rotation=rotation),
+        'CONE': lambda size, location, rotation: bpy.ops.mesh.primitive_cone_add(
+            radius1=size, depth=size * 2, location=location, rotation=rotation),
+        'TORUS': lambda size, location, rotation: bpy.ops.mesh.primitive_torus_add(
+            major_radius=size, minor_radius=size * 0.25, location=location, rotation=rotation),
+        'PLANE': lambda size, location, rotation: bpy.ops.mesh.primitive_plane_add(
+            size=size, location=location, rotation=rotation),
+        'CURVE': lambda size, location, rotation: bpy.ops.curve.primitive_bezier_curve_add(
+            radius=size, location=location, rotation=rotation),
+    }
+
+    def create_primitive(self, primitive_type, name=None, location=(0, 0, 0), rotation=(0, 0, 0), size=1.0):
+        """Create a mesh/curve primitive: cube, sphere, cylinder, cone, torus, plane, or curve."""
+        ptype = str(primitive_type).upper()
+        op = self._PRIMITIVE_OPS.get(ptype)
+        if not op:
+            raise ValueError(f"Unknown primitive_type: {primitive_type}. Must be one of {sorted(self._PRIMITIVE_OPS)}")
+        op(size, tuple(location), tuple(rotation))
+        obj = bpy.context.active_object
+        if name:
+            obj.name = name
+        result = {
+            "name": obj.name,
+            "type": obj.type,
+            "location": [obj.location.x, obj.location.y, obj.location.z],
+        }
+        if obj.type == 'MESH':
+            result.update(_mesh_counts(obj))
+        return result
+
+    def mesh_extrude(self, object_name, offset=(0, 0, 1), face_indices=None):
+        """Extrude the selected (or all) faces of a mesh by offset."""
+        obj = _get_mesh_object(object_name)
+        _select_geometry(obj, face_indices=face_indices)
+        bpy.ops.mesh.extrude_region_move(TRANSFORM_OT_translate={"value": tuple(offset)})
+        _exit_edit_mode()
+        return {"name": obj.name, **_mesh_counts(obj)}
+
+    def mesh_inset(self, object_name, thickness=0.05, depth=0.0, face_indices=None):
+        """Inset the selected (or all) faces of a mesh."""
+        obj = _get_mesh_object(object_name)
+        _select_geometry(obj, face_indices=face_indices)
+        bpy.ops.mesh.inset_faces(thickness=thickness, depth=depth)
+        _exit_edit_mode()
+        return {"name": obj.name, **_mesh_counts(obj)}
+
+    def mesh_bevel(self, object_name, offset=0.05, segments=1, affect='EDGES', edge_indices=None, vertex_indices=None):
+        """Bevel the selected (or all) edges/vertices of a mesh."""
+        obj = _get_mesh_object(object_name)
+        _select_geometry(obj, vert_indices=vertex_indices, edge_indices=edge_indices)
+        bpy.ops.mesh.bevel(offset=offset, segments=segments, affect=affect)
+        _exit_edit_mode()
+        return {"name": obj.name, **_mesh_counts(obj)}
+
+    def mesh_bridge(self, object_name, edge_indices):
+        """Bridge two selected open edge loops of a mesh."""
+        if not edge_indices:
+            raise ValueError("edge_indices is required: select the edges forming the two loops to bridge")
+        obj = _get_mesh_object(object_name)
+        _select_geometry(obj, edge_indices=edge_indices)
+        bpy.ops.mesh.bridge_edge_loops()
+        _exit_edit_mode()
+        return {"name": obj.name, **_mesh_counts(obj)}
+
+    def mesh_boolean(self, object_name, cutter_object_name, operation='DIFFERENCE', keep_target=False):
+        """Apply a boolean modifier between two mesh objects, deleting the cutter unless keep_target."""
+        operation = str(operation).upper()
+        if operation not in {'UNION', 'DIFFERENCE', 'INTERSECT'}:
+            raise ValueError(f"Invalid operation: {operation}. Must be one of UNION, DIFFERENCE, INTERSECT")
+        obj = _get_mesh_object(object_name)
+        cutter = _get_mesh_object(cutter_object_name)
+        mod = obj.modifiers.new(name="Boolean", type='BOOLEAN')
+        mod.object = cutter
+        mod.operation = operation
+        _apply_modifier(obj, mod)
+        if not keep_target:
+            bpy.data.objects.remove(cutter, do_unlink=True)
+        return {"name": obj.name, **_mesh_counts(obj)}
+
+    def mesh_subdivide(self, object_name, cuts=1, face_indices=None):
+        """Subdivide the selected (or all) faces of a mesh."""
+        obj = _get_mesh_object(object_name)
+        _select_geometry(obj, face_indices=face_indices)
+        bpy.ops.mesh.subdivide(number_cuts=cuts)
+        _exit_edit_mode()
+        return {"name": obj.name, **_mesh_counts(obj)}
+
+    def mesh_remesh(self, object_name, voxel_size=0.1):
+        """Voxel-remesh a mesh object, rebuilding its topology at the given voxel size."""
+        obj = _get_mesh_object(object_name)
+        obj.data.remesh_voxel_size = voxel_size
+        _set_active(obj)
+        bpy.ops.object.voxel_remesh()
+        return {"name": obj.name, **_mesh_counts(obj)}
+
+    def mesh_solidify(self, object_name, thickness=0.01, apply=True):
+        """Add thickness to a mesh's surface via a Solidify modifier."""
+        obj = _get_mesh_object(object_name)
+        mod = obj.modifiers.new(name="Solidify", type='SOLIDIFY')
+        mod.thickness = thickness
+        if apply:
+            _apply_modifier(obj, mod)
+        return {"name": obj.name, "applied": bool(apply), **_mesh_counts(obj)}
+
+    def model_match_reference(self, object_name, reference_object_name, match_location=True, match_rotation=True, match_scale=True):
+        """Align an object's transform to a reference object's transform."""
+        obj = bpy.data.objects.get(object_name)
+        if not obj:
+            raise ValueError(f"Object not found: {object_name}")
+        ref = bpy.data.objects.get(reference_object_name)
+        if not ref:
+            raise ValueError(f"Reference object not found: {reference_object_name}")
+        if match_location:
+            obj.location = ref.location.copy()
+        if match_rotation:
+            obj.rotation_euler = ref.rotation_euler.copy()
+        if match_scale:
+            obj.scale = ref.scale.copy()
+        return {
+            "name": obj.name,
+            "location": [obj.location.x, obj.location.y, obj.location.z],
+            "rotation": [obj.rotation_euler.x, obj.rotation_euler.y, obj.rotation_euler.z],
+            "scale": [obj.scale.x, obj.scale.y, obj.scale.z],
+        }
+
+    def model_blockout(self, name, primitive_type='CUBE', size=(1, 1, 1), location=(0, 0, 0)):
+        """Create a simple placeholder primitive scaled to size, tagged as a blockout proxy."""
+        result = self.create_primitive(primitive_type=primitive_type, name=name, location=location)
+        obj = bpy.data.objects[result["name"]]
+        obj.scale = tuple(size)
+        obj["blockout"] = True
+        result["scale"] = [obj.scale.x, obj.scale.y, obj.scale.z]
+        return result
+
+    def model_refine(self, object_name, levels=1, apply=False):
+        """Smooth and increase effective resolution via a Subdivision Surface modifier."""
+        obj = _get_mesh_object(object_name)
+        mod = obj.modifiers.new(name="Subdivision", type='SUBSURF')
+        mod.levels = levels
+        mod.render_levels = levels
+        _set_active(obj)
+        bpy.ops.object.shade_smooth()
+        if apply:
+            _apply_modifier(obj, mod)
+        return {"name": obj.name, "applied": bool(apply), **_mesh_counts(obj)}
+
+    def model_detail(self, object_name, strength=0.1, scale=5.0, texture_type='NOISE', apply=False):
+        """Add fine procedural surface detail via a Displace modifier driven by a noise/voronoi texture."""
+        obj = _get_mesh_object(object_name)
+        tex = bpy.data.textures.new(name=f"{object_name}_detail", type=texture_type)
+        tex.noise_scale = scale
+        mod = obj.modifiers.new(name="Displace", type='DISPLACE')
+        mod.texture = tex
+        mod.strength = strength
+        if apply:
+            _apply_modifier(obj, mod)
+        return {"name": obj.name, "applied": bool(apply), **_mesh_counts(obj)}
+
+    def model_symmetrize(self, object_name, direction='NEGATIVE_X_TO_POSITIVE_X'):
+        """Symmetrize a mesh across an axis, mirroring one half onto the other."""
+        obj = _get_mesh_object(object_name)
+        _select_geometry(obj)
+        bpy.ops.mesh.symmetrize(direction=direction)
+        _exit_edit_mode()
+        return {"name": obj.name, **_mesh_counts(obj)}
+
+    def model_mirror(self, object_name, axis='X', merge=True, apply=False):
+        """Add a Mirror modifier to an object across the given axis."""
+        obj = _get_mesh_object(object_name)
+        axis = str(axis).upper()
+        if axis not in {'X', 'Y', 'Z'}:
+            raise ValueError(f"Invalid axis: {axis}. Must be one of X, Y, Z")
+        mod = obj.modifiers.new(name="Mirror", type='MIRROR')
+        mod.use_axis = [axis == a for a in ('X', 'Y', 'Z')]
+        mod.use_clip = bool(merge)
+        if apply:
+            _apply_modifier(obj, mod)
+        return {"name": obj.name, "applied": bool(apply), **_mesh_counts(obj)}
+
+    def model_array(self, object_name, count=2, relative_offset=(1, 0, 0), apply=False):
+        """Add a linear Array modifier to an object."""
+        obj = _get_mesh_object(object_name)
+        mod = obj.modifiers.new(name="Array", type='ARRAY')
+        mod.count = count
+        mod.relative_offset_displace = tuple(relative_offset)
+        if apply:
+            _apply_modifier(obj, mod)
+        return {"name": obj.name, "applied": bool(apply), **_mesh_counts(obj)}
+
+    def model_radial_array(self, object_name, count=6, axis='Z', apply=False):
+        """Duplicate an object radially around its origin using an Array modifier driven by a helper empty."""
+        obj = _get_mesh_object(object_name)
+        axis = str(axis).upper()
+        if axis not in {'X', 'Y', 'Z'}:
+            raise ValueError(f"Invalid axis: {axis}. Must be one of X, Y, Z")
+        if count < 2:
+            raise ValueError("count must be at least 2")
+        empty = bpy.data.objects.new(f"{object_name}_radial_pivot", None)
+        bpy.context.collection.objects.link(empty)
+        empty.location = obj.location.copy()
+        angle = (2 * 3.141592653589793) / count
+        setattr(empty.rotation_euler, axis.lower(), angle)
+        mod = obj.modifiers.new(name="Array", type='ARRAY')
+        mod.count = count
+        mod.use_relative_offset = False
+        mod.use_object_offset = True
+        mod.offset_object = empty
+        if apply:
+            _apply_modifier(obj, mod)
+            bpy.data.objects.remove(empty, do_unlink=True)
+        return {"name": obj.name, "applied": bool(apply), **_mesh_counts(obj)}
+    #endregion
 
     def get_viewport_screenshot(self, max_size=800, filepath=None, format="png"):
         """
