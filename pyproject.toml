@@ -36,10 +36,12 @@ ignore = ["E501"]
 requires = ["setuptools>=77.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
-[dependency-groups]
-dev = [
-    "ruff>=0.16.5",
-]
+[tool.poetry]
+packages = [{ include = "blender_mcp", from = "src" }]
+
+[tool.poetry.group.dev.dependencies]
+ruff = ">=0.16.5"
+pytest = ">=8.0"
 
 [tool.setuptools]
 package-dir = {"" = "src"}

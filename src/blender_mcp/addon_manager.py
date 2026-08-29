@@ -1,7 +1,7 @@
 """
 Bundle, install, and version-check the Blender MCP addon.
 
-Existing users often update only the MCP server (`uvx blender-mcp`). This module:
+Existing users often update only the MCP server (`pipx upgrade blender-mcp`). This module:
 1. Ships a bundled copy of addon.py inside the package
 2. Can copy it into Blender's user addons directory (`install-addon`)
 3. Handshake with a running addon to detect outdated installs
@@ -69,7 +69,7 @@ class AddonStatusReport:
 
 
 _UPDATE_HINT = (
-    "Run `uvx blender-mcp install-addon` to update it, then in Blender: "
+    "Run `blender-mcp install-addon` to update it, then in Blender: "
     "Preferences → Add-ons → disable and re-enable 'Interface: Blender MCP' "
     "(or restart Blender) and click Start MCP Server."
 )
@@ -109,7 +109,7 @@ def check_addon_status_on_startup() -> AddonStatusReport:
                 reason="not_installed",
                 message=(
                     "Blender MCP addon not found in any Blender addons folder. "
-                    "Run `uvx blender-mcp install-addon` to install it."
+                    "Run `blender-mcp install-addon` to install it."
                 ),
             )
 
@@ -399,7 +399,7 @@ def handshake_addon(blender_connection) -> AddonHandshake:
             warning = (
                 f"Blender addon protocol {protocol_i!r} is behind "
                 f"expected {EXPECTED_ADDON_PROTOCOL_VERSION}. "
-                "Run `uvx blender-mcp install-addon` to update it, then "
+                "Run `blender-mcp install-addon` to update it, then "
                 "restart Blender or disable/enable 'Interface: Blender MCP', "
                 "then Start MCP Server. Trajectory still works via fallbacks."
             )
@@ -417,7 +417,7 @@ def handshake_addon(blender_connection) -> AddonHandshake:
         if "unknown command" in msg or "get_addon_info" in msg:
             warning = (
                 "Blender addon is outdated (no get_addon_info). "
-                "Run `uvx blender-mcp install-addon` to update it, then "
+                "Run `blender-mcp install-addon` to update it, then "
                 "restart Blender or disable/enable 'Interface: Blender MCP', "
                 "then Start MCP Server. Fallbacks keep working in the meantime."
             )

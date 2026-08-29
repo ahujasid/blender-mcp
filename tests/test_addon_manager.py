@@ -36,8 +36,8 @@ def test_root_and_bundled_addon_in_sync():
 
     bundled = Path(blender_mcp.__file__).resolve().parent / "bundled" / "addon.py"
     assert bundled.is_file(), (
-        "src/blender_mcp/bundled/addon.py is missing — uvx users would ship "
-        "without a bundled addon."
+        "src/blender_mcp/bundled/addon.py is missing — packaged installs would "
+        "ship without a bundled addon."
     )
     assert root.read_text(encoding="utf-8") == bundled.read_text(encoding="utf-8"), (
         "Root addon.py and src/blender_mcp/bundled/addon.py diverged — "
