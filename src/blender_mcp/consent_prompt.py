@@ -14,6 +14,7 @@ asked in the Blender addon instead.
 Asked at most once per conversation. A decline is remembered on disk so it is
 not re-asked on every future conversation.
 """
+
 from __future__ import annotations
 
 import json
@@ -56,6 +57,7 @@ PROMPT_MESSAGE = (
     "Collection is on by default, but it is currently OFF for you. Turn it back on?"
 )
 
+
 def _state_path() -> Path:
     """Where the remembered answer lives. Next to the telemetry install ID."""
     base = os.environ.get("XDG_CONFIG_HOME")
@@ -65,7 +67,7 @@ def _state_path() -> Path:
 
 def _read_state() -> dict[str, Any]:
     try:
-        with open(_state_path(), "r") as f:
+        with open(_state_path()) as f:
             data = json.load(f)
         return data if isinstance(data, dict) else {}
     except (OSError, ValueError):
@@ -139,9 +141,7 @@ def _apply_consent(consent: bool) -> bool:
         from .telemetry import telemetry
 
         blender = get_blender_connection()
-        result = blender.send_command(
-            "set_telemetry_consent", {"consent": consent}
-        )
+        result = blender.send_command("set_telemetry_consent", {"consent": consent})
         if "error" in result:
             logger.debug(f"Addon rejected consent write: {result['error']}")
             return False

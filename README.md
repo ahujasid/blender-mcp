@@ -30,22 +30,31 @@ Prompt-assisted 3D modeling, scene creation, and manipulation — driven by AI.
 
 ## Quickstart
 
-Three steps: install `uv`, point your MCP client at the server, install the Blender addon.
+Three steps: install `blender-mcp` with pipx, point your MCP client at the server, install the Blender addon.
 
-**1. Install uv**
+**1. Install blender-mcp with pipx**
 
 ```bash
 # macOS
-brew install uv
+brew install pipx
+pipx ensurepath
 
 # Linux
-curl -LsSf https://astral.sh/uv/install.sh | sh
+python3 -m pip install --user pipx
+python3 -m pipx ensurepath
 
 # Windows
-powershell -c "irm https://astral.sh/uv/install.ps1 | iex"
+py -m pip install --user pipx
+py -m pipx ensurepath
 ```
 
-> **Warning:** Do not proceed before installing uv. Use the official installer — *not* `pip install uv`.
+Then, in a new shell:
+
+```bash
+pipx install blender-mcp
+```
+
+> **Warning:** Do not proceed before installing pipx and running `pipx install blender-mcp`.
 
 **2. Add the MCP server to your client**
 
@@ -56,8 +65,7 @@ powershell -c "irm https://astral.sh/uv/install.ps1 | iex"
 {
     "mcpServers": {
         "blender": {
-            "command": "uvx",
-            "args": ["blender-mcp"]
+            "command": "blender-mcp"
         }
     }
 }
@@ -68,7 +76,7 @@ powershell -c "irm https://astral.sh/uv/install.ps1 | iex"
 <summary><b>Claude Code</b></summary>
 
 ```bash
-claude mcp add blender uvx blender-mcp
+claude mcp add blender blender-mcp
 ```
 </details>
 
@@ -81,7 +89,7 @@ See [MCP Client Setup](#mcp-client-setup) below for per-client instructions and 
 **3. Install the Blender addon**
 
 ```bash
-uvx blender-mcp install-addon
+blender-mcp install-addon
 ```
 
 Then in Blender: **Edit → Preferences → Add-ons** → enable **Interface: Blender MCP**.
@@ -101,9 +109,8 @@ In Blender's 3D viewport, press `N` → open the **BlenderMCP** tab → click **
 - [Components](#components)
 - [Installation](#installation)
   - [Prerequisites](#prerequisites)
-  - [Make your client find uvx](#make-your-client-find-uvx)
+  - [Make your client find blender-mcp](#make-your-client-find-blender-mcp)
   - [Pin the Python version](#pin-the-python-version)
-  - [Install without uv](#install-without-uv)
   - [Environment Variables](#environment-variables)
 - [MCP Client Setup](#mcp-client-setup)
   - [Claude for Desktop](#claude-for-desktop)
@@ -156,87 +163,67 @@ The system consists of two main components:
 
 - **Blender** 3.0 or newer
 - **Python** 3.10 or newer
-- **uv** package manager
+- **pipx**
 
 <details>
-<summary><b>Installing uv, per platform</b></summary>
+<summary><b>Installing pipx, per platform</b></summary>
 
 **macOS**
 ```bash
-brew install uv
+brew install pipx
+pipx ensurepath
 ```
 
 **Windows**
 ```powershell
-powershell -c "irm https://astral.sh/uv/install.ps1 | iex"
-```
-
-Then add uv to the user path in Windows (you may need to restart Claude Desktop after):
-
-```powershell
-$localBin = "$env:USERPROFILE\.local\bin"
-$userPath = [Environment]::GetEnvironmentVariable("Path", "User")
-[Environment]::SetEnvironmentVariable("Path", "$userPath;$localBin", "User")
+py -m pip install --user pipx
+py -m pipx ensurepath
 ```
 
 **Linux**
 ```bash
-curl -LsSf https://astral.sh/uv/install.sh | sh
+python3 -m pip install --user pipx
+python3 -m pipx ensurepath
 ```
 
-It lands in `~/.local/bin` — open a new shell so it's on your PATH.
+`pipx ensurepath` adds pipx's install location (and the binaries it installs) to your PATH — open a new shell after running it.
 
-Otherwise, installation instructions are on their website: [Install uv](https://docs.astral.sh/uv/getting-started/installation/)
+Otherwise, installation instructions are on their website: [Install pipx](https://pipx.pypa.io/stable/installation/).
 
-On every OS, use uv's **official installer above — not `pip install uv`**, which may not create the `uvx` command and can hide uv inside an environment your client can't see.
+Then install the server itself:
+
+```bash
+pipx install blender-mcp
+```
 </details>
 
-> **Warning:** Do not proceed before installing uv.
+> **Warning:** Do not proceed before installing pipx and running `pipx install blender-mcp`.
 
-### Make your client find uvx
+### Make your client find blender-mcp
 
-MCP clients started from a GUI (Claude Desktop, Cursor, VS Code from the Dock/Start menu) do **not** inherit your terminal's PATH, so a bare `"command": "uvx"` can fail with **`spawn uvx ENOENT`** even though `uvx` works in your terminal. If that happens:
+MCP clients started from a GUI (Claude Desktop, Cursor, VS Code from the Dock/Start menu) do **not** inherit your terminal's PATH, so a bare `"command": "blender-mcp"` can fail with **`spawn blender-mcp ENOENT`** even though it works in your terminal. If that happens:
 
-- Find uvx's full path — `which uvx` (macOS/Linux) or `where uvx` (Windows) — and use it as `"command"`, e.g. `/opt/homebrew/bin/uvx` or `C:\Users\<you>\.local\bin\uvx.exe`.
-- On Windows you can instead wrap it: `"command": "cmd", "args": ["/c", "uvx", "blender-mcp"]`.
+- Find blender-mcp's full path — `which blender-mcp` (macOS/Linux) or `where blender-mcp` (Windows) — and use it as `"command"`, e.g. `/Users/<you>/.local/bin/blender-mcp` or `C:\Users\<you>\.local\bin\blender-mcp.exe`.
+- On Windows you can instead wrap it: `"command": "cmd", "args": ["/c", "blender-mcp"]`.
 - After any PATH or config change, **fully quit and relaunch** the client (Windows: quit from the system tray, not just the window; macOS: <kbd>Cmd</kbd>+<kbd>Q</kbd>).
 
 ### Pin the Python version
 
 *Avoid conda / pyenv / version conflicts.*
 
-uv chooses which Python runs the server. On machines with conda (auto-activated base), pyenv, or asdf — or with a newer CPython release that some dependencies do not have wheels for yet — uv can grab an interpreter that makes installation fail. Pin Python 3.11 and prefer uv-managed interpreters to avoid using whatever is on your PATH:
-
-```json
-{
-    "mcpServers": {
-        "blender": {
-            "command": "uvx",
-            "args": ["--python", "3.11", "blender-mcp"],
-            "env": { "UV_PYTHON_PREFERENCE": "only-managed" }
-        }
-    }
-}
-```
-
-`--python 3.11` still satisfies this package's `requires-python >=3.10`, and `UV_PYTHON_PREFERENCE=only-managed` keeps uv from selecting conda, pyenv, asdf, or system Python first. (The repo's `.python-version` is only a hint for contributors and does **not** affect `uvx`.)
-
-If a previous failed attempt keeps replaying after a fix, clear the cache:
+On machines with conda (auto-activated base), pyenv, or asdf, `pipx install` can pick up an interpreter that makes installation fail. Pin the Python version pipx uses to build the server's environment:
 
 ```bash
-uv cache clean blender-mcp && uvx --refresh blender-mcp
+pipx install blender-mcp --python python3.11
 ```
 
-### Install without uv
+This still satisfies this package's `requires-python >=3.10`. (The repo's `.python-version` is only a hint for contributors and does **not** affect an already-published install.)
 
-On locked-down machines you can skip uvx entirely with [`pipx`](https://pipx.pypa.io), then point your client at the installed command:
+If a previous failed attempt keeps replaying after a fix, reinstall clean:
 
 ```bash
-pipx install blender-mcp
-pipx ensurepath          # then restart your shell / client
+pipx reinstall blender-mcp
 ```
-
-Use the resulting absolute path as `"command"` (find it with `which blender-mcp` / `where blender-mcp`) and omit `args`.
 
 ### Environment Variables
 
@@ -260,7 +247,7 @@ export BLENDER_PORT=9876
 
 ### Claude for Desktop
 
-[Watch the setup instruction video](https://www.youtube.com/watch?v=neoK_WMq92g) (assuming you have already installed uv)
+[Watch the setup instruction video](https://www.youtube.com/watch?v=neoK_WMq92g) (assuming you have already installed blender-mcp via pipx)
 
 Go to **Claude → Settings → Developer → Edit Config → `claude_desktop_config.json`** and include the following:
 
@@ -268,10 +255,7 @@ Go to **Claude → Settings → Developer → Edit Config → `claude_desktop_co
 {
     "mcpServers": {
         "blender": {
-            "command": "uvx",
-            "args": [
-                "blender-mcp"
-            ]
+            "command": "blender-mcp"
         }
     }
 }
@@ -283,13 +267,13 @@ Go to **Claude → Settings → Developer → Edit Config → `claude_desktop_co
 Use the Claude Code CLI to add the blender MCP server:
 
 ```bash
-claude mcp add blender uvx blender-mcp
+claude mcp add blender blender-mcp
 ```
 </details>
 
 ### Cursor
 
-[![Install MCP Server](https://cursor.com/deeplink/mcp-install-dark.svg)](https://cursor.com/link/mcp%2Finstall?name=blender&config=eyJjb21tYW5kIjoidXZ4IGJsZW5kZXItbWNwIn0%3D)
+[![Install MCP Server](https://cursor.com/deeplink/mcp-install-dark.svg)](https://cursor.com/link/mcp%2Finstall?name=blender&config=eyJjb21tYW5kIjoiYmxlbmRlci1tY3AifQ%3D%3D)
 
 **macOS** — go to **Settings → MCP** and paste the following:
 
@@ -300,10 +284,7 @@ claude mcp add blender uvx blender-mcp
 {
     "mcpServers": {
         "blender": {
-            "command": "uvx",
-            "args": [
-                "blender-mcp"
-            ]
+            "command": "blender-mcp"
         }
     }
 }
@@ -318,7 +299,6 @@ claude mcp add blender uvx blender-mcp
             "command": "cmd",
             "args": [
                 "/c",
-                "uvx",
                 "blender-mcp"
             ]
         }
@@ -334,7 +314,7 @@ claude mcp add blender uvx blender-mcp
 
 *Prerequisites*: Make sure you have [Visual Studio Code](https://code.visualstudio.com/) installed before proceeding.
 
-[![Install in VS Code](https://img.shields.io/badge/VS_Code-Install_blender--mcp_server-0098FF?style=flat-square&logo=visualstudiocode&logoColor=ffffff)](vscode:mcp/install?%7B%22name%22%3A%22blender-mcp%22%2C%22type%22%3A%22stdio%22%2C%22command%22%3A%22uvx%22%2C%22args%22%3A%5B%22blender-mcp%22%5D%7D)
+[![Install in VS Code](https://img.shields.io/badge/VS_Code-Install_blender--mcp_server-0098FF?style=flat-square&logo=visualstudiocode&logoColor=ffffff)](vscode:mcp/install?%7B%22name%22%3A%22blender-mcp%22%2C%22type%22%3A%22stdio%22%2C%22command%22%3A%22blender-mcp%22%7D)
 
 ### OpenCode
 
@@ -343,7 +323,7 @@ claude mcp add blender uvx blender-mcp
   "mcp": {
     "blender-mcp": {
       "type": "local",
-      "command": ["uvx", "blender-mcp"],
+      "command": ["blender-mcp"],
       "enabled": true,
       "environment": {
         "BLENDER_HOST": "localhost",
@@ -360,8 +340,7 @@ claude mcp add blender uvx blender-mcp
 {
   "mcpServers": {
     "blender-mcp": {
-      "command": "uvx",
-      "args": ["blender-mcp"],
+      "command": "blender-mcp",
       "env": {
         "BLENDER_HOST": "localhost",
         "BLENDER_PORT": "9876"
@@ -378,12 +357,12 @@ claude mcp add blender uvx blender-mcp
 **1. Recommended** — from a terminal, run:
 
 ```bash
-uvx blender-mcp install-addon
+blender-mcp install-addon
 ```
 
 This copies the addon into your Blender addons folder as `blender_mcp.py`. It prints where it wrote to, and keeps a `.bak` of any file it replaces.
 
-> Optional: `uvx blender-mcp addon-paths` lists detected Blender addons folders. Override the destination with `BLENDERMCP_ADDONS_DIR=/path/to/scripts/addons`.
+> Optional: `blender-mcp addon-paths` lists detected Blender addons folders. Override the destination with `BLENDERMCP_ADDONS_DIR=/path/to/scripts/addons`.
 
 **2.** Open Blender
 
@@ -399,11 +378,12 @@ Then open the **BlenderMCP** tab in Blender's sidebar (press `N` in the 3D viewp
 
 > For newcomers, go straight to [Quickstart](#quickstart). For existing users, see below.
 
-**1.** Update the addon file by running:
+**1.** Update the server, then the addon file:
 
 ```bash
-uvx blender-mcp install-addon
-uvx blender-mcp addon-paths   # optional: list detected Blender addons folders
+pipx upgrade blender-mcp
+blender-mcp install-addon
+blender-mcp addon-paths   # optional: list detected Blender addons folders
 ```
 
 **2.** In Blender: **Preferences → Add-ons** → disable and re-enable **Interface: Blender MCP** (or restart Blender), then click **Start MCP Server** again.
@@ -436,6 +416,8 @@ Once the config file has been set on Claude, and the addon is running on Blender
 
 - Get scene and object information
 - Create, delete and modify shapes
+- Create primitives and edit meshes directly (extrude, inset, bevel, bridge, boolean, subdivide, remesh, solidify)
+- Higher-level modeling operations (mirror, array, radial array, symmetrize, blockout, refine, detail, match transform to a reference object)
 - Apply or create materials for objects
 - Execute any Python code in Blender
 - Download the right models, assets and HDRIs through [Poly Haven](https://polyhaven.com/)
@@ -489,7 +471,7 @@ For headless setups or CI, credentials can also be injected by environment varia
 
 | Problem | Fix |
 |---|---|
-| **Connection issues** | Make sure the Blender addon server is running, and the MCP server is configured on Claude. **Do not** run the `uvx` command in the terminal. Sometimes the first command won't go through, but after that it starts working. |
+| **Connection issues** | Make sure the Blender addon server is running, and the MCP server is configured on Claude. **Do not** run the `blender-mcp` command manually in the terminal outside your MCP client. Sometimes the first command won't go through, but after that it starts working. |
 | **Timeout errors** | Try simplifying your requests or breaking them into smaller steps. |
 | **Poly Haven integration** | Claude is sometimes erratic with its behaviour. |
 | **Have you tried turning it off and on again?** | If you're still having connection errors, try restarting both Claude and the Blender server. |
@@ -521,7 +503,7 @@ BlenderMCP collects anonymous usage data to help improve the tool. Telemetry con
 **2. Environment Variable** — completely disable all telemetry by running:
 
 ```bash
-DISABLE_TELEMETRY=true uvx blender-mcp
+DISABLE_TELEMETRY=true blender-mcp
 ```
 
 Or add it to your MCP config:
@@ -530,8 +512,7 @@ Or add it to your MCP config:
 {
     "mcpServers": {
         "blender": {
-            "command": "uvx",
-            "args": ["blender-mcp"],
+            "command": "blender-mcp",
             "env": {
                 "DISABLE_TELEMETRY": "true"
             }

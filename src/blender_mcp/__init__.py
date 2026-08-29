@@ -9,4 +9,5 @@ except PackageNotFoundError:
     __version__ = "unknown"
 
 # Expose key classes and functions for easier imports
-from .server import BlenderConnection, get_blender_connection
+from .server import BlenderConnection as BlenderConnection
+from .server import get_blender_connection as get_blender_connection

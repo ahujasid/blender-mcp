@@ -24,9 +24,24 @@ blender-mcp = "blender_mcp.server:main"
 python_files = ["test_*.py"]
 testpaths = ["tests"]
 
+[tool.ruff]
+target-version = "py310"
+extend-exclude = ["src/blender_mcp/bundled"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "SIM", "C4"]
+ignore = ["E501"]
+
 [build-system]
 requires = ["setuptools>=77.0", "wheel"]
 build-backend = "setuptools.build_meta"
+
+[tool.poetry]
+packages = [{ include = "blender_mcp", from = "src" }]
+
+[tool.poetry.group.dev.dependencies]
+ruff = ">=0.16.5"
+pytest = ">=8.0"
 
 [tool.setuptools]
 package-dir = {"" = "src"}

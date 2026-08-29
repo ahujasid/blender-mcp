@@ -3,6 +3,7 @@
 These tests read the root addon.py as a source file (it cannot be imported
 without bpy), so they need the repo root rather than the tests directory.
 """
+
 from __future__ import annotations
 
 from pathlib import Path

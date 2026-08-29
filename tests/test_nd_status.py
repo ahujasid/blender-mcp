@@ -1,4 +1,4 @@
-"""Regression coverage for Sketchfab availability reporting."""
+"""Regression coverage for ND (HugeMenace) availability reporting."""
 
 import importlib.util
 import sys
@@ -7,7 +7,7 @@ import types
 from conftest import ROOT_ADDON as ADDON
 
 
-def _load_addon(monkeypatch, scene):
+def _load_addon(monkeypatch, scene, nd_installed=False):
     bpy = types.ModuleType("bpy")
     bpy.context = types.SimpleNamespace(scene=scene)
     bpy.types = types.SimpleNamespace(
@@ -16,6 +16,11 @@ def _load_addon(monkeypatch, scene):
         Panel=object,
         Scene=type("Scene", (), {}),
     )
+
+    ops = types.SimpleNamespace()
+    if nd_installed:
+        ops.nd = types.SimpleNamespace(bool_vanilla=lambda *_a, **_k: {"FINISHED"})
+    bpy.ops = ops
 
     props = types.ModuleType("bpy.props")
     for name in (
@@ -64,59 +69,48 @@ def _load_addon(monkeypatch, scene):
     return addon
 
 
-def _scene(sketchfab_enabled):
+def _scene(nd_enabled):
     return types.SimpleNamespace(
         blendermcp_use_polyhaven=False,
         blendermcp_use_hyper3d=False,
         blendermcp_use_hunyuan3d=False,
-        blendermcp_use_sketchfab=sketchfab_enabled,
-        blendermcp_use_nd=False,
+        blendermcp_use_sketchfab=False,
+        blendermcp_use_nd=nd_enabled,
     )
 
 
-def test_disabled_sketchfab_does_not_report_a_saved_key_as_ready(monkeypatch):
-    addon = _load_addon(monkeypatch, _scene(sketchfab_enabled=False))
+def test_disabled_nd_is_absent_from_dispatch(monkeypatch):
+    addon = _load_addon(monkeypatch, _scene(nd_enabled=False), nd_installed=True)
     server = addon.BlenderMCPServer()
-    monkeypatch.setattr(server, "_get_sketchfab_api_key", lambda: "saved-key")
 
-    def request_should_not_run(*_args, **_kwargs):
-        raise AssertionError("must not validate a disabled integration")
-
-    monkeypatch.setattr(
-        addon.requests,
-        "get",
-        request_should_not_run,
-        raising=False,
-    )
-
-    status = server.get_sketchfab_status()
-    command = server._execute_command_internal({"type": "search_sketchfab_models"})
+    status = server.get_nd_status()
+    command = server._execute_command_internal({"type": "nd_boolean"})
 
     assert status["enabled"] is False
     assert "currently disabled" in status["message"]
     assert command == {
         "status": "error",
-        "message": "Unknown command type: search_sketchfab_models",
+        "message": "Unknown command type: nd_boolean",
     }
 
 
-def test_enabled_sketchfab_reports_a_valid_key_as_ready(monkeypatch):
-    addon = _load_addon(monkeypatch, _scene(sketchfab_enabled=True))
+def test_enabled_nd_without_addon_installed_is_reported_as_not_ready(monkeypatch):
+    addon = _load_addon(monkeypatch, _scene(nd_enabled=True), nd_installed=False)
     server = addon.BlenderMCPServer()
-    monkeypatch.setattr(server, "_get_sketchfab_api_key", lambda: "saved-key")
 
-    class Response:
-        status_code = 200
+    status = server.get_nd_status()
 
-        @staticmethod
-        def json():
-            return {"username": "artist"}
+    assert status["enabled"] is False
+    assert "does not appear to be" in status["message"]
 
-    monkeypatch.setattr(
-        addon.requests, "get", lambda *_args, **_kwargs: Response(), raising=False
-    )
 
-    assert server.get_sketchfab_status() == {
+def test_enabled_nd_with_addon_installed_is_ready(monkeypatch):
+    addon = _load_addon(monkeypatch, _scene(nd_enabled=True), nd_installed=True)
+    server = addon.BlenderMCPServer()
+
+    status = server.get_nd_status()
+
+    assert status == {
         "enabled": True,
-        "message": "Sketchfab integration is enabled and ready to use. Logged in as: artist",
+        "message": "ND integration is enabled and the ND addon is installed and ready to use.",
     }
