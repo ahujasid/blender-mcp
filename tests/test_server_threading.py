@@ -15,11 +15,10 @@ from __future__ import annotations
 import ast
 import json
 import socket
-import sys
 import threading
 import time
 import types
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 
 from conftest import ROOT_ADDON
 
@@ -79,6 +78,7 @@ def _load_server_class():
         "queue": __import__("queue"),
         "traceback": __import__("traceback"),
         "os": __import__("os"),
+        "suppress": suppress,
         "get_blendermcp_addon_preferences": lambda context=None: None,
         "RODIN_FREE_TRIAL_KEY": "vibecoding",
         # start()/stop() drive the edit-capture handlers, which live at module
@@ -202,10 +202,8 @@ def test_stop_releases_client_threads():
 
         assert not bpy_timer_registered(server), "drain timer left registered"
     finally:
-        try:
+        with suppress(OSError):
             client.close()
-        except OSError:
-            pass
 
 
 def bpy_timer_registered(server):

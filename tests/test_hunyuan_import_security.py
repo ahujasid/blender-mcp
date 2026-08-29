@@ -1,4 +1,5 @@
 """Regression coverage for Hunyuan import URL routing and zip-slip checks."""
+
 import importlib.util
 import io
 import sys
@@ -19,16 +20,28 @@ def _install_bpy_stubs(monkeypatch, scene):
     )
     bpy.ops = types.SimpleNamespace(
         import_scene=types.SimpleNamespace(
-            gltf=lambda **_kwargs: (_ for _ in ()).throw(AssertionError("unexpected gltf import")),
-            obj=lambda **_kwargs: (_ for _ in ()).throw(AssertionError("unexpected obj import")),
+            gltf=lambda **_kwargs: (_ for _ in ()).throw(
+                AssertionError("unexpected gltf import")
+            ),
+            obj=lambda **_kwargs: (_ for _ in ()).throw(
+                AssertionError("unexpected obj import")
+            ),
         ),
         wm=types.SimpleNamespace(
-            obj_import=lambda **_kwargs: (_ for _ in ()).throw(AssertionError("unexpected obj import")),
+            obj_import=lambda **_kwargs: (_ for _ in ()).throw(
+                AssertionError("unexpected obj import")
+            ),
         ),
     )
 
     props = types.ModuleType("bpy.props")
-    for name in ("BoolProperty", "EnumProperty", "FloatProperty", "IntProperty", "StringProperty"):
+    for name in (
+        "BoolProperty",
+        "EnumProperty",
+        "FloatProperty",
+        "IntProperty",
+        "StringProperty",
+    ):
         setattr(props, name, lambda **_kwargs: None)
     bpy.props = props
 
@@ -72,7 +85,9 @@ def _load_addon(monkeypatch):
         blendermcp_use_sketchfab=False,
     )
     bpy = _install_bpy_stubs(monkeypatch, scene)
-    spec = importlib.util.spec_from_file_location("blender_mcp_addon_hunyuan_test", ADDON)
+    spec = importlib.util.spec_from_file_location(
+        "blender_mcp_addon_hunyuan_test", ADDON
+    )
     addon = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(addon)
     return addon, bpy
@@ -148,4 +163,7 @@ def test_hunyuan_zip_rejects_path_traversal(monkeypatch):
     )
 
     assert result["succeed"] is False
-    assert "path traversal" in result["error"].lower() or "directory traversal" in result["error"].lower()
+    assert (
+        "path traversal" in result["error"].lower()
+        or "directory traversal" in result["error"].lower()
+    )

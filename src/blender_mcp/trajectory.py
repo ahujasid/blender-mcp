@@ -85,7 +85,7 @@ AUTO_CAPTURE_MAX_SIZE = 512
 AUTO_CAPTURE_MIN_INTERVAL = 20.0
 
 # Fallback probe for older addons lacking get_world_state_snapshot.
-_SNAPSHOT_VIA_EXECUTE_CODE_TEMPLATE = r'''
+_SNAPSHOT_VIA_EXECUTE_CODE_TEMPLATE = r"""
 import json
 import bpy
 import mathutils
@@ -188,7 +188,7 @@ print(json.dumps({
     "blender_version": bpy.app.version_string,
     "snapshot_source": "execute_code_fallback",
 }))
-'''
+"""
 
 _SNAPSHOT_VIA_EXECUTE_CODE = _SNAPSHOT_VIA_EXECUTE_CODE_TEMPLATE.replace(
     "__MAX_OBJECTS__", str(MAX_SNAPSHOT_OBJECTS)
@@ -307,11 +307,13 @@ def compute_state_delta(
     objects_changed: list[dict[str, Any]] = []
     for name in before_objs:
         if name in after_objs and before_objs[name] != after_objs[name]:
-            objects_changed.append({
-                "name": name,
-                "before": before_objs[name],
-                "after": after_objs[name],
-            })
+            objects_changed.append(
+                {
+                    "name": name,
+                    "before": before_objs[name],
+                    "after": after_objs[name],
+                }
+            )
 
     before_fps = before.get("material_fps") or {}
     after_fps = after.get("material_fps") or {}
@@ -519,14 +521,21 @@ def _summarize_agent_payload(payload: Any) -> Any:
     if isinstance(payload, dict):
         keys = set(payload.keys())
         is_scene_summary = keys <= {
-            "name", "object_count", "objects", "selected", "materials_count",
-            "active_camera", "lights", "camera",
+            "name",
+            "object_count",
+            "objects",
+            "selected",
+            "materials_count",
+            "active_camera",
+            "lights",
+            "camera",
         }
         is_object_summary = "name" in payload and "type" in payload
         if is_scene_summary or is_object_summary:
             return payload
         try:
             import json
+
             return _cap_text(json.dumps(payload, default=str), MAX_OBS_SUMMARY_CHARS)
         except Exception:
             return _cap_text(str(payload), MAX_OBS_SUMMARY_CHARS)
@@ -538,7 +547,7 @@ class TrajectoryRecorder:
 
     def __init__(self):
         self._lock = threading.Lock()
-        self._queue: "queue.Queue[tuple[str, dict[str, Any]]]" = queue.Queue(
+        self._queue: queue.Queue[tuple[str, dict[str, Any]]] = queue.Queue(
             maxsize=MAX_PENDING_ROWS
         )
         self._worker = threading.Thread(
@@ -591,7 +600,9 @@ class TrajectoryRecorder:
         """Older addons: run snapshot script through execute_code and parse JSON."""
         import json
 
-        result = blender.send_command("execute_code", {"code": _SNAPSHOT_VIA_EXECUTE_CODE})
+        result = blender.send_command(
+            "execute_code", {"code": _SNAPSHOT_VIA_EXECUTE_CODE}
+        )
         raw = result.get("result", "") if isinstance(result, dict) else ""
         if not isinstance(raw, str) or not raw.strip():
             logger.debug("execute_code snapshot returned empty output")
@@ -623,9 +634,7 @@ class TrajectoryRecorder:
             # get_scene_info caps its own object list well below our snapshot
             # cap, so this path is truncated whenever the scene outgrows it.
             "objects_listed": len(objects),
-            "objects_truncated": bool(
-                isinstance(total, int) and total > len(objects)
-            ),
+            "objects_truncated": bool(isinstance(total, int) and total > len(objects)),
             "selected": [],
             "objects": objects,
             "active_camera": None,
@@ -834,7 +843,9 @@ class TrajectoryRecorder:
                     self._idle_timer = None
             self.drain_human_activity()
             state = self.snapshot_world_state()
-            ref = self._render_frame("episode") if self._auto_capture_supported else None
+            ref = (
+                self._render_frame("episode") if self._auto_capture_supported else None
+            )
             with self._lock:
                 trajectory_id = self._trajectory_id
                 task_id = self._task_id
@@ -933,11 +944,8 @@ class TrajectoryRecorder:
         inherited ones.
         """
         normalized = _normalize_goal(goal_text)
-        if normalized:
-            if not self._current_goal:
-                self._current_goal = normalized
-            elif len(normalized) >= 12:
-                self._current_goal = normalized
+        if normalized and (not self._current_goal or len(normalized) >= 12):
+            self._current_goal = normalized
 
         if normalized:
             resolved_goal: str | None = normalized
@@ -1033,7 +1041,9 @@ class TrajectoryRecorder:
             "session_id": session_id or telemetry._session_id,
             "trajectory_id": trajectory_id or self._trajectory_id,
             "task_id": task_id or self._task_id,
-            "step_index": step_index if step_index is not None else max(0, self._step_index - 1),
+            "step_index": step_index
+            if step_index is not None
+            else max(0, self._step_index - 1),
             "schema_version": SCHEMA_VERSION,
             "client": self._client,
             # Overwritten to "human" for operators run directly in Blender.

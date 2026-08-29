@@ -209,7 +209,9 @@ def discover_blender_addon_dirs() -> list[Path]:
             if extensions.is_dir():
                 dirs.append(extensions)
 
-    env = os.environ.get("BLENDER_USER_ADDONS") or os.environ.get("BLENDERMCP_ADDONS_DIR")
+    env = os.environ.get("BLENDER_USER_ADDONS") or os.environ.get(
+        "BLENDERMCP_ADDONS_DIR"
+    )
     if env:
         env_path = Path(env).expanduser()
         dirs.insert(0, env_path)
@@ -245,7 +247,11 @@ def find_existing_addon_installs(addons_dirs: list[Path] | None = None) -> list[
         if not addons_dir.is_dir():
             continue
         for path in addons_dir.iterdir():
-            if path.is_file() and path.suffix == ".py" and _is_blendermcp_addon_file(path):
+            if (
+                path.is_file()
+                and path.suffix == ".py"
+                and _is_blendermcp_addon_file(path)
+            ):
                 found.append(path)
             elif path.is_dir() and (path / "__init__.py").is_file():
                 init = path / "__init__.py"
@@ -329,7 +335,11 @@ def install_addon(
     replaced: list[str] = []
     if addons_dir.is_dir():
         for path in list(addons_dir.iterdir()):
-            if path.is_file() and path.suffix == ".py" and _is_blendermcp_addon_file(path):
+            if (
+                path.is_file()
+                and path.suffix == ".py"
+                and _is_blendermcp_addon_file(path)
+            ):
                 _backup_addon_file(path, source)
                 shutil.copy2(source, path)
                 replaced.append(str(path))
@@ -460,8 +470,7 @@ def run_cli(argv: list[str] | None = None) -> int:
         "--addons-dir",
         type=str,
         default=None,
-        help="Override Blender scripts/addons directory "
-        "(or set BLENDERMCP_ADDONS_DIR)",
+        help="Override Blender scripts/addons directory (or set BLENDERMCP_ADDONS_DIR)",
     )
 
     sub.add_parser(

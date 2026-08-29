@@ -1,11 +1,11 @@
 """Regression coverage for the mesh_*/model_* geometry-editing addon handlers."""
+
 import importlib.util
 import math
 import sys
 import types
 
 import pytest
-
 from conftest import ROOT_ADDON as ADDON
 
 
@@ -130,6 +130,7 @@ def _load_addon(monkeypatch):
             bpy.context.view_layer.objects.active = obj
             bpy.context.active_object = obj
             return {"FINISHED"}
+
         return op
 
     def _noop(**_kwargs):
@@ -148,14 +149,21 @@ def _load_addon(monkeypatch):
         pass
 
     bpy = types.ModuleType("bpy")
-    bpy.data = types.SimpleNamespace(objects=objects, textures=types.SimpleNamespace(
-        new=lambda name, type: types.SimpleNamespace(name=name, type=type, noise_scale=0.0)
-    ))
+    bpy.data = types.SimpleNamespace(
+        objects=objects,
+        textures=types.SimpleNamespace(
+            new=lambda name, type: types.SimpleNamespace(
+                name=name, type=type, noise_scale=0.0
+            )
+        ),
+    )
     bpy.context = types.SimpleNamespace(
         scene=scene,
         view_layer=types.SimpleNamespace(objects=types.SimpleNamespace(active=None)),
         active_object=None,
-        collection=types.SimpleNamespace(objects=types.SimpleNamespace(link=lambda _obj: None)),
+        collection=types.SimpleNamespace(
+            objects=types.SimpleNamespace(link=lambda _obj: None)
+        ),
     )
     bpy.types = types.SimpleNamespace(
         AddonPreferences=object,
@@ -179,7 +187,9 @@ def _load_addon(monkeypatch):
             symmetrize=_noop,
         ),
         curve=types.SimpleNamespace(
-            primitive_bezier_curve_add=_make_primitive_op("BezierCurve", obj_type="CURVE"),
+            primitive_bezier_curve_add=_make_primitive_op(
+                "BezierCurve", obj_type="CURVE"
+            ),
         ),
         object=types.SimpleNamespace(
             select_all=_select_all,
@@ -191,7 +201,13 @@ def _load_addon(monkeypatch):
     )
 
     props = types.ModuleType("bpy.props")
-    for name in ("BoolProperty", "EnumProperty", "FloatProperty", "IntProperty", "StringProperty"):
+    for name in (
+        "BoolProperty",
+        "EnumProperty",
+        "FloatProperty",
+        "IntProperty",
+        "StringProperty",
+    ):
         setattr(props, name, lambda **_kwargs: None)
     bpy.props = props
 
@@ -229,7 +245,9 @@ def _load_addon(monkeypatch):
     requests.exceptions = types.SimpleNamespace(Timeout=TimeoutError)
     monkeypatch.setitem(sys.modules, "requests", requests)
 
-    spec = importlib.util.spec_from_file_location("blender_mcp_addon_mesh_model_test", ADDON)
+    spec = importlib.util.spec_from_file_location(
+        "blender_mcp_addon_mesh_model_test", ADDON
+    )
     addon = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(addon)
     return addon, bpy
@@ -245,21 +263,28 @@ def _new_empty_object(bpy, name):
     return obj
 
 
-@pytest.mark.parametrize("primitive_type,expected_obj_type", [
-    ("CUBE", "MESH"),
-    ("SPHERE", "MESH"),
-    ("CYLINDER", "MESH"),
-    ("CONE", "MESH"),
-    ("TORUS", "MESH"),
-    ("PLANE", "MESH"),
-    ("CURVE", "CURVE"),
-    ("cube", "MESH"),
-])
-def test_create_primitive_dispatches_to_the_right_op(monkeypatch, primitive_type, expected_obj_type):
+@pytest.mark.parametrize(
+    "primitive_type,expected_obj_type",
+    [
+        ("CUBE", "MESH"),
+        ("SPHERE", "MESH"),
+        ("CYLINDER", "MESH"),
+        ("CONE", "MESH"),
+        ("TORUS", "MESH"),
+        ("PLANE", "MESH"),
+        ("CURVE", "CURVE"),
+        ("cube", "MESH"),
+    ],
+)
+def test_create_primitive_dispatches_to_the_right_op(
+    monkeypatch, primitive_type, expected_obj_type
+):
     addon, _bpy = _load_addon(monkeypatch)
     server = addon.BlenderMCPServer()
 
-    result = server.create_primitive(primitive_type=primitive_type, name=f"obj_{primitive_type}")
+    result = server.create_primitive(
+        primitive_type=primitive_type, name=f"obj_{primitive_type}"
+    )
 
     assert result["name"] == f"obj_{primitive_type}"
     assert result["type"] == expected_obj_type
@@ -316,7 +341,9 @@ def test_mesh_boolean_rejects_invalid_operation(monkeypatch):
     _new_mesh_object(bpy, "cutter")
 
     with pytest.raises(ValueError, match="Invalid operation"):
-        server.mesh_boolean(object_name="target", cutter_object_name="cutter", operation="XOR")
+        server.mesh_boolean(
+            object_name="target", cutter_object_name="cutter", operation="XOR"
+        )
 
 
 def test_mesh_boolean_deletes_cutter_by_default(monkeypatch):
@@ -337,7 +364,9 @@ def test_mesh_boolean_keeps_cutter_when_requested(monkeypatch):
     _new_mesh_object(bpy, "target2")
     _new_mesh_object(bpy, "cutter2")
 
-    server.mesh_boolean(object_name="target2", cutter_object_name="cutter2", keep_target=True)
+    server.mesh_boolean(
+        object_name="target2", cutter_object_name="cutter2", keep_target=True
+    )
 
     assert bpy.data.objects.get("cutter2") is not None
 
@@ -355,8 +384,11 @@ def test_model_match_reference_copies_only_flagged_components(monkeypatch):
     ref.scale = _FakeVector(2, 2, 2)
 
     result = server.model_match_reference(
-        object_name="A", reference_object_name="B",
-        match_location=True, match_rotation=False, match_scale=True,
+        object_name="A",
+        reference_object_name="B",
+        match_location=True,
+        match_rotation=False,
+        match_scale=True,
     )
 
     assert result["location"] == [4, 5, 6]

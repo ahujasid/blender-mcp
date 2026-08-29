@@ -1,4 +1,5 @@
 """Regression coverage for Sketchfab availability reporting."""
+
 import importlib.util
 import sys
 import types
@@ -17,7 +18,13 @@ def _load_addon(monkeypatch, scene):
     )
 
     props = types.ModuleType("bpy.props")
-    for name in ("BoolProperty", "EnumProperty", "FloatProperty", "IntProperty", "StringProperty"):
+    for name in (
+        "BoolProperty",
+        "EnumProperty",
+        "FloatProperty",
+        "IntProperty",
+        "StringProperty",
+    ):
         setattr(props, name, lambda **_kwargs: None)
     bpy.props = props
 
@@ -86,7 +93,10 @@ def test_disabled_sketchfab_does_not_report_a_saved_key_as_ready(monkeypatch):
 
     assert status["enabled"] is False
     assert "currently disabled" in status["message"]
-    assert command == {"status": "error", "message": "Unknown command type: search_sketchfab_models"}
+    assert command == {
+        "status": "error",
+        "message": "Unknown command type: search_sketchfab_models",
+    }
 
 
 def test_enabled_sketchfab_reports_a_valid_key_as_ready(monkeypatch):
@@ -101,7 +111,9 @@ def test_enabled_sketchfab_reports_a_valid_key_as_ready(monkeypatch):
         def json():
             return {"username": "artist"}
 
-    monkeypatch.setattr(addon.requests, "get", lambda *_args, **_kwargs: Response(), raising=False)
+    monkeypatch.setattr(
+        addon.requests, "get", lambda *_args, **_kwargs: Response(), raising=False
+    )
 
     assert server.get_sketchfab_status() == {
         "enabled": True,

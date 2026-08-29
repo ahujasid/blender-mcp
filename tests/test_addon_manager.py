@@ -5,15 +5,14 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import MagicMock
 
+from conftest import ROOT_ADDON
+
 from blender_mcp.addon_manager import (
     EXPECTED_ADDON_PROTOCOL_VERSION,
     get_bundled_addon_path,
     handshake_addon,
     install_addon,
-    discover_blender_addon_dirs,
 )
-
-from conftest import ROOT_ADDON
 
 
 def test_bundled_addon_exists_and_has_protocol():
@@ -22,7 +21,6 @@ def test_bundled_addon_exists_and_has_protocol():
     text = path.read_text(encoding="utf-8")
     assert "ADDON_PROTOCOL_VERSION" in text
     assert "get_addon_info" in text
-
 
     assert f"ADDON_PROTOCOL_VERSION = {EXPECTED_ADDON_PROTOCOL_VERSION}" in text
 
@@ -67,10 +65,11 @@ def test_root_addon_protocol_matches_server_expectation():
 def test_install_addon_copies_into_target_dir(tmp_path: Path):
     addons = tmp_path / "scripts" / "addons"
     # Pre-existing oddly named install (what many users have)
-    old = addons
     addons.mkdir(parents=True)
     legacy = addons / "addon.py"
-    legacy.write_text('bl_info = {\n    "name": "Blender MCP"\n}\n# old\n', encoding="utf-8")
+    legacy.write_text(
+        'bl_info = {\n    "name": "Blender MCP"\n}\n# old\n', encoding="utf-8"
+    )
 
     result = install_addon(addons)
     assert result.success is True
@@ -98,13 +97,14 @@ def test_handshake_up_to_date():
 
 def test_handshake_missing_command_on_old_addon():
     blender = MagicMock()
-    blender.send_command.side_effect = Exception(
-        "Unknown command type: get_addon_info"
-    )
+    blender.send_command.side_effect = Exception("Unknown command type: get_addon_info")
     result = handshake_addon(blender)
     assert result.up_to_date is False
     assert result.source == "missing"
-    assert "install-addon" in (result.warning or "").lower() or "restart" in (result.warning or "").lower()
+    assert (
+        "install-addon" in (result.warning or "").lower()
+        or "restart" in (result.warning or "").lower()
+    )
 
 
 def test_handshake_outdated_protocol():
@@ -125,10 +125,14 @@ def _stale_addon_source() -> str:
 
     # Derive the stale marker from the current expected version so this helper
     # keeps producing a genuinely outdated file across protocol bumps.
-    return am.get_bundled_addon_path().read_text(encoding="utf-8").replace(
-        f"ADDON_PROTOCOL_VERSION = {am.EXPECTED_ADDON_PROTOCOL_VERSION}",
-        "ADDON_PROTOCOL_VERSION = 0",
-        1,
+    return (
+        am.get_bundled_addon_path()
+        .read_text(encoding="utf-8")
+        .replace(
+            f"ADDON_PROTOCOL_VERSION = {am.EXPECTED_ADDON_PROTOCOL_VERSION}",
+            "ADDON_PROTOCOL_VERSION = 0",
+            1,
+        )
     )
 
 

@@ -10,16 +10,17 @@ selected cap and the byte-accurate pre-insert guard that backstops it.
 
 from __future__ import annotations
 
+from conftest import ROOT_ADDON
+
 from blender_mcp.trajectory import (
+    _SNAPSHOT_VIA_EXECUTE_CODE,
     DB_FIELD_BYTE_CAPS,
     MAX_SNAPSHOT_SELECTED,
     SNAPSHOT_BYTE_BUDGET,
-    _SNAPSHOT_VIA_EXECUTE_CODE,
     _enforce_db_size_guard,
     _fit_snapshot,
     _utf8_size,
 )
-from conftest import ROOT_ADDON
 
 
 def _snapshot(num_objects: int = 0, num_selected: int = 0) -> dict:
