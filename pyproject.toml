@@ -3,7 +3,7 @@ name = "blender-mcp"
 version = "1.8.7"
 description = "Blender integration through the Model Context Protocol"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.12"
 authors = [
     {name = "Siddharth Ahuja", email = "ahujasid@gmail.com"}
 ]
