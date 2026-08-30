@@ -46,11 +46,17 @@ TRAJECTORY_FEEDBACK_TABLE = "trajectory_feedback"
 # a field that cannot be trimmed under its cap is replaced by a
 # {"size_guard_dropped": true, "original_bytes": N} stub instead of the row
 # being rejected.
-SCHEMA_VERSION = 6
-MAX_RAW_CODE_LENGTH = 8000
-MAX_AGENT_OBS_BUFFER = 8
-MAX_OBS_SUMMARY_CHARS = 2000
-MAX_OBS_PAYLOAD_CHARS = 20000
+# 7: capture limits raised to keep whole scenes rather than truncating them.
+# At <=6 SNAPSHOT_BYTE_BUDGET (250k) cut in well before MAX_SNAPSHOT_OBJECTS
+# (2000) — object entries run 400-1000 bytes, so snapshots truncated at
+# roughly 570 objects and the object cap was never the binding limit. The
+# budget now sits above the worst-case cost of a full object list, so
+# objects_truncated means the scene really did exceed the object cap.
+SCHEMA_VERSION = 7
+MAX_RAW_CODE_LENGTH = 40000
+MAX_AGENT_OBS_BUFFER = 16
+MAX_OBS_SUMMARY_CHARS = 8000
+MAX_OBS_PAYLOAD_CHARS = 200000
 MAX_PENDING_ROWS = 256
 IDLE_EPISODE_TIMEOUT = 600.0
 
@@ -58,8 +64,15 @@ IDLE_EPISODE_TIMEOUT = 600.0
 # (raw JSON length overestimates pg_column_size, so staying under these keeps
 # every row insertable). Snapshots that exceed the budget drop trailing
 # objects and set objects_truncated, exactly like the object-count cap.
-SNAPSHOT_BYTE_BUDGET = 250_000
-OBSERVATION_BYTE_BUDGET = 40_000
+#
+# Sized so the item caps below, not this budget, are what truncate a snapshot:
+# a worst-case object entry (long names, 8 modifiers, 8 constraints) is ~1KB,
+# so MAX_SNAPSHOT_OBJECTS entries plus MAX_SNAPSHOT_SELECTED names cost ~4.2MB.
+# Rows this large are pathological, not typical -- a 600-object scene is ~270KB
+# raw -- and jsonb TOAST compresses these highly repetitive payloads by ~100x,
+# so the on-disk cost of the headroom is small.
+SNAPSHOT_BYTE_BUDGET = 4_500_000
+OBSERVATION_BYTE_BUDGET = 400_000
 
 # Per-snapshot object cap. Two snapshots ride on every step row, and object
 # entries run ~400 bytes each, so this bounds a row at roughly 1.5 MB. The old
@@ -68,14 +81,14 @@ OBSERVATION_BYTE_BUDGET = 40_000
 # that shifts as objects are created, so before/after kept *different* arbitrary
 # 50-object subsets. Snapshots that hit the cap now sort by name first, so both
 # sides keep the same subset and the delta stays meaningful.
-MAX_SNAPSHOT_OBJECTS = 2000
+MAX_SNAPSHOT_OBJECTS = 4000
 
 # Selected-name cap. `selected` rides on both snapshots of every step and,
 # unlike `objects`, was unbounded: select-all in a scene big enough to need
 # MAX_SNAPSHOT_OBJECTS puts thousands of names in it, and _fit_snapshot could
-# not shrink it — the one leak the 250k budget missed. Name-sorted so
+# not shrink it — the one leak the byte budget missed. Name-sorted so
 # before/after keep the same subset, like objects.
-MAX_SNAPSHOT_SELECTED = 200
+MAX_SNAPSHOT_SELECTED = 1000
 
 # Auto-capture: VLM-judged metrics need an image for the step being judged, but
 # the agent only screenshots when it chooses to, so most mutating steps have
@@ -366,14 +379,15 @@ def _fit_snapshot(
 
 
 # Per-field byte caps mirroring the trajectory_steps_size_guard DB constraint
-# (action 32768, observation 98304, state_before/state_after 393216 bytes).
+# (action 262144, observation 524288, state_before/state_after 5242880 bytes).
 # Thresholds sit under the DB caps because json.dumps output only approximates
-# the jsonb text Postgres measures.
+# the jsonb text Postgres measures. The state caps clear SNAPSHOT_BYTE_BUDGET
+# so a snapshot fitted upstream is never re-trimmed -- or stubbed -- here.
 DB_FIELD_BYTE_CAPS = {
-    "action": 30_000,
-    "observation": 90_000,
-    "state_before": 360_000,
-    "state_after": 360_000,
+    "action": 250_000,
+    "observation": 500_000,
+    "state_before": 5_000_000,
+    "state_after": 5_000_000,
 }
 
 

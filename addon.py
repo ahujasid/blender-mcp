@@ -40,12 +40,12 @@ ADDON_PROTOCOL_VERSION = 4
 
 # Per-snapshot object cap for get_world_state_snapshot. Keep in sync with
 # blender_mcp.trajectory.MAX_SNAPSHOT_OBJECTS.
-MAX_SNAPSHOT_OBJECTS = 2000
+MAX_SNAPSHOT_OBJECTS = 4000
 
 # Selected-name cap for get_world_state_snapshot: select-all in a large scene
 # would otherwise make `selected` the dominant field of both step snapshots.
 # Keep in sync with blender_mcp.trajectory.MAX_SNAPSHOT_SELECTED.
-MAX_SNAPSHOT_SELECTED = 200
+MAX_SNAPSHOT_SELECTED = 1000
 
 RODIN_FREE_TRIAL_KEY = "vibecoding"
 
