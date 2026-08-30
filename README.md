@@ -139,7 +139,7 @@ In Blender's 3D viewport, press `N` → open the **BlenderMCP** tab → click **
 | **Material control** | Apply and modify materials and colors |
 | **Scene inspection** | Get detailed information about the current Blender scene |
 | **Code execution** | Run arbitrary Python code in Blender from Claude |
-| **Asset & model generation** | Poly Haven assets, Sketchfab models, and AI-generated 3D models via Hyper3D Rodin and Hunyuan3D |
+| **Asset & model generation** | Poly Haven assets, Sketchfab models, Poly Pizza low-poly models, and AI-generated 3D models via Hyper3D Rodin and Hunyuan3D |
 
 ## Components
 
@@ -440,7 +440,38 @@ Once the config file has been set on Claude, and the addon is running on Blender
 - Execute any Python code in Blender
 - Download the right models, assets and HDRIs through [Poly Haven](https://polyhaven.com/)
 - Search and download models from [Sketchfab](https://sketchfab.com/)
+- Search and download low-poly models from [Poly Pizza](https://poly.pizza/)
 - AI generated 3D models through [Hyper3D Rodin](https://hyper3d.ai/) and [Hunyuan3D](https://3d.hunyuan.tencent.com/)
+
+#### Poly Pizza
+
+[Poly Pizza](https://poly.pizza/) hosts roughly 10,600 free low-poly models, including the
+rescued Google Poly archive. It is the best source for stylised game assets: every model is
+a single self-contained `.glb`, and the geometry is far lighter than Sketchfab's.
+
+1. Get a free API key at [poly.pizza/settings/api](https://poly.pizza/settings/api)
+2. In the 3D View sidebar, tick **Use assets from Poly Pizza**
+3. Paste the key into the **API Key** field that appears (or store it permanently under
+   **Edit → Preferences → Add-ons → Blender MCP**)
+
+Worked example:
+
+> *"Search Poly Pizza for a low-poly chair under a CC0 licence and import one at 1 metre tall"*
+
+Claude calls `search_polypizza_models(query="chair", licence="CC0")`, which returns each
+match with its licence and triangle count, then
+`download_polypizza_model(model_id="...", normalize_size=True, target_size=1.0)`.
+
+You can also filter by category (`"Animals"`, `"Furniture & Decor"`, `"Transport"`,
+`"Nature"`, `"Buildings"`, `"People & Characters"`, `"Food & Drink"`, `"Weapons"`,
+`"Clutter"`, `"Objects"`, `"Scenes & Levels"`, `"Other"`) or ask for animated models only.
+
+**Attribution:** about 69% of the Poly Pizza catalogue is CC-BY, which *requires* you to
+credit the creator wherever the model appears. On import, the ready-formatted credit line
+is written onto each imported root object as the custom property `polypizza_attribution`
+(alongside `polypizza_id` and `polypizza_licence`), so it is saved into your `.blend` and
+survives the session. Filter with `licence="CC0"` if you would rather use models that need
+no credit.
 
 ### Example Commands
 
@@ -453,6 +484,7 @@ Here are some examples of what you can ask Claude to do:
 | Give a reference image, and create a Blender scene out of it | [Watch](https://www.youtube.com/watch?v=FDRb03XPiRo) |
 | *"Get information about the current scene, and make a threejs sketch from it"* | [Watch](https://www.youtube.com/watch?v=jxbNI5L7AH8) |
 | *"Generate a 3D model of a garden gnome through Hyper3D"* | |
+| *"Fill this room with low-poly furniture from Poly Pizza"* | |
 | *"Make this car red and metallic"* | |
 | *"Create a sphere and place it above the cube"* | |
 | *"Make the lighting like a studio"* | |
@@ -469,6 +501,7 @@ BlenderMCP supports persistent credentials via Blender Add-on Preferences:
 You can store these values there so they survive Blender restarts:
 
 - Sketchfab API Key
+- Poly Pizza API Key
 - Hyper3D API Key
 - Hunyuan3D SecretId / SecretKey
 - Hunyuan3D API URL
@@ -478,6 +511,7 @@ For headless setups or CI, credentials can also be injected by environment varia
 | Variable |
 |---|
 | `BLENDERMCP_SKETCHFAB_API_KEY` |
+| `BLENDERMCP_POLYPIZZA_API_KEY` |
 | `BLENDERMCP_HYPER3D_API_KEY` |
 | `BLENDERMCP_HUNYUAN3D_SECRET_ID` |
 | `BLENDERMCP_HUNYUAN3D_SECRET_KEY` |
@@ -492,6 +526,7 @@ For headless setups or CI, credentials can also be injected by environment varia
 | **Connection issues** | Make sure the Blender addon server is running, and the MCP server is configured on Claude. **Do not** run the `uvx` command in the terminal. Sometimes the first command won't go through, but after that it starts working. |
 | **Timeout errors** | Try simplifying your requests or breaking them into smaller steps. |
 | **Poly Haven integration** | Claude is sometimes erratic with its behaviour. |
+| **Poly Pizza download fails with a Cloudflare challenge** | `static.poly.pizza` is behind bot protection and blocks datacenter, VPN and cloud IPs. Your API key is fine - the CDN never sees it. Retry from a normal connection, or download the `.glb` by hand and use **File → Import → glTF 2.0**. |
 | **Have you tried turning it off and on again?** | If you're still having connection errors, try restarting both Claude and the Blender server. |
 
 ## Technical Details

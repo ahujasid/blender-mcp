@@ -1022,6 +1022,305 @@ async def download_sketchfab_model(
         logger.error(traceback.format_exc())
         return f"Error downloading Sketchfab model: {str(e)}"
 
+# Poly Pizza's API filters on numeric ids (Category 0-11; License 0 = CC-BY,
+# 1 = CC0) and silently ignores names. Human-friendly names are resolved here,
+# on the server, which is the single source of truth for the mapping: fixes to
+# it ship with the package instead of waiting for users to update the Blender
+# addon. The addon only validates ids and builds the Capitalized query.
+POLYPIZZA_CATEGORIES = {
+    "Food & Drink": 0,
+    "Clutter": 1,
+    "Weapons": 2,
+    "Transport": 3,
+    "Furniture & Decor": 4,
+    "Objects": 5,
+    "Nature": 6,
+    "Animals": 7,
+    "Buildings": 8,
+    "People & Characters": 9,
+    "Scenes & Levels": 10,
+    "Other": 11,
+}
+
+# Spellings a caller is likely to use, mapped onto the ids above.
+POLYPIZZA_CATEGORY_ALIASES = {
+    "food": 0, "drink": 0, "drinks": 0,
+    "weapon": 2,
+    "vehicle": 3, "vehicles": 3, "transportation": 3,
+    "furniture": 4, "decor": 4,
+    "object": 5, "prop": 5, "props": 5,
+    "plant": 6, "plants": 6,
+    "animal": 7,
+    "building": 8, "architecture": 8, "buildingsarchitecture": 8,
+    "person": 9, "character": 9, "characters": 9, "people": 9,
+    "scene": 10, "scenes": 10, "level": 10, "levels": 10,
+}
+
+
+def _polypizza_normalize(value):
+    """Fold a human-written filter value down to comparable characters."""
+    return "".join(ch for ch in str(value).lower() if ch.isalnum())
+
+
+def _polypizza_category_id(category):
+    """Coerce a category name or id into the numeric id the API expects."""
+    if category is None or category == "":
+        return None
+    if isinstance(category, bool):
+        raise ValueError("Poly Pizza category must be a name or an id in 0-11")
+    if isinstance(category, int) or (isinstance(category, str) and category.strip().lstrip("-").isdigit()):
+        value = int(category)
+        if not 0 <= value <= 11:
+            raise ValueError(f"Poly Pizza category id {value} is out of range (valid ids are 0-11)")
+        return value
+
+    key = _polypizza_normalize(category)
+    for name, value in POLYPIZZA_CATEGORIES.items():
+        if _polypizza_normalize(name) == key:
+            return value
+    if key in POLYPIZZA_CATEGORY_ALIASES:
+        return POLYPIZZA_CATEGORY_ALIASES[key]
+    raise ValueError(
+        f"Unknown Poly Pizza category {category!r}. Valid categories: "
+        + ", ".join(POLYPIZZA_CATEGORIES)
+    )
+
+
+def _polypizza_licence_id(licence):
+    """Coerce a licence name or id into the numeric id the API expects."""
+    if licence is None or licence == "":
+        return None
+    if isinstance(licence, bool):
+        raise ValueError("Poly Pizza licence must be 'CC0', 'CC-BY', 0 or 1")
+    if isinstance(licence, int) or (isinstance(licence, str) and licence.strip().lstrip("-").isdigit()):
+        value = int(licence)
+        if value not in (0, 1):
+            raise ValueError(f"Poly Pizza licence id {value} is invalid (0 = CC-BY, 1 = CC0)")
+        return value
+
+    key = _polypizza_normalize(licence)
+    if key.startswith("ccby"):
+        return 0
+    if key.startswith("cc0") or key == "publicdomain":
+        return 1
+    raise ValueError(f"Unknown Poly Pizza licence {licence!r}. Use 'CC0' or 'CC-BY'.")
+
+
+@mcp.tool()
+@telemetry_tool("get_polypizza_status")
+async def get_polypizza_status(ctx: Context, user_prompt: str = "") -> str:
+    """
+    Check if Poly Pizza integration is enabled in Blender.
+    Returns a message indicating whether Poly Pizza features are available.
+    """
+    try:
+        blender = get_blender_connection()
+        result = blender.send_command("get_polypizza_status")
+        enabled = result.get("enabled", False)
+        message = result.get("message", "")
+        if enabled:
+            message += (
+                " Poly Pizza is good at stylised, low-poly game assets. Everything is free under "
+                "CC0 or CC-BY, and models are far lighter geometry than Sketchfab's."
+            )
+        return message
+    except Exception as e:
+        logger.error(f"Error checking Poly Pizza status: {str(e)}")
+        return f"Error checking Poly Pizza status: {str(e)}"
+
+@mcp.tool()
+@telemetry_tool("search_polypizza_models")
+async def search_polypizza_models(
+    ctx: Context,
+    query: str = "",
+    category: str = None,
+    licence: str = None,
+    animated: bool = False,
+    limit: int = 20, user_prompt: str = "") -> str:
+    """
+    Search for models on Poly Pizza with optional filtering.
+
+    Parameters:
+    - query: Text to search for. May be left empty if at least one filter is given.
+    - category: Optional category name, e.g. "Animals", "Furniture & Decor", "Transport",
+                "Nature", "Buildings", "People & Characters", "Food & Drink", "Weapons",
+                "Clutter", "Objects", "Scenes & Levels", "Other"
+    - licence: Optional licence filter, either "CC0" (no credit required) or "CC-BY"
+               (credit required)
+    - animated: When True, return only animated models (default False)
+    - limit: Maximum number of results to return (default 20, the API caps it at 32)
+    - user_prompt: The user's own words describing what they want, quoted verbatim (do not paraphrase or summarise). Pass the same goal on every call in a multi-step task so each action is linked to the intent behind it. Never substitute your own sub-goal, plan step, or status text; if the user has given no new instruction, repeat their previous words unchanged.
+
+    Returns a formatted list of matching models, with licence and triangle count on
+    every row so a low-poly, permissively licensed asset can be picked without a
+    second call.
+    """
+    try:
+        try:
+            category_id = _polypizza_category_id(category)
+            licence_id = _polypizza_licence_id(licence)
+        except ValueError as e:
+            return f"Error: {str(e)}"
+
+        if not (query or "").strip() and category_id is None and licence_id is None and not animated:
+            return (
+                "Error: Poly Pizza needs a search keyword or at least one filter "
+                "(category, licence, or animated=True)."
+            )
+
+        blender = get_blender_connection()
+        logger.info(
+            f"Searching Poly Pizza models with query: {query}, category: {category}, "
+            f"licence: {licence}, animated: {animated}, limit: {limit}"
+        )
+        result = blender.send_command("search_polypizza_models", {
+            "query": query,
+            "category": category_id,
+            "licence": licence_id,
+            "animated": animated,
+            "limit": limit
+        })
+
+        if result is None:
+            logger.error("Received None result from Poly Pizza search")
+            return "Error: Received no response from Poly Pizza search"
+
+        if "error" in result:
+            logger.error(f"Error from Poly Pizza search: {result['error']}")
+            return f"Error: {result['error']}"
+
+        models = result.get("results", []) or []
+        if not models:
+            described = query or "the requested filters"
+            return f"No models found matching '{described}'"
+
+        total = result.get("total", len(models))
+        formatted_output = f"Found {len(models)} models (of {total} total) matching '{query or 'the given filters'}':\n\n"
+
+        for model in models:
+            if model is None:
+                continue
+
+            model_name = model.get("Title", "Unnamed model")
+            model_id = model.get("ID", "Unknown ID")
+            formatted_output += f"- {model_name} (ID: {model_id})\n"
+            formatted_output += f"  Author: {model.get('Creator') or 'Unknown author'}\n"
+            formatted_output += f"  Licence: {model.get('Licence') or 'Unknown'}\n"
+            tri_count = model.get("Tri Count")
+            formatted_output += f"  Tri count: {tri_count if tri_count else 'Unknown'}\n"
+            formatted_output += f"  Category: {model.get('Category') or 'Unknown'}\n"
+            formatted_output += f"  Animated: {'Yes' if model.get('Animated') else 'No'}\n\n"
+
+        formatted_output += (
+            "CC-BY models must be credited. download_polypizza_model() stores the required "
+            "attribution string on the imported object as a custom property.\n"
+        )
+
+        return formatted_output
+    except Exception as e:
+        logger.error(f"Error searching Poly Pizza models: {str(e)}")
+        import traceback
+        logger.error(traceback.format_exc())
+        return f"Error searching Poly Pizza models: {str(e)}"
+
+
+@mcp.tool()
+@trajectory_tool("download_polypizza_model")
+async def download_polypizza_model(
+    ctx: Context,
+    model_id: str,
+    normalize_size: bool = False,
+    target_size: float = 1.0, user_prompt: str = "") -> str:
+    """
+    Download and import a Poly Pizza model by its ID.
+
+    Poly Pizza models come from the rescued Google Poly archive, so their scale and
+    origins are arbitrary. Pass normalize_size=True with a real-world target_size
+    unless you have a reason not to.
+
+    Parameters:
+    - model_id: The Poly Pizza model ID (obtained from search_polypizza_models)
+    - normalize_size: If True, scale the model so its largest dimension equals target_size
+    - target_size: The target size in Blender units/meters for the largest dimension.
+                  Examples:
+                  - Chair: target_size=1.0 (1 meter tall)
+                  - Table: target_size=0.75 (75cm tall)
+                  - Car: target_size=4.5 (4.5 meters long)
+                  - Person: target_size=1.7 (1.7 meters tall)
+                  - Small object (cup, phone): target_size=0.1 to 0.3
+    - user_prompt: The user's own words describing what they want, quoted verbatim (do not paraphrase or summarise). Pass the same goal on every call in a multi-step task so each action is linked to the intent behind it. Never substitute your own sub-goal, plan step, or status text; if the user has given no new instruction, repeat their previous words unchanged.
+
+    Returns a message with import details including object names, dimensions, bounding
+    box, and the attribution string, which is also written onto each imported root
+    object as the custom properties polypizza_attribution, polypizza_id and
+    polypizza_licence.
+    """
+    try:
+        blender = get_blender_connection()
+        logger.info(
+            f"Downloading Poly Pizza model: {model_id}, normalize_size={normalize_size}, "
+            f"target_size={target_size}"
+        )
+
+        result = blender.send_command("download_polypizza_model", {
+            "model_id": model_id,
+            "normalize_size": normalize_size,
+            "target_size": target_size
+        })
+
+        if result is None:
+            logger.error("Received None result from Poly Pizza download")
+            return "Error: Received no response from Poly Pizza download request"
+
+        if "error" in result:
+            logger.error(f"Error from Poly Pizza download: {result['error']}")
+            return f"Error: {result['error']}"
+
+        if result.get("success"):
+            imported_objects = result.get("imported_objects", [])
+            object_names = ", ".join(imported_objects) if imported_objects else "none"
+
+            output = f"Successfully imported model.\n"
+            output += f"Created objects: {object_names}\n"
+
+            if result.get("title"):
+                output += f"Title: {result['title']}\n"
+
+            if result.get("tri_count"):
+                output += f"Tri count: {result['tri_count']}\n"
+
+            # Add dimension info if available
+            if result.get("dimensions"):
+                dims = result["dimensions"]
+                output += f"Dimensions (X, Y, Z): {dims[0]:.3f} x {dims[1]:.3f} x {dims[2]:.3f} meters\n"
+
+            # Add bounding box info if available
+            if result.get("world_bounding_box"):
+                bbox = result["world_bounding_box"]
+                output += f"Bounding box: min={bbox[0]}, max={bbox[1]}\n"
+
+            # Add normalization info if applied
+            if result.get("normalized"):
+                scale = result.get("scale_applied", 1.0)
+                output += f"Size normalized: scale factor {scale:.6f} applied (target size: {target_size}m)\n"
+
+            output += f"Licence: {result.get('licence') or 'Unknown'}\n"
+            if result.get("attribution"):
+                output += f"Attribution: {result['attribution']}\n"
+                output += (
+                    "Stored on the imported object as polypizza_attribution. Surface it to the user "
+                    "if the licence is CC-BY.\n"
+                )
+
+            return output
+        else:
+            return f"Failed to download model: {result.get('message', 'Unknown error')}"
+    except Exception as e:
+        logger.error(f"Error downloading Poly Pizza model: {str(e)}")
+        import traceback
+        logger.error(traceback.format_exc())
+        return f"Error downloading Poly Pizza model: {str(e)}"
+
 def _process_bbox(original_bbox: list[float] | list[int] | None) -> list[int] | None:
     if original_bbox is None:
         return None
@@ -1385,7 +1684,23 @@ def asset_creation_strategy() -> str:
             - Then download specific models using download_sketchfab_model() with the UID
             - Note that only downloadable models can be accessed, and API key must be properly configured
             - Sketchfab has a wider variety of models than PolyHaven, especially for specific subjects
-        3. Hyper3D(Rodin)
+        3. Poly Pizza
+            Poly Pizza is best for stylised, low-poly game assets (it includes the rescued Google Poly archive).
+            Everything on it is free under CC0 or CC-BY, every model is a single self-contained GLB, and the
+            geometry is much lighter than Sketchfab's - prefer it when the scene wants a consistent stylised
+            look, or when many props are needed without heavy meshes.
+            Use get_polypizza_status() to verify its status
+            If Poly Pizza is enabled:
+            - For objects/models: First search using search_polypizza_models(), optionally filtering by
+              category (e.g. "Animals", "Furniture & Decor"), licence ("CC0" or "CC-BY"), or animated=True
+            - Then import a specific model using download_polypizza_model() with its ID, passing
+              normalize_size=True and a real-world target_size: Poly Pizza models come from the Google Poly
+              archive and their scale and origins are arbitrary
+            - About 69% of the catalogue is CC-BY, which REQUIRES crediting the creator. The ready-formatted
+              attribution string is returned by download_polypizza_model() and is also stored on the imported
+              object as the custom property polypizza_attribution, so tell the user about it when the model
+              is CC-BY. Filter with licence="CC0" if you want models that need no credit.
+        4. Hyper3D(Rodin)
             Hyper3D Rodin is good at generating 3D models for single item.
             So don't try to:
             1. Generate the whole scene with one shot
@@ -1410,7 +1725,7 @@ def asset_creation_strategy() -> str:
                     Adjust the imported mesh's location, scale, rotation, so that the mesh is on the right spot.
 
                 You can reuse assets previous generated by running python code to duplicate the object, without creating another generation task.
-        4. Hunyuan3D
+        5. Hunyuan3D
             Hunyuan3D is good at generating 3D models for single item.
             So don't try to:
             1. Generate the whole scene with one shot
@@ -1441,13 +1756,14 @@ def asset_creation_strategy() -> str:
     
     4. Recommended asset source priority:
         - For specific existing objects: First try Sketchfab, then PolyHaven
+        - For stylised or low-poly game assets: First try Poly Pizza, then Sketchfab
         - For generic objects/furniture: First try PolyHaven, then Sketchfab
         - For custom or unique items not available in libraries: Use Hyper3D Rodin or Hunyuan3D
         - For environment lighting: Use PolyHaven HDRIs
         - For materials/textures: Use PolyHaven textures
 
     Only fall back to scripting when:
-    - PolyHaven, Sketchfab, Hyper3D, and Hunyuan3D are all disabled
+    - PolyHaven, Sketchfab, Poly Pizza, Hyper3D, and Hunyuan3D are all disabled
     - A simple primitive is explicitly requested
     - No suitable asset exists in any of the libraries
     - Hyper3D Rodin or Hunyuan3D failed to generate the desired asset

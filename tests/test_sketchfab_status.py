@@ -62,6 +62,7 @@ def _scene(sketchfab_enabled):
         blendermcp_use_hyper3d=False,
         blendermcp_use_hunyuan3d=False,
         blendermcp_use_sketchfab=sketchfab_enabled,
+        blendermcp_use_polypizza=False,
     )
 
 
