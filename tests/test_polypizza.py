@@ -163,15 +163,15 @@ def _record_requests(monkeypatch, addon, responses):
 def test_filters_are_capitalized_and_numeric(monkeypatch):
     addon, _ = _server(monkeypatch)
 
-    assert addon._polypizza_filter_params(category="Animals", licence="CC0", animated=True) == {
+    assert addon._polypizza_filter_params(category=7, licence=1, animated=True) == {
         "Category": 7,
         "License": 1,
         "Animated": 1,
     }
-    # Names the caller might reasonably type resolve to the same ids.
-    assert addon._polypizza_filter_params(category="furniture & decor") == {"Category": 4}
     assert addon._polypizza_filter_params(category=3) == {"Category": 3}
-    assert addon._polypizza_filter_params(licence="CC-BY 3.0") == {"License": 0}
+    # Ids that went through JSON as strings still count.
+    assert addon._polypizza_filter_params(category="4") == {"Category": 4}
+    assert addon._polypizza_filter_params(licence=0) == {"License": 0}
 
 
 def test_animated_is_omitted_unless_animated_only_was_asked_for(monkeypatch):
@@ -179,7 +179,7 @@ def test_animated_is_omitted_unless_animated_only_was_asked_for(monkeypatch):
 
     # Animated=0 is falsy server-side and does not filter, so sending it would
     # only be misleading noise.
-    assert "Animated" not in addon._polypizza_filter_params(category="Animals", animated=False)
+    assert "Animated" not in addon._polypizza_filter_params(category=7, animated=False)
     assert addon._polypizza_filter_params(animated=False) == {}
     assert addon._polypizza_filter_params(animated=True) == {"Animated": 1}
 
@@ -202,11 +202,29 @@ def test_search_sends_capitalized_numeric_filters_over_the_wire(monkeypatch):
         monkeypatch, addon, [FakeResponse(payload={"total": 1, "results": [CHAIR]})]
     )
 
-    server.search_polypizza_models(query="chair", category="Furniture & Decor", licence="CC0")
+    server.search_polypizza_models(query="chair", category=4, licence=1)
 
     assert calls[0]["url"].endswith("/search/chair")
-    assert calls[0]["params"] == {"Category": 4, "License": 1, "limit": 20}
+    assert calls[0]["params"] == {"Category": 4, "License": 1, "Limit": 20}
     assert calls[0]["headers"]["x-auth-token"] == API_KEY
+
+
+def test_limit_and_page_are_capitalized_and_limit_clamped(monkeypatch):
+    """Lowercase limit/page are silently ignored by the API, which then serves
+    its default page of 32. The spec caps Limit at 32 and Page is 0-indexed."""
+    addon, server = _server(monkeypatch)
+    empty = lambda: FakeResponse(payload={"total": 0, "results": []})
+    calls = _record_requests(monkeypatch, addon, [empty(), empty(), empty()])
+
+    server.search_polypizza_models(query="chair", limit=100, page=0)
+    server.search_polypizza_models(query="chair", limit=-3)
+    server.search_polypizza_models(query="chair")
+
+    assert calls[0]["params"] == {"Limit": 32, "Page": 0}
+    assert calls[1]["params"] == {"Limit": 1}
+    assert calls[2]["params"] == {"Limit": 20}
+    for call in calls:
+        assert "limit" not in call["params"] and "page" not in call["params"]
 
 
 # --- unfiltered search -------------------------------------------------------
@@ -234,7 +252,7 @@ def test_filter_only_search_uses_the_bare_endpoint(monkeypatch):
     server.search_polypizza_models(animated=True, limit=5)
 
     assert calls[0]["url"].endswith("/v1.1/search")
-    assert calls[0]["params"] == {"Animated": 1, "limit": 5}
+    assert calls[0]["params"] == {"Animated": 1, "Limit": 5}
 
 
 # --- response parsing --------------------------------------------------------
@@ -305,7 +323,11 @@ def test_zero_tri_count_is_reported_as_unknown_not_zero():
 
 
 def test_tool_boundary_converts_names_to_numeric_ids():
-    """search_polypizza_models accepts human-friendly filters and sends ids."""
+    """The MCP server is the single source of truth for name-to-id conversion.
+
+    It ships with the pip package and updates without an addon reinstall, so
+    the mapping lives there; the addon only ever sees numeric ids.
+    """
     import asyncio
 
     from blender_mcp import server
@@ -330,6 +352,46 @@ def test_tool_boundary_converts_names_to_numeric_ids():
 
     assert sent["category"] == 7
     assert sent["licence"] == 1
+
+
+def test_server_resolves_names_aliases_and_ids():
+    """Any spelling a caller plausibly uses resolves to the API's numeric id."""
+    from blender_mcp import server
+
+    assert server._polypizza_category_id("Animals") == 7
+    assert server._polypizza_category_id("furniture & decor") == 4
+    assert server._polypizza_category_id("buildings/architecture") == 8
+    assert server._polypizza_category_id("person") == 9
+    assert server._polypizza_category_id("plants") == 6
+    assert server._polypizza_category_id("3") == 3
+    assert server._polypizza_category_id(11) == 11
+    assert server._polypizza_category_id(None) is None
+
+    assert server._polypizza_licence_id("CC-BY 3.0") == 0
+    assert server._polypizza_licence_id("cc0") == 1
+    assert server._polypizza_licence_id("Public Domain") == 1
+    assert server._polypizza_licence_id(0) == 0
+    assert server._polypizza_licence_id("") is None
+
+
+def test_server_rejects_unknown_filter_values():
+    from blender_mcp import server
+
+    for bad in ("spaceships", 12, -1, True):
+        try:
+            server._polypizza_category_id(bad)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError(f"category {bad!r} should have been rejected")
+
+    for bad in ("GPL", 2, True):
+        try:
+            server._polypizza_licence_id(bad)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError(f"licence {bad!r} should have been rejected")
 
 
 # --- the CDN -----------------------------------------------------------------

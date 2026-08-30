@@ -58,86 +58,41 @@ REQ_HEADERS.update({"User-Agent": "blender-mcp"})
 
 POLYPIZZA_API_BASE = "https://api.poly.pizza/v1.1"
 
-# The API filters on numeric ids, not names. Lowercase parameter names
-# (`category=animals`) are accepted with HTTP 200 and then silently ignored, so
-# the capitalisation of the keys below is load-bearing.
-POLYPIZZA_CATEGORIES = {
-    "Food & Drink": 0,
-    "Clutter": 1,
-    "Weapons": 2,
-    "Transport": 3,
-    "Furniture & Decor": 4,
-    "Objects": 5,
-    "Nature": 6,
-    "Animals": 7,
-    "Buildings": 8,
-    "People & Characters": 9,
-    "Scenes & Levels": 10,
-    "Other": 11,
-}
-
-# Spellings a caller is likely to use, mapped onto the ids above.
-POLYPIZZA_CATEGORY_ALIASES = {
-    "food": 0, "drink": 0, "drinks": 0,
-    "weapon": 2,
-    "vehicle": 3, "vehicles": 3, "transportation": 3,
-    "furniture": 4, "decor": 4,
-    "object": 5, "prop": 5, "props": 5,
-    "plant": 6, "plants": 6,
-    "animal": 7,
-    "building": 8, "architecture": 8, "buildingsarchitecture": 8,
-    "person": 9, "character": 9, "characters": 9, "people": 9,
-    "scene": 10, "scenes": 10, "level": 10, "levels": 10,
-}
-
-
-def _polypizza_normalize(value):
-    """Fold a human-written filter value down to comparable characters."""
-    return "".join(ch for ch in str(value).lower() if ch.isalnum())
+# The MCP server resolves human-friendly category/licence names to the numeric
+# ids the API filters on, so only ids arrive here. Every query parameter of
+# the API is Capitalized (Limit, Page, Category, License, Animated — see
+# poly.pizza/apispec/v1.1.yaml): lowercase variants are accepted with HTTP 200
+# and then silently ignored, so the capitalisation is load-bearing.
 
 
 def _polypizza_category_id(category):
-    """Coerce a category name or id into the numeric id the API expects."""
+    """Validate a numeric category id (names are resolved by the MCP server)."""
     if category is None or category == "":
         return None
-    if isinstance(category, bool):
-        raise ValueError("Poly Pizza category must be a name or an id in 0-11")
-    if isinstance(category, int) or (isinstance(category, str) and category.strip().lstrip("-").isdigit()):
-        value = int(category)
-        if not 0 <= value <= 11:
-            raise ValueError(f"Poly Pizza category id {value} is out of range (valid ids are 0-11)")
-        return value
-
-    key = _polypizza_normalize(category)
-    for name, value in POLYPIZZA_CATEGORIES.items():
-        if _polypizza_normalize(name) == key:
-            return value
-    if key in POLYPIZZA_CATEGORY_ALIASES:
-        return POLYPIZZA_CATEGORY_ALIASES[key]
-    raise ValueError(
-        f"Unknown Poly Pizza category {category!r}. Valid categories: "
-        + ", ".join(POLYPIZZA_CATEGORIES)
-    )
+    if isinstance(category, bool) or not (
+        isinstance(category, int)
+        or (isinstance(category, str) and category.strip().lstrip("-").isdigit())
+    ):
+        raise ValueError(f"Poly Pizza category must be a numeric id in 0-11, got {category!r}")
+    value = int(category)
+    if not 0 <= value <= 11:
+        raise ValueError(f"Poly Pizza category id {value} is out of range (valid ids are 0-11)")
+    return value
 
 
 def _polypizza_licence_id(licence):
-    """Coerce a licence name or id into the numeric id the API expects."""
+    """Validate a numeric licence id (names are resolved by the MCP server)."""
     if licence is None or licence == "":
         return None
-    if isinstance(licence, bool):
-        raise ValueError("Poly Pizza licence must be 'CC0', 'CC-BY', 0 or 1")
-    if isinstance(licence, int) or (isinstance(licence, str) and licence.strip().lstrip("-").isdigit()):
-        value = int(licence)
-        if value not in (0, 1):
-            raise ValueError(f"Poly Pizza licence id {value} is invalid (0 = CC-BY, 1 = CC0)")
-        return value
-
-    key = _polypizza_normalize(licence)
-    if key.startswith("ccby"):
-        return 0
-    if key.startswith("cc0"):
-        return 1
-    raise ValueError(f"Unknown Poly Pizza licence {licence!r}. Use 'CC0' or 'CC-BY'.")
+    if isinstance(licence, bool) or not (
+        isinstance(licence, int)
+        or (isinstance(licence, str) and licence.strip().lstrip("-").isdigit())
+    ):
+        raise ValueError(f"Poly Pizza licence must be 0 (CC-BY) or 1 (CC0), got {licence!r}")
+    value = int(licence)
+    if value not in (0, 1):
+        raise ValueError(f"Poly Pizza licence id {value} is invalid (0 = CC-BY, 1 = CC0)")
+    return value
 
 
 def _polypizza_filter_params(category=None, licence=None, animated=False):
@@ -3007,11 +2962,11 @@ class BlenderMCPServer:
         Parameters:
         - query: Keyword to search for. When omitted, at least one filter is
                  required: the bare /search endpoint answers 400 without one.
-        - category: Category name or numeric id (0-11)
-        - licence: 'CC0' or 'CC-BY' (or the numeric id: 0 = CC-BY, 1 = CC0)
+        - category: Numeric category id (0-11); the MCP server resolves names
+        - licence: Numeric licence id (0 = CC-BY, 1 = CC0); the MCP server resolves names
         - animated: When True, return only animated models
-        - limit: Maximum number of results to return
-        - page: Optional 1-based page number
+        - limit: Maximum number of results to return (the API caps a page at 32)
+        - page: Optional 0-based page number
         """
         try:
             api_key = self._get_polypizza_api_key()
@@ -3031,10 +2986,13 @@ class BlenderMCPServer:
                     "whole catalogue is rejected by the API with HTTP 400."
                 )}
 
+            # Limit and Page are Capitalized like the filters: lowercase
+            # variants are silently ignored and the API then serves its
+            # default page of 32.
             params = dict(filters)
-            params["limit"] = limit
+            params["Limit"] = max(1, min(int(limit), 32))
             if page is not None:
-                params["page"] = page
+                params["Page"] = page
 
             headers = dict(REQ_HEADERS)
             headers["x-auth-token"] = api_key

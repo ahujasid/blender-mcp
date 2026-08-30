@@ -1022,84 +1022,88 @@ async def download_sketchfab_model(
         logger.error(traceback.format_exc())
         return f"Error downloading Sketchfab model: {str(e)}"
 
-# Poly Pizza filters on numeric ids. Lowercase or named values are accepted by
-# the API with HTTP 200 and then silently ignored, returning the unfiltered
-# catalogue, so names are converted here before the command leaves the server.
-POLYPIZZA_CATEGORY_IDS = {
-    "food & drink": 0,
-    "food": 0,
-    "drink": 0,
-    "clutter": 1,
-    "weapons": 2,
-    "weapon": 2,
-    "transport": 3,
-    "vehicle": 3,
-    "vehicles": 3,
-    "furniture & decor": 4,
-    "furniture": 4,
-    "decor": 4,
-    "objects": 5,
-    "object": 5,
-    "props": 5,
-    "nature": 6,
-    "animals": 7,
-    "animal": 7,
-    "buildings": 8,
-    "architecture": 8,
-    "buildings/architecture": 8,
-    "people & characters": 9,
-    "people": 9,
-    "characters": 9,
-    "scenes & levels": 10,
-    "scenes": 10,
-    "levels": 10,
-    "other": 11,
+# Poly Pizza's API filters on numeric ids (Category 0-11; License 0 = CC-BY,
+# 1 = CC0) and silently ignores names. Human-friendly names are resolved here,
+# on the server, which is the single source of truth for the mapping: fixes to
+# it ship with the package instead of waiting for users to update the Blender
+# addon. The addon only validates ids and builds the Capitalized query.
+POLYPIZZA_CATEGORIES = {
+    "Food & Drink": 0,
+    "Clutter": 1,
+    "Weapons": 2,
+    "Transport": 3,
+    "Furniture & Decor": 4,
+    "Objects": 5,
+    "Nature": 6,
+    "Animals": 7,
+    "Buildings": 8,
+    "People & Characters": 9,
+    "Scenes & Levels": 10,
+    "Other": 11,
 }
 
-POLYPIZZA_LICENCE_IDS = {
-    "cc-by": 0,
-    "ccby": 0,
-    "cc by": 0,
-    "cc-by 3.0": 0,
-    "cc0": 1,
-    "cc-0": 1,
-    "cc0 1.0": 1,
-    "public domain": 1,
+# Spellings a caller is likely to use, mapped onto the ids above.
+POLYPIZZA_CATEGORY_ALIASES = {
+    "food": 0, "drink": 0, "drinks": 0,
+    "weapon": 2,
+    "vehicle": 3, "vehicles": 3, "transportation": 3,
+    "furniture": 4, "decor": 4,
+    "object": 5, "prop": 5, "props": 5,
+    "plant": 6, "plants": 6,
+    "animal": 7,
+    "building": 8, "architecture": 8, "buildingsarchitecture": 8,
+    "person": 9, "character": 9, "characters": 9, "people": 9,
+    "scene": 10, "scenes": 10, "level": 10, "levels": 10,
 }
+
+
+def _polypizza_normalize(value):
+    """Fold a human-written filter value down to comparable characters."""
+    return "".join(ch for ch in str(value).lower() if ch.isalnum())
 
 
 def _polypizza_category_id(category):
-    """Convert a category name (or id) into the numeric id the API expects."""
+    """Coerce a category name or id into the numeric id the API expects."""
     if category is None or category == "":
         return None
-    if isinstance(category, int) and not isinstance(category, bool):
-        return category
-    text = str(category).strip()
-    if text.isdigit():
-        return int(text)
-    resolved = POLYPIZZA_CATEGORY_IDS.get(text.lower())
-    if resolved is None:
-        raise ValueError(
-            f"Unknown Poly Pizza category '{category}'. Valid categories: Food & Drink, Clutter, "
-            "Weapons, Transport, Furniture & Decor, Objects, Nature, Animals, Buildings, "
-            "People & Characters, Scenes & Levels, Other"
-        )
-    return resolved
+    if isinstance(category, bool):
+        raise ValueError("Poly Pizza category must be a name or an id in 0-11")
+    if isinstance(category, int) or (isinstance(category, str) and category.strip().lstrip("-").isdigit()):
+        value = int(category)
+        if not 0 <= value <= 11:
+            raise ValueError(f"Poly Pizza category id {value} is out of range (valid ids are 0-11)")
+        return value
+
+    key = _polypizza_normalize(category)
+    for name, value in POLYPIZZA_CATEGORIES.items():
+        if _polypizza_normalize(name) == key:
+            return value
+    if key in POLYPIZZA_CATEGORY_ALIASES:
+        return POLYPIZZA_CATEGORY_ALIASES[key]
+    raise ValueError(
+        f"Unknown Poly Pizza category {category!r}. Valid categories: "
+        + ", ".join(POLYPIZZA_CATEGORIES)
+    )
 
 
 def _polypizza_licence_id(licence):
-    """Convert a licence name (or id) into the numeric id the API expects."""
+    """Coerce a licence name or id into the numeric id the API expects."""
     if licence is None or licence == "":
         return None
-    if isinstance(licence, int) and not isinstance(licence, bool):
-        return licence
-    text = str(licence).strip()
-    if text.isdigit():
-        return int(text)
-    resolved = POLYPIZZA_LICENCE_IDS.get(text.lower())
-    if resolved is None:
-        raise ValueError(f"Unknown Poly Pizza licence '{licence}'. Use 'CC0' or 'CC-BY'.")
-    return resolved
+    if isinstance(licence, bool):
+        raise ValueError("Poly Pizza licence must be 'CC0', 'CC-BY', 0 or 1")
+    if isinstance(licence, int) or (isinstance(licence, str) and licence.strip().lstrip("-").isdigit()):
+        value = int(licence)
+        if value not in (0, 1):
+            raise ValueError(f"Poly Pizza licence id {value} is invalid (0 = CC-BY, 1 = CC0)")
+        return value
+
+    key = _polypizza_normalize(licence)
+    if key.startswith("ccby"):
+        return 0
+    if key.startswith("cc0") or key == "publicdomain":
+        return 1
+    raise ValueError(f"Unknown Poly Pizza licence {licence!r}. Use 'CC0' or 'CC-BY'.")
 
 
 @mcp.tool()
@@ -1144,7 +1148,7 @@ async def search_polypizza_models(
     - licence: Optional licence filter, either "CC0" (no credit required) or "CC-BY"
                (credit required)
     - animated: When True, return only animated models (default False)
-    - limit: Maximum number of results to return (default 20)
+    - limit: Maximum number of results to return (default 20, the API caps it at 32)
     - user_prompt: The user's own words describing what they want, quoted verbatim (do not paraphrase or summarise). Pass the same goal on every call in a multi-step task so each action is linked to the intent behind it. Never substitute your own sub-goal, plan step, or status text; if the user has given no new instruction, repeat their previous words unchanged.
 
     Returns a formatted list of matching models, with licence and triangle count on
