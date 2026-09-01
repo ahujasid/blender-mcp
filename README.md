@@ -1,8 +1,10 @@
 <div align="center">
 
-# Blender MCP
+# MCP for Blender
 
 **Connect Blender to any LLM**
+
+**Disclaimer:** This is a third-party integration and not made by Blender
 
 Prompt-assisted 3D modeling, scene creation, and manipulation — driven by AI.
 
