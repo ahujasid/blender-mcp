@@ -86,11 +86,11 @@ See [MCP Client Setup](#mcp-client-setup) below for per-client instructions and 
 uvx blender-mcp install-addon
 ```
 
-Then in Blender: **Edit → Preferences → Add-ons** → enable **Interface: Blender MCP**.
+Then in Blender: **Edit → Preferences → Add-ons** → enable **Interface: MCP for Blender**.
 
 **4. Connect**
 
-In Blender's 3D viewport, press `N` → open the **BlenderMCP** tab → click **Start MCP Server**. That's it — ask Claude to build something.
+In Blender's 3D viewport, press `N` → open the **MCP for Blender** tab → click **Start MCP Server**. That's it — ask Claude to build something.
 
 > **Note:** Only run **one** instance of the MCP server (either Cursor or Claude Desktop), not both.
 
@@ -282,7 +282,7 @@ Go to **Claude → Settings → Developer → Edit Config → `claude_desktop_co
 <details>
 <summary><b>Claude Code</b></summary>
 
-Use the Claude Code CLI to add the blender MCP server:
+Use the Claude Code CLI to add the MCP for Blender server:
 
 ```bash
 claude mcp add blender uvx blender-mcp
@@ -391,11 +391,11 @@ This copies the addon into your Blender addons folder as `blender_mcp.py`. It pr
 
 **3.** Go to **Edit → Preferences → Add-ons**
 
-**4.** Enable **Interface: Blender MCP** (search "Blender MCP"). If it doesn't appear yet, click **Install…** and select the copied `blender_mcp.py` / `addon.py`, or restart Blender.
+**4.** Enable **Interface: MCP for Blender** (search "MCP for Blender"). If it doesn't appear yet, click **Install…** and select the copied `blender_mcp.py` / `addon.py`, or restart Blender.
 
 **5. Manual alternative** — if the command above can't find your Blender install, or you prefer doing it by hand: download `addon.py` from this repo → in Blender, **Edit → Preferences → Add-ons → Install…** → select the downloaded `addon.py` → enable it.
 
-Then open the **BlenderMCP** tab in Blender's sidebar (press `N` in the 3D viewport) and click **Start MCP Server**. See [Starting the Connection](#starting-the-connection) below.
+Then open the **MCP for Blender** tab in Blender's sidebar (press `N` in the 3D viewport) and click **Start MCP Server**. See [Starting the Connection](#starting-the-connection) below.
 
 ## Upgrading (existing users)
 
@@ -408,7 +408,7 @@ uvx blender-mcp install-addon
 uvx blender-mcp addon-paths   # optional: list detected Blender addons folders
 ```
 
-**2.** In Blender: **Preferences → Add-ons** → disable and re-enable **Interface: Blender MCP** (or restart Blender), then click **Start MCP Server** again.
+**2.** In Blender: **Preferences → Add-ons** → disable and re-enable **Interface: MCP for Blender** (or restart Blender), then click **Start MCP Server** again.
 
 **3.** Delete the MCP server from Claude and add it back again if the server package itself needs a refresh.
 
@@ -420,19 +420,19 @@ uvx blender-mcp addon-paths   # optional: list detected Blender addons folders
 
 ### Starting the Connection
 
-![BlenderMCP in the sidebar](assets/addon-instructions.png)
+![MCP for Blender in the sidebar](assets/addon-instructions.png)
 
 1. In Blender, go to the 3D View sidebar (press <kbd>N</kbd> if not visible)
-2. Find the **BlenderMCP** tab
+2. Find the **MCP for Blender** tab
 3. Turn on the checkboxes you'd like to use (see more under [Capabilities](#capabilities) below)
 4. Click **Connect to Claude**
 5. Make sure the MCP server is running in your terminal
 
 ### Using with Claude
 
-Once the config file has been set on Claude, and the addon is running on Blender, you will see a hammer icon with tools for the Blender MCP.
+Once the config file has been set on Claude, and the addon is running on Blender, you will see a hammer icon with tools for MCP for Blender.
 
-![BlenderMCP in the sidebar](assets/hammer-icon.png)
+![MCP for Blender in the sidebar](assets/hammer-icon.png)
 
 ### Capabilities
 
@@ -454,7 +454,7 @@ a single self-contained `.glb`, and the geometry is far lighter than Sketchfab's
 1. Get a free API key at [poly.pizza/settings/api](https://poly.pizza/settings/api)
 2. In the 3D View sidebar, tick **Use assets from Poly Pizza**
 3. Paste the key into the **API Key** field that appears (or store it permanently under
-   **Edit → Preferences → Add-ons → Blender MCP**)
+   **Edit → Preferences → Add-ons → MCP for Blender**)
 
 Worked example:
 
@@ -496,9 +496,9 @@ Here are some examples of what you can ask Claude to do:
 
 ## Persistent API Credentials
 
-BlenderMCP supports persistent credentials via Blender Add-on Preferences:
+MCP for Blender supports persistent credentials via Blender Add-on Preferences:
 
-**Edit → Preferences → Add-ons → Blender MCP**
+**Edit → Preferences → Add-ons → MCP for Blender**
 
 You can store these values there so they survive Blender restarts:
 
@@ -549,9 +549,9 @@ The system uses a simple JSON-based protocol over TCP sockets:
 
 ## Telemetry Control
 
-BlenderMCP collects anonymous usage data to help improve the tool. Telemetry consent is **on by default**, and you can turn it off in two ways:
+MCP for Blender collects anonymous usage data to help improve the tool. Telemetry consent is **on by default**, and you can turn it off in two ways:
 
-**1. In Blender** — go to **Edit → Preferences → Add-ons → Blender MCP** and uncheck the telemetry consent checkbox.
+**1. In Blender** — go to **Edit → Preferences → Add-ons → MCP for Blender** and uncheck the telemetry consent checkbox.
 
 - With consent (checked, the default): view the TnC for more details on data collected.
 
@@ -577,7 +577,7 @@ Or add it to your MCP config:
 }
 ```
 
-Telemetry data is not linked to your name or account. It may be used to improve BlenderMCP, for research, and to train AI models.
+Telemetry data is not linked to your name or account. It may be used to improve MCP for Blender, for research, and to train AI models.
 
 Full detail on what is collected, and the license you grant by leaving telemetry on, is in [TERMS_AND_CONDITIONS.md](TERMS_AND_CONDITIONS.md).
 
@@ -585,7 +585,7 @@ Full detail on what is collected, and the license you grant by leaving telemetry
 
 ## Feedback
 
-We are actively looking for feedback on Blender MCP. If you have thoughts, share them [here](https://bit.ly/blender-mcp-form).
+We are actively looking for feedback on MCP for Blender. If you have thoughts, share them [here](https://bit.ly/blender-mcp-form).
 
 If you have more detailed feedback, you can schedule a call with us [here](https://bit.ly/blender-mcp-call) — we will credit you in the project.
 
@@ -615,6 +615,6 @@ This is a third-party integration and not made by Blender. Made by [Siddharth](h
 
 <div align="center">
 
-**If Blender MCP is useful to you, consider starring the repo**
+**If MCP for Blender is useful to you, consider starring the repo**
 
 </div>

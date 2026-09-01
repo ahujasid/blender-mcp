@@ -1,5 +1,5 @@
 """
-Bundle, install, and version-check the Blender MCP addon.
+Bundle, install, and version-check the MCP for Blender addon.
 
 Existing users often update only the MCP server (`uvx blender-mcp`). This module:
 1. Ships a bundled copy of addon.py inside the package
@@ -22,10 +22,14 @@ logger = logging.getLogger("BlenderMCPServer")
 # Must match ADDON_PROTOCOL_VERSION in addon.py / bundled/addon.py
 EXPECTED_ADDON_PROTOCOL_VERSION = 5
 
-_ADDON_MARKER = 'bl_info = {\n    "name": "Blender MCP"'
+_ADDON_MARKER = 'bl_info = {\n    "name": "MCP for Blender"'
 _INSTALLED_FILENAME = "blender_mcp.py"
 _PROTOCOL_RE = re.compile(r"ADDON_PROTOCOL_VERSION\s*=\s*(\d+)")
-_BL_INFO_NAME_RE = re.compile(r"""["']name["']\s*:\s*["']Blender MCP["']""")
+# Matches the current name and the pre-rename "Blender MCP" so install-addon
+# still replaces installs from older releases.
+_BL_INFO_NAME_RE = re.compile(
+    r"""["']name["']\s*:\s*["'](?:MCP for Blender|Blender MCP)["']"""
+)
 
 
 def read_addon_protocol_version(path: Path) -> int | None:
@@ -70,7 +74,7 @@ class AddonStatusReport:
 
 _UPDATE_HINT = (
     "Run `uvx blender-mcp install-addon` to update it, then in Blender: "
-    "Preferences → Add-ons → disable and re-enable 'Interface: Blender MCP' "
+    "Preferences → Add-ons → disable and re-enable 'Interface: MCP for Blender' "
     "(or restart Blender) and click Start MCP Server."
 )
 
@@ -108,7 +112,7 @@ def check_addon_status_on_startup() -> AddonStatusReport:
                 missing=True,
                 reason="not_installed",
                 message=(
-                    "Blender MCP addon not found in any Blender addons folder. "
+                    "MCP for Blender addon not found in any Blender addons folder. "
                     "Run `uvx blender-mcp install-addon` to install it."
                 ),
             )
@@ -132,7 +136,7 @@ def check_addon_status_on_startup() -> AddonStatusReport:
             missing=False,
             reason="outdated",
             message=(
-                f"Blender MCP addon on disk is outdated (expected protocol "
+                f"MCP for Blender addon on disk is outdated (expected protocol "
                 f"{EXPECTED_ADDON_PROTOCOL_VERSION}): {', '.join(outdated)}. "
                 + _UPDATE_HINT
             ),
@@ -178,7 +182,7 @@ def get_bundled_addon_path() -> Path:
         if path.is_file():
             return path
     raise FileNotFoundError(
-        "Bundled Blender MCP addon.py not found. Reinstall blender-mcp or "
+        "Bundled MCP for Blender addon.py not found. Reinstall blender-mcp or "
         "copy addon.py from the GitHub repo into Blender manually."
     )
 
@@ -225,7 +229,7 @@ def discover_blender_addon_dirs() -> list[Path]:
 
 
 def _is_blendermcp_addon_file(path: Path) -> bool:
-    """True only for a file whose bl_info declares it as the Blender MCP addon.
+    """True only for a file whose bl_info declares it as the MCP for Blender addon.
 
     Deliberately narrower than a substring search for "BlenderMCPServer": that
     also matches a user's own fork or a script that merely references the class,
@@ -239,7 +243,7 @@ def _is_blendermcp_addon_file(path: Path) -> bool:
 
 
 def find_existing_addon_installs(addons_dirs: list[Path] | None = None) -> list[Path]:
-    """Locate already-installed Blender MCP addon files."""
+    """Locate already-installed MCP for Blender addon files."""
     found: list[Path] = []
     for addons_dir in addons_dirs or discover_blender_addon_dirs():
         if not addons_dir.is_dir():
@@ -287,7 +291,7 @@ def install_addon(
     """
     Copy the bundled addon into Blender's user addons folder.
 
-    Replaces known existing Blender MCP addon files in that directory.
+    Replaces known existing MCP for Blender addon files in that directory.
     User must disable/enable the addon or restart Blender to load the new code.
     """
     try:
@@ -341,9 +345,9 @@ def install_addon(
         replaced.append(str(target))
 
     msg = (
-        f"Installed Blender MCP addon to {target}. "
+        f"Installed MCP for Blender addon to {target}. "
         "In Blender: Preferences → Add-ons → disable then enable "
-        "'Interface: Blender MCP', or restart Blender, then click Start MCP Server."
+        "'Interface: MCP for Blender', or restart Blender, then click Start MCP Server."
     )
     if len(replaced) > 1:
         msg += f" Also updated: {', '.join(replaced[:-1])}."
@@ -390,7 +394,7 @@ def handshake_addon(blender_connection) -> AddonHandshake:
                 f"Blender addon protocol {protocol_i!r} is behind "
                 f"expected {EXPECTED_ADDON_PROTOCOL_VERSION}. "
                 "Run `uvx blender-mcp install-addon` to update it, then "
-                "restart Blender or disable/enable 'Interface: Blender MCP', "
+                "restart Blender or disable/enable 'Interface: MCP for Blender', "
                 "then Start MCP Server. Trajectory still works via fallbacks."
             )
         return AddonHandshake(
@@ -408,7 +412,7 @@ def handshake_addon(blender_connection) -> AddonHandshake:
             warning = (
                 "Blender addon is outdated (no get_addon_info). "
                 "Run `uvx blender-mcp install-addon` to update it, then "
-                "restart Blender or disable/enable 'Interface: Blender MCP', "
+                "restart Blender or disable/enable 'Interface: MCP for Blender', "
                 "then Start MCP Server. Fallbacks keep working in the meantime."
             )
             return AddonHandshake(
@@ -448,7 +452,7 @@ def run_cli(argv: list[str] | None = None) -> int:
 
     parser = argparse.ArgumentParser(
         prog="blender-mcp",
-        description="Blender MCP server and addon installer",
+        description="MCP for Blender server and addon installer",
     )
     sub = parser.add_subparsers(dest="command")
 
@@ -488,7 +492,7 @@ def run_cli(argv: list[str] | None = None) -> int:
             print(f"{d}{marker}")
         existing = find_existing_addon_installs(dirs)
         if existing:
-            print("\nExisting Blender MCP installs:")
+            print("\nExisting MCP for Blender installs:")
             for p in existing:
                 print(f"  {p}")
         return 0
