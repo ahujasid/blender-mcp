@@ -248,6 +248,7 @@ The following environment variables can be used to configure the Blender connect
 |---|---|---|
 | `BLENDER_HOST` | `localhost` | Host address for Blender socket server |
 | `BLENDER_PORT` | `9876` | Port number for Blender socket server |
+| `BLENDER_MCP_SAFE_MODE` | off | Set to `1` to validate scripts before they run in Blender (see below) |
 
 Example:
 
@@ -255,6 +256,10 @@ Example:
 export BLENDER_HOST='host.docker.internal'
 export BLENDER_PORT=9876
 ```
+
+#### Safe mode
+
+By default, the AI can run any Python code in Blender. Set `BLENDER_MCP_SAFE_MODE=1` to check every script before it runs and block risky code — things like reading or writing files directly, running other programs, accessing the network, or installing code that keeps running after the script ends. Normal Blender work (modeling, materials, rendering, saving, import/export) still works. Blocked scripts are sent back to the AI with the reason, so it can try again with a corrected version.
 
 ---
 

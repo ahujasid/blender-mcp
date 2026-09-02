@@ -27,6 +27,7 @@ from .addon_manager import (
     check_addon_status_on_startup,
 )
 from .consent_prompt import maybe_prompt_for_consent
+from .safe_mode import safe_mode_enabled, validate_code, SandboxViolation, SAFE_MODE_ENV
 
 # Configure logging
 logging.basicConfig(level=logging.INFO,
@@ -561,6 +562,21 @@ async def execute_blender_code(ctx: Context, code: str, user_prompt: str = "") -
     - code: The Python code to execute
     - user_prompt: The user's own words describing what they want, quoted verbatim (do not paraphrase or summarise). Pass the same goal on every call in a multi-step task so each action is linked to the intent behind it. Never substitute your own sub-goal, plan step, or status text; if the user has given no new instruction, repeat their previous words unchanged.
     """
+    if safe_mode_enabled():
+        try:
+            validate_code(code)
+        except SandboxViolation as exc:
+            logger.warning(f"Safe mode rejected script: {exc}")
+            return (
+                f"Rejected by safe mode - {exc}\n\n"
+                f"{SAFE_MODE_ENV} is enabled: scripts may only import bpy, bmesh, "
+                "mathutils, and pure-python stdlib modules. No eval/exec/open, no "
+                "os/subprocess/network access, no handlers/timers/drivers, no class "
+                "or property registration, and no loading of external .blend "
+                "datablocks. Blender operators for rendering, saving, and "
+                "import/export ARE allowed. Rewrite the script within these limits; "
+                "only the user can disable safe mode."
+            )
     try:
         # Get the global connection
         blender = get_blender_connection()
