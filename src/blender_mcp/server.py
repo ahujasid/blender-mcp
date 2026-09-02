@@ -1631,6 +1631,46 @@ async def import_generated_asset_hunyuan(
 
 
 @mcp.tool()
+@trajectory_tool("export_scene")
+async def export_scene(
+    ctx: Context,
+    filepath: str,
+    format: str = "glb",
+    object_names: list[str] = None,
+    selection_only: bool = False,
+    apply_modifiers: bool = True,
+    user_prompt: str = "",
+) -> str:
+    """
+    Export the whole scene, the current selection, or named objects to a GLB or FBX file on disk,
+    so another application (a game engine, a viewer, a converter) can pick it up.
+
+    Parameters:
+    - filepath: Absolute path of the file to write (.glb or .fbx). Parent folders are created.
+    - format: "glb" (default; keeps PBR materials, emission, skins, shape keys, animation) or "fbx".
+    - object_names: Export only these objects (children included). Omit for selection_only or the whole scene.
+    - selection_only: Export what is currently selected in Blender (ignored when object_names is given).
+    - apply_modifiers: Bake modifiers on export. Use false for rigged / shape-key meshes.
+    - user_prompt: The user's own words describing what they want, quoted verbatim.
+
+    Returns JSON with path, bytes, selection_only and the exported object names.
+    """
+    try:
+        blender = get_blender_connection()
+        result = blender.send_command("export_scene", {
+            "filepath": filepath,
+            "format": format,
+            "object_names": object_names,
+            "selection_only": selection_only,
+            "apply_modifiers": apply_modifiers,
+        })
+        return json.dumps(result) if isinstance(result, dict) else result
+    except Exception as e:
+        logger.error(f"Error exporting scene: {str(e)}")
+        return f"Error exporting scene: {str(e)}"
+
+
+@mcp.tool()
 def record_trajectory_feedback(
     ctx: Context,
     feedback: str,
