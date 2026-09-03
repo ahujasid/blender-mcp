@@ -54,6 +54,91 @@ RODIN_FREE_TRIAL_KEY = "vibecoding"
 REQ_HEADERS = requests.utils.default_headers()
 REQ_HEADERS.update({"User-Agent": "blender-mcp"})
 
+# Set when the user disconnects so opening another blend file does not restart
+# the server behind their back. A manual connect or add-on reload clears it.
+_user_stopped_server = False
+
+
+def _blendermcp_port_has_listener(host, port):
+    """Return True when another process already owns the MCP endpoint."""
+    probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    probe.settimeout(0.15)
+    try:
+        return probe.connect_ex((host, port)) == 0
+    finally:
+        probe.close()
+
+
+def _blendermcp_ensure_server_running():
+    """Start the bridge after Blender's UI and scene context are ready.
+
+    Returning a delay asks Blender's timer system to retry when a launch-time
+    socket or context race prevented the first attempt.
+    """
+    if bpy.app.background:
+        return None
+
+    scene = getattr(bpy.context, "scene", None)
+    if scene is None:
+        return 0.5
+
+    server = getattr(bpy.types, "blendermcp_server", None)
+    if not scene.blendermcp_auto_start_server or _user_stopped_server:
+        scene.blendermcp_server_running = bool(server is not None and server.running)
+        return None
+
+    port = scene.blendermcp_port
+    if server is None:
+        if _blendermcp_port_has_listener("localhost", port):
+            scene.blendermcp_server_running = False
+            print(f"BlenderMCP: port {port} is already in use; auto-start skipped.")
+            return None
+        server = BlenderMCPServer(port=port)
+        bpy.types.blendermcp_server = server
+
+    if not server.running:
+        # Safe while stopped and necessary when a newly loaded scene selects a
+        # different port. Never retarget an active connection.
+        server.port = port
+        server.start()
+
+    scene.blendermcp_server_running = server.running
+
+    return None if server.running else 1.0
+
+
+def _blendermcp_schedule_auto_start(delay=0.5):
+    """Schedule one persistent startup callback if none is already pending."""
+    if not bpy.app.timers.is_registered(_blendermcp_ensure_server_running):
+        bpy.app.timers.register(
+            _blendermcp_ensure_server_running,
+            first_interval=delay,
+            persistent=True,
+        )
+
+
+@persistent
+def _blendermcp_load_post(_unused):
+    """Retry auto-start after Blender loads a startup file or another blend."""
+    _blendermcp_schedule_auto_start()
+
+
+def _blendermcp_register_auto_start():
+    """Install the load handler and defer the initial startup attempt."""
+    global _user_stopped_server
+    _user_stopped_server = False
+    if _blendermcp_load_post not in bpy.app.handlers.load_post:
+        bpy.app.handlers.load_post.append(_blendermcp_load_post)
+    _blendermcp_schedule_auto_start()
+
+
+def _blendermcp_unregister_auto_start():
+    """Remove callbacks owned by the add-on before it is disabled."""
+    if _blendermcp_load_post in bpy.app.handlers.load_post:
+        bpy.app.handlers.load_post.remove(_blendermcp_load_post)
+    if bpy.app.timers.is_registered(_blendermcp_ensure_server_running):
+        bpy.app.timers.unregister(_blendermcp_ensure_server_running)
+
 #region Poly Pizza constants and helpers
 
 POLYPIZZA_API_BASE = "https://api.poly.pizza/v1.1"
@@ -3798,7 +3883,9 @@ class BLENDERMCP_PT_Panel(bpy.types.Panel):
         box = layout.box()
         col = box.column()
         if scene.blendermcp_server_running:
-            col.label(text=f"Connected on port {scene.blendermcp_port}", icon='CHECKMARK')
+            server = getattr(bpy.types, "blendermcp_server", None)
+            running_port = getattr(server, "port", scene.blendermcp_port)
+            col.label(text=f"Connected on port {running_port}", icon='CHECKMARK')
             col.operator("blendermcp.stop_server", text="Disconnect", icon='X')
         else:
             col.label(text="Not connected", icon='RADIOBUT_OFF')
@@ -3904,6 +3991,8 @@ class BLENDERMCP_OT_StartServer(bpy.types.Operator):
     bl_description = "Start the MCP for Blender server to connect with Claude"
 
     def execute(self, context):
+        global _user_stopped_server
+        _user_stopped_server = False
         scene = context.scene
 
         # Create a new server instance
@@ -3923,6 +4012,8 @@ class BLENDERMCP_OT_StopServer(bpy.types.Operator):
     bl_description = "Stop the connection to Claude"
 
     def execute(self, context):
+        global _user_stopped_server
+        _user_stopped_server = True
         scene = context.scene
 
         # Stop the server if it exists
@@ -4102,27 +4193,15 @@ def register():
     bpy.utils.register_class(BLENDERMCP_OT_StopServer)
     bpy.utils.register_class(BLENDERMCP_OT_OpenTerms)
 
-    # Auto-start the server so the MCP client can connect without manual UI interaction
-    scene = getattr(bpy.context, 'scene', None)
-    if scene is not None:
-        port = scene.blendermcp_port
-        auto_start = scene.blendermcp_auto_start_server
-    else:
-        port = 9876
-        auto_start = True
-
-    if auto_start and (not hasattr(bpy.types, "blendermcp_server") or not bpy.types.blendermcp_server):
-        bpy.types.blendermcp_server = BlenderMCPServer(port=port)
-    if auto_start and not bpy.types.blendermcp_server.running:
-        bpy.types.blendermcp_server.start()
-        try:
-            bpy.context.scene.blendermcp_server_running = bpy.types.blendermcp_server.running
-        except AttributeError:
-            pass
+    # Add-on registration can run before Blender has a stable UI/scene context.
+    # Defer socket startup and retry after startup-file or .blend loads.
+    _blendermcp_register_auto_start()
 
     print("BlenderMCP addon registered")
 
 def unregister():
+    _blendermcp_unregister_auto_start()
+
     _unregister_edit_capture_handlers()
 
     # Stop the server if it's running
