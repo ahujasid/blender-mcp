@@ -312,6 +312,7 @@ def _upload_image_to_ondemand_storage(image_bytes: bytes, mime_type: str = "imag
     api_key = os.getenv("ONDEMAND_API_KEY")
     container = os.getenv("ONDEMAND_STORAGE_CONTAINER")
     account = os.getenv("ONDEMAND_STORAGE_ACCOUNT")
+    STORAGE_URL = os.getenv("ONDEMAND_STORAGE_URL")
     if not api_key or not container or not account:
         raise Exception(
             "ONDEMAND_API_KEY, ONDEMAND_STORAGE_CONTAINER and ONDEMAND_STORAGE_ACCOUNT must all be set"
@@ -326,7 +327,7 @@ def _upload_image_to_ondemand_storage(image_bytes: bytes, mime_type: str = "imag
         headers["x-company-id"] = company_id
 
     write_resp = httpx.post(
-        "https://gateway-dev.on-demand.io/storage/v1/public/url/generate/write",
+        f"{STORAGE_URL}/generate/write",
         json={
             "cloudProvider": "AZURE",
             "folderPath": folder_path,
@@ -352,7 +353,7 @@ def _upload_image_to_ondemand_storage(image_bytes: bytes, mime_type: str = "imag
     put_resp.raise_for_status()
 
     read_resp = httpx.post(
-        "https://gateway-dev.on-demand.io/storage/v1/public/url/generate/refresh",
+        f"{STORAGE_URL}/generate/refresh",
         json={"signedUrl": write_data.get("fileUrl")},
         headers=headers,
         timeout=15.0,
