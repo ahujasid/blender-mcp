@@ -1,0 +1,22 @@
+# Everything the image doesn't need — only pyproject.toml, uv.lock,
+# README.md, and src/ are copied in, but keep the build context small
+# and local-only files out of it.
+.git
+.gitignore
+.venv
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+.DS_Store
+.pytest_cache/
+local_tests/
+tests/
+docs/
+assets/
+scripts/
+supabase/
+Dockerfile
+.dockerignore

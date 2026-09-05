@@ -106,6 +106,7 @@ In Blender's 3D viewport, press `N` → open the **MCP for Blender** tab → cli
   - [Make your client find uvx](#make-your-client-find-uvx)
   - [Pin the Python version](#pin-the-python-version)
   - [Install without uv](#install-without-uv)
+  - [Run with Docker](#run-with-docker)
   - [Environment Variables](#environment-variables)
 - [MCP Client Setup](#mcp-client-setup)
   - [Claude for Desktop](#claude-for-desktop)
@@ -239,6 +240,46 @@ pipx ensurepath          # then restart your shell / client
 ```
 
 Use the resulting absolute path as `"command"` (find it with `which blender-mcp` / `where blender-mcp`) and omit `args`.
+
+### Run with Docker
+
+You can run the MCP server in a container instead of installing it. Blender itself still runs on your machine — the container only hosts the MCP server, which connects out to the Blender addon.
+
+Build the image from the repo root:
+
+```bash
+docker build -t blender-mcp .
+```
+
+Then point your MCP client at it (the `-i` flag is required — the server talks to the client over stdin/stdout):
+
+```json
+{
+    "mcpServers": {
+        "blender": {
+            "command": "docker",
+            "args": ["run", "-i", "--rm", "blender-mcp"]
+        }
+    }
+}
+```
+
+The image defaults to `BLENDER_HOST=host.docker.internal`, which reaches the host's Blender out of the box with Docker Desktop on **macOS and Windows**.
+
+On **Linux**, `host.docker.internal` doesn't exist and the addon only listens on `localhost`, so use host networking instead:
+
+```json
+{
+    "mcpServers": {
+        "blender": {
+            "command": "docker",
+            "args": ["run", "-i", "--rm", "--network=host", "-e", "BLENDER_HOST=localhost", "blender-mcp"]
+        }
+    }
+}
+```
+
+To enable [safe mode](#safe-mode) in the container, add `"-e", "BLENDER_MCP_SAFE_MODE=1"` to `args`.
 
 ### Environment Variables
 
