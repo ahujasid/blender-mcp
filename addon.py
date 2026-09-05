@@ -442,6 +442,38 @@ def get_blendermcp_addon_preferences(context=None):
     addon = context.preferences.addons.get(__name__)
     return addon.preferences if addon else None
 
+# Tencent Cloud exposes Hunyuan-to-3D through two different services depending on where the
+# account was created. Mainland accounts (cloud.tencent.com) use the AI3D 3.0 API. Tencent Cloud
+# International accounts (tencentcloud.com) use the "Hunyuan-to-3D (Professional)" service on the
+# older hunyuan API in ap-singapore; it rejects the mainland body fields and expects EnablePBR.
+# Sending International credentials to the mainland endpoint fails with
+# AuthFailure.SignatureFailure / ResourceUnavailable.
+HUNYUAN_API_PROFILES = {
+    "mainland": {
+        "service": "ai3d",
+        "version": "2025-05-13",
+        "region": "ap-guangzhou",
+        "submit_action": "SubmitHunyuanTo3DProJob",
+        "query_action": "QueryHunyuanTo3DProJob",
+        "submit_body": {},
+    },
+    "international_pro": {
+        "service": "hunyuan",
+        "version": "2023-09-01",
+        "region": "ap-singapore",
+        "submit_action": "SubmitHunyuanTo3DProJob",
+        "query_action": "QueryHunyuanTo3DProJob",
+        "submit_body": {"EnablePBR": True},
+    },
+}
+
+
+def hunyuan_api_profile(international_pro: bool) -> dict:
+    """Return a copy of the Tencent Cloud API profile for the selected account type."""
+    profile = HUNYUAN_API_PROFILES["international_pro" if international_pro else "mainland"]
+    return {**profile, "submit_body": dict(profile["submit_body"])}
+
+
 class BlenderMCPServer:
     def __init__(self, host='localhost', port=9876):
         self.host = host
@@ -3403,11 +3435,12 @@ class BlenderMCPServer:
                 return {"error": "Prompt or Image is required"}
             if text_prompt and image:
                 return {"error": "Prompt and Image cannot be provided simultaneously"}
-            # Updated to Tencent Cloud AI3D API 3.0 (2025-05-13)
-            service = "ai3d"
-            action = "SubmitHunyuanTo3DProJob"
-            version = "2025-05-13"
-            region = "ap-guangzhou"
+            profile = hunyuan_api_profile(
+                getattr(bpy.context.scene, "blendermcp_hunyuan3d_intl_pro", False))
+            service = profile["service"]
+            action = profile["submit_action"]
+            version = profile["version"]
+            region = profile["region"]
 
             headParams={
                 "Action": action,
@@ -3416,7 +3449,7 @@ class BlenderMCPServer:
             }
 
             # Constructing request parameters
-            data = {}
+            data = profile["submit_body"]
 
             # Handling text prompts
             if text_prompt:
@@ -3549,11 +3582,12 @@ class BlenderMCPServer:
             if not job_id:
                 return {"error": "JobId is required"}
             
-            # Updated to Tencent Cloud AI3D API 3.0 (2025-05-13)
-            service = "ai3d"
-            action = "QueryHunyuanTo3DProJob"
-            version = "2025-05-13"
-            region = "ap-guangzhou"
+            profile = hunyuan_api_profile(
+                getattr(bpy.context.scene, "blendermcp_hunyuan3d_intl_pro", False))
+            service = profile["service"]
+            action = profile["query_action"]
+            version = profile["version"]
+            region = profile["region"]
 
             headParams={
                 "Action": action,
@@ -3858,6 +3892,7 @@ class BLENDERMCP_PT_Panel(bpy.types.Panel):
                 else:
                     col.prop(scene, "blendermcp_hunyuan3d_secret_id", text="SecretId")
                     col.prop(scene, "blendermcp_hunyuan3d_secret_key", text="SecretKey")
+                col.prop(scene, "blendermcp_hunyuan3d_intl_pro", text="International (Pro) account")
             if scene.blendermcp_hunyuan3d_mode == 'LOCAL_API':
                 if prefs:
                     col.prop(prefs, "hunyuan3d_api_url", text="API URL")
@@ -4018,6 +4053,14 @@ def register():
         default="LOCAL_API"
     )
 
+    bpy.types.Scene.blendermcp_hunyuan3d_intl_pro = bpy.props.BoolProperty(
+        name="International (Pro)",
+        description="Use the Tencent Cloud International 'Hunyuan-to-3D (Professional)' service "
+                    "(hunyuan API, region ap-singapore, PBR enabled). Enable this when your SecretId/"
+                    "SecretKey come from tencentcloud.com; leave it off for mainland AI3D 3.0 accounts",
+        default=False
+    )
+
     bpy.types.Scene.blendermcp_hunyuan3d_secret_id = bpy.props.StringProperty(
         name="Hunyuan 3D SecretId",
         description="SecretId provided by Hunyuan 3D",
@@ -4150,6 +4193,7 @@ def unregister():
     del bpy.types.Scene.blendermcp_polypizza_api_key
     del bpy.types.Scene.blendermcp_use_hunyuan3d
     del bpy.types.Scene.blendermcp_hunyuan3d_mode
+    del bpy.types.Scene.blendermcp_hunyuan3d_intl_pro
     del bpy.types.Scene.blendermcp_hunyuan3d_secret_id
     del bpy.types.Scene.blendermcp_hunyuan3d_secret_key
     del bpy.types.Scene.blendermcp_hunyuan3d_api_url

@@ -491,6 +491,19 @@ Once the config file has been set on Claude, and the addon is running on Blender
 - Search and download low-poly models from [Poly Pizza](https://poly.pizza/)
 - AI generated 3D models through [Hyper3D Rodin](https://hyper3d.ai/) and [Hunyuan3D](https://3d.hunyuan.tencent.com/)
 
+#### Hunyuan3D on Tencent Cloud (Official API mode)
+
+Which Tencent Cloud service the addon must call depends on where your account lives:
+
+| Account | Service the addon calls | Region | Sidebar toggle |
+|---|---|---|---|
+| Mainland (cloud.tencent.com) | AI3D 3.0 (`ai3d`, version `2025-05-13`) | `ap-guangzhou` | leave **International (Pro) account** off (default) |
+| International (tencentcloud.com), *Hunyuan-to-3D (Professional)* | `hunyuan`, version `2023-09-01`, PBR enabled | `ap-singapore` | tick **International (Pro) account** |
+
+International credentials sent to the mainland endpoint fail with `AuthFailure.SignatureFailure` or
+`ResourceUnavailable`, so tick the toggle when your SecretId/SecretKey come from tencentcloud.com.
+The toggle sits under **Tencent Hunyuan 3D → Official API** in the sidebar.
+
 #### Poly Pizza
 
 [Poly Pizza](https://poly.pizza/) hosts roughly 10,600 free low-poly models, including the
