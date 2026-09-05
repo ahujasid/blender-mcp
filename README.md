@@ -486,6 +486,7 @@ Once the config file has been set on Claude, and the addon is running on Blender
 - Create, delete and modify shapes
 - Apply or create materials for objects
 - Execute any Python code in Blender
+- Export the scene, the selection or named objects to GLB/FBX for other applications (`export_scene`)
 - Download the right models, assets and HDRIs through [Poly Haven](https://polyhaven.com/)
 - Search and download models from [Sketchfab](https://sketchfab.com/)
 - Search and download low-poly models from [Poly Pizza](https://poly.pizza/)
