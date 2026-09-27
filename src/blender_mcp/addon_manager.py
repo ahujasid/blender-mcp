@@ -14,7 +14,7 @@ import os
 import re
 import shutil
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 logger = logging.getLogger("BlenderMCPServer")
@@ -169,6 +169,7 @@ class AddonHandshake:
     blender_version: str | None
     source: str  # native | missing | error
     warning: str | None = None
+    premium_generators: list[str] = field(default_factory=list)
 
 
 def get_bundled_addon_path() -> Path:
@@ -405,6 +406,7 @@ def handshake_addon(blender_connection) -> AddonHandshake:
             blender_version=info.get("blender_version"),
             source="native",
             warning=warning,
+            premium_generators=list(info.get("premium_generators") or []),
         )
     except Exception as e:
         msg = str(e).lower()

@@ -1590,6 +1590,7 @@ class BlenderMCPServer:
                 "set_telemetry_consent",
             ]),
             "blender_version": bpy.app.version_string,
+            "premium_generators": premium_enabled_generators(),
         }
 
     def get_scene_info(self):
@@ -5032,7 +5033,7 @@ PREMIUM_ERROR_MESSAGES = {
     "ACTIVATION_LIMIT": "Key is active on 3 devices. Deactivate one from its Blender Preferences.",
     "NO_ACTIVE_SUBSCRIPTION": "Your Premium subscription isn't active. Manage it at the account link.",
     "NOT_IN_PLAN": "High-quality models are included in Pro. Use standard quality, or upgrade.",
-    "QUOTA_EXHAUSTED": "You've used all generations this month, or upgrade to Pro.",
+    "QUOTA_EXHAUSTED": "You've used all generations this month. Upgrade for more.",
     "TOO_MANY_IN_FLIGHT": "Wait for the current generation to finish, then try again.",
     "SERVICE_PAUSED": "Premium generation is paused briefly. Your own API keys still work.",
     "PROVIDER_ERROR": "The model provider failed. This attempt wasn't counted; try again.",
@@ -5087,6 +5088,19 @@ def premium_active():
     if prefs is not None and getattr(prefs, "generation_source", "BYOK") == "PREMIUM":
         return True
     return bool(os.getenv("BLENDERMCP_PREMIUM_LICENSE_KEY"))
+
+
+def premium_enabled_generators():
+    """Generators the user can call through Premium right now, for the
+    handshake. Reads local settings only, never the network."""
+    try:
+        if not premium_active():
+            return []
+        scene = bpy.context.scene
+        return [name for name, (_label, prop) in PREMIUM_INTEGRATIONS.items()
+                if getattr(scene, prop, False)]
+    except Exception:
+        return []
 
 
 def premium_error(code, message=None):

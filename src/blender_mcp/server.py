@@ -28,7 +28,7 @@ from .addon_manager import (
     check_addon_status_on_startup,
 )
 from .consent_prompt import maybe_prompt_for_consent
-from .premium_hint import premium_hint_once
+from .premium_hint import premium_hint_once, premium_generation_guidance
 from .safe_mode import safe_mode_enabled, validate_code, SandboxViolation, SAFE_MODE_ENV
 
 # Configure logging
@@ -295,12 +295,11 @@ async def server_lifespan(server: FastMCP) -> AsyncIterator[Dict[str, Any]]:
             _blender_connection = None
         logger.info("BlenderMCP server shut down")
 
-# Guidance delivered to clients in the `initialize` response.
-#
-# The asset-library playbook lives in the asset_creation_strategy prompt, which
-# clients only receive if they call prompts/get. Many never do, so the rules that
-# keep generated scripts from breaking are repeated here. Kept short because
-# instructions are injected into every conversation (see #347 on context cost).
+# Guidance delivered to clients in the `initialize` response. This is the only
+# guidance every client is sure to get: MCP prompts are user-invoked, and the
+# model has no way to fetch one. Per-tool details belong in tool descriptions.
+# Kept short because instructions are injected into every conversation (see
+# #347 on context cost).
 SERVER_INSTRUCTIONS = """Blender MCP drives a live Blender instance. execute_blender_code runs
 arbitrary Python there, so scripts must not assume anything about the user's Blender.
 
@@ -324,8 +323,16 @@ When writing code:
 After changing anything, call get_viewport_screenshot() to confirm the result looks right and
 get_scene_info() to confirm the objects exist.
 
-Call the asset_creation_strategy prompt for the full asset-library workflow (Poly Haven,
-Sketchfab, Poly Pizza, Hyper3D Rodin, Hunyuan3D)."""
+Prefer real assets over scripted geometry unless a simple primitive is asked for. Call an
+integration's get_*_status tool before using it. Sources:
+- Poly Haven: HDRIs for lighting, textures, generic models.
+- Sketchfab: realistic and specific real-world models.
+- Poly Pizza: stylised low-poly assets. Credit the creator of CC-BY models.
+- Hyper3D Rodin, Hunyuan3D, Tripo: generate one custom object at a time. Never generate a
+  whole scene, the ground, or parts to assemble; duplicate earlier results instead.
+If get_addon_status lists premium_generators, follow the guidance it returns on when to
+generate. After importing, check world_bounding_box and fix location and scale so objects sit
+correctly and don't clip."""
 
 # Create the MCP server with lifespan support
 mcp = FastMCP(
@@ -355,6 +362,21 @@ def _maybe_handshake_addon(blender: BlenderConnection) -> None:
             logger.warning(log_line)
     except Exception as e:
         logger.debug(f"Addon handshake skipped: {e}")
+
+
+def _premium_guidance(blender: BlenderConnection) -> str:
+    """Premium steering for library status replies. Asks the addon fresh, since
+    the user can switch Premium on after the handshake."""
+    # Addons without get_addon_info reply with an error, and send_command drops
+    # the socket on any error, so don't ask one that already failed the handshake.
+    if _addon_handshake is not None and _addon_handshake.source != "native":
+        return ""
+    try:
+        info = blender.send_command("get_addon_info")
+    except Exception as e:
+        logger.debug(f"Could not read Premium generators: {e}")
+        return ""
+    return premium_generation_guidance(info.get("premium_generators") if isinstance(info, dict) else None)
 
 
 def _addon_protocol() -> int | None:
@@ -392,6 +414,9 @@ async def get_addon_status(ctx: Context, user_prompt: str = "") -> str:
     """
     Check whether the connected Blender addon matches this MCP server version.
 
+    `premium_generators` lists the 3D generators MCP for Blender Premium has on; when it is
+    non-empty the reply ends with guidance on when to generate instead of using libraries.
+
     If outdated, tells the user how to update via `uvx mcp-for-blender install-addon`
     (then restart or re-enable the addon in Blender).
 
@@ -414,6 +439,7 @@ async def get_addon_status(ctx: Context, user_prompt: str = "") -> str:
             "addon_version": result.addon_version,
             "capabilities": result.capabilities,
             "blender_version": result.blender_version,
+            "premium_generators": result.premium_generators,
             "source": result.source,
             "warning": result.warning,
             "telemetry_consent": get_telemetry().check_user_consent(),
@@ -423,7 +449,8 @@ async def get_addon_status(ctx: Context, user_prompt: str = "") -> str:
                 "disable/enable 'Interface: Blender MCP', or restart Blender, then Start MCP Server."
             ),
         }
-        return json.dumps(payload, indent=2) + await maybe_prompt_for_consent(ctx)
+        return (json.dumps(payload, indent=2) + premium_generation_guidance(result.premium_generators)
+                + await maybe_prompt_for_consent(ctx))
     except Exception as e:
         return f"Error checking addon status: {e}"
 
@@ -1138,7 +1165,7 @@ async def get_polyhaven_status(ctx: Context, user_prompt: str = "") -> str:
         message = result.get("message", "")
         if enabled:
             message += "PolyHaven is good at Textures, and has a wider variety of textures than Sketchfab."
-        return message
+        return message + _premium_guidance(blender)
     except Exception as e:
         logger.error(f"Error checking PolyHaven status: {str(e)}")
         return f"Error checking PolyHaven status: {str(e)}"
@@ -1157,8 +1184,12 @@ async def get_hyper3d_status(ctx: Context, user_prompt: str = "") -> str:
         result = blender.send_command("get_hyper3d_status")
         enabled = result.get("enabled", False)
         message = result.get("message", "")
-        if enabled:
-            message += ""
+        if enabled and "free_trial" in message:
+            message += (
+                " If generation fails with an insufficient balance error, tell the user the free trial "
+                "key allows a few models a day: they can try again tomorrow, or get their own key from "
+                "hyper3d.ai or fal.ai."
+            )
         return message + premium_hint_once(ctx, result)
     except Exception as e:
         logger.error(f"Error checking Hyper3D status: {str(e)}")
@@ -1177,8 +1208,8 @@ async def get_sketchfab_status(ctx: Context, user_prompt: str = "") -> str:
         enabled = result.get("enabled", False)
         message = result.get("message", "")
         if enabled:
-            message += "Sketchfab is good at Realistic models, and has a wider variety of models than PolyHaven."        
-        return message
+            message += "Sketchfab is good at Realistic models, and has a wider variety of models than PolyHaven."
+        return message + _premium_guidance(blender)
     except Exception as e:
         logger.error(f"Error checking Sketchfab status: {str(e)}")
         return f"Error checking Sketchfab status: {str(e)}"
@@ -1478,7 +1509,7 @@ async def get_polypizza_status(ctx: Context, user_prompt: str = "") -> str:
                 " Poly Pizza is good at stylised, low-poly game assets. Everything is free under "
                 "CC0 or CC-BY, and models are far lighter geometry than Sketchfab's."
             )
-        return message
+        return message + _premium_guidance(blender)
     except Exception as e:
         logger.error(f"Error checking Poly Pizza status: {str(e)}")
         return f"Error checking Poly Pizza status: {str(e)}"
@@ -2148,6 +2179,10 @@ def record_trajectory_feedback(
     """
     Record evaluation feedback for a captured trajectory step.
 
+    Call it when the user reacts to a result: "accept" when they keep it ("looks good"),
+    "reject" or "undo" when they reject it or ask to undo, and "correction" with their words
+    as correction_text when they correct you ("too dark", "make it taller").
+
     Parameters:
     - feedback: One of accept | reject | undo | correction
     - correction_text: Optional free-text correction or follow-up (especially for correction)
@@ -2175,148 +2210,6 @@ def record_trajectory_feedback(
         logger.debug(f"record_trajectory_feedback failed: {e}")
         return f"Trajectory feedback skipped: {e}"
 
-
-@mcp.prompt()
-def asset_creation_strategy() -> str:
-    """Defines the preferred strategy for creating assets in Blender"""
-    return """When creating 3D content in Blender, always start by checking if integrations are available:
-
-    0. Before anything, always check the scene from get_scene_info()
-    
-    **IMPORTANT: Visual Verification**
-    - Use get_viewport_screenshot() BEFORE making changes to see the current state
-    - Use get_viewport_screenshot() AFTER executing code or importing assets to verify the result
-    - This helps confirm your changes worked as expected and catch any visual issues
-
-    **IMPORTANT: Trajectory feedback**
-    - When the user accepts a result ("looks good", "keep that"), call record_trajectory_feedback(feedback="accept")
-    - When they reject or ask to undo, call record_trajectory_feedback(feedback="reject" or "undo")
-    - When they correct you ("too dark", "make it taller"), call record_trajectory_feedback(feedback="correction", correction_text=<their correction>)
-    1. First use the following tools to verify if the following integrations are enabled:
-        1. PolyHaven
-            Use get_polyhaven_status() to verify its status
-            If PolyHaven is enabled:
-            - For objects/models: Use download_polyhaven_asset() with asset_type="models"
-            - For materials/textures: Use download_polyhaven_asset() with asset_type="textures"
-            - For environment lighting: Use download_polyhaven_asset() with asset_type="hdris"
-        2. Sketchfab
-            Sketchfab is good at Realistic models, and has a wider variety of models than PolyHaven.
-            Use get_sketchfab_status() to verify its status
-            If Sketchfab is enabled:
-            - For objects/models: First search using search_sketchfab_models() with your query
-            - Then download specific models using download_sketchfab_model() with the UID
-            - Note that only downloadable models can be accessed, and API key must be properly configured
-            - Sketchfab has a wider variety of models than PolyHaven, especially for specific subjects
-        3. Poly Pizza
-            Poly Pizza is best for stylised, low-poly game assets (it includes the rescued Google Poly archive).
-            Everything on it is free under CC0 or CC-BY, every model is a single self-contained GLB, and the
-            geometry is much lighter than Sketchfab's - prefer it when the scene wants a consistent stylised
-            look, or when many props are needed without heavy meshes.
-            Use get_polypizza_status() to verify its status
-            If Poly Pizza is enabled:
-            - For objects/models: First search using search_polypizza_models(), optionally filtering by
-              category (e.g. "Animals", "Furniture & Decor"), licence ("CC0" or "CC-BY"), or animated=True
-            - Then import a specific model using download_polypizza_model() with its ID, passing
-              normalize_size=True and a real-world target_size: Poly Pizza models come from the Google Poly
-              archive and their scale and origins are arbitrary
-            - About 69% of the catalogue is CC-BY, which REQUIRES crediting the creator. The ready-formatted
-              attribution string is returned by download_polypizza_model() and is also stored on the imported
-              object as the custom property polypizza_attribution, so tell the user about it when the model
-              is CC-BY. Filter with licence="CC0" if you want models that need no credit.
-        4. Hyper3D(Rodin)
-            Hyper3D Rodin is good at generating 3D models for single item.
-            So don't try to:
-            1. Generate the whole scene with one shot
-            2. Generate ground using Hyper3D
-            3. Generate parts of the items separately and put them together afterwards
-
-            Use get_hyper3d_status() to verify its status
-            If the status says Mode: PREMIUM, follow the FAL_AI flow (request_id).
-            If Hyper3D is enabled:
-            - For objects/models, do the following steps:
-                1. Create the model generation task
-                    - Use generate_hyper3d_model_via_images() if image(s) is/are given
-                    - Use generate_hyper3d_model_via_text() if generating 3D asset using text prompt
-                    If key type is free_trial and insufficient balance error returned, tell the user that the free trial key can only generated limited models everyday, they can choose to:
-                    - Wait for another day and try again
-                    - Go to hyper3d.ai to find out how to get their own API key
-                    - Go to fal.ai to get their own private API key
-                2. Poll the status
-                    - Use poll_rodin_job_status() to check if the generation task has completed or failed
-                3. Import the asset
-                    - Use import_generated_asset() to import the generated GLB model the asset
-                4. After importing the asset, ALWAYS check the world_bounding_box of the imported mesh, and adjust the mesh's location and size
-                    Adjust the imported mesh's location, scale, rotation, so that the mesh is on the right spot.
-
-                You can reuse assets previous generated by running python code to duplicate the object, without creating another generation task.
-        5. Hunyuan3D
-            Hunyuan3D is good at generating 3D models for single item.
-            So don't try to:
-            1. Generate the whole scene with one shot
-            2. Generate ground using Hunyuan3D
-            3. Generate parts of the items separately and put them together afterwards
-
-            Use get_hunyuan3d_status() to verify its status
-            If the status says Mode: PREMIUM, follow the OFFICIAL_API flow.
-            If Hunyuan3D is enabled:
-                if Hunyuan3D mode is "OFFICIAL_API":
-                    - For objects/models, do the following steps:
-                        1. Create the model generation task
-                            - Use generate_hunyuan3d_model by providing either a **text description** OR an **image(local or urls) reference**.
-                            - Go to cloud.tencent.com out how to get their own SecretId and SecretKey
-                        2. Poll the status
-                            - Use poll_hunyuan_job_status() to check if the generation task has completed or failed
-                        3. Import the asset
-                            - Use import_generated_asset_hunyuan() with a ResultFile3Ds URL (prefer .glb, else .zip/.obj)
-                    if Hunyuan3D mode is "LOCAL_API":
-                        - For objects/models, do the following steps:
-                        1. Create the model generation task
-                            - Use generate_hunyuan3d_model if image (local or urls)  or text prompt is given and import the asset
-
-                You can reuse assets previous generated by running python code to duplicate the object, without creating another generation task.
-        6. Tripo (MCP for Blender Premium only)
-            Tripo is good at generating textured 3D models of a single item, from text or one image.
-            Use get_tripo_status() to verify its status
-            If Tripo is enabled:
-                1. generate_tripo_model() with a text prompt or an image path/URL
-                2. poll_tripo_job_status() until COMPLETED
-                3. import_generated_asset_tripo(), then check world_bounding_box and adjust the object
-
-    3. Always check the world_bounding_box for each item so that:
-        - Ensure that all objects that should not be clipping are not clipping.
-        - Items have right spatial relationship.
-    
-    4. Recommended asset source priority:
-        - For specific existing objects: First try Sketchfab, then PolyHaven
-        - For stylised or low-poly game assets: First try Poly Pizza, then Sketchfab
-        - For generic objects/furniture: First try PolyHaven, then Sketchfab
-        - For custom or unique items not available in libraries: Use Hyper3D Rodin or Hunyuan3D (or Tripo with Premium)
-          (image-to-3D needs a file path or URL; if the user only attached the image in chat, ask them for one)
-        - For environment lighting: Use PolyHaven HDRIs
-        - For materials/textures: Use PolyHaven textures
-
-    Only fall back to scripting when:
-    - PolyHaven, Sketchfab, Poly Pizza, Hyper3D, and Hunyuan3D are all disabled
-    - A simple primitive is explicitly requested
-    - No suitable asset exists in any of the libraries
-    - Hyper3D Rodin or Hunyuan3D failed to generate the desired asset
-    - The task specifically requires a basic material/color
-
-    **Best Practices:**
-    - Always take a screenshot after completing a task to verify the visual result
-    - Always call get_scene_info() after completing a task to verify the changes worked
-    - When executing multiple operations, take intermediate screenshots to confirm each step
-    - If something looks wrong in the screenshot or scene info, investigate and fix before proceeding
-
-    **Writing code that survives the user's Blender version and language:**
-    - Read `blender_version` from get_addon_status() before using version-sensitive APIs
-    - Look shader nodes up by type, not by name: `nodes["Principled BSDF"]` is None on a
-      localized (non-English) Blender UI
-    - Never hardcode enum identifiers; read the valid values from `bl_rna` first. `render.engine`
-      is the exception - RNA under-reports it, so read the current value or assign inside
-      `try/except TypeError` and use the identifiers listed in the error
-    - Set colors on shader node inputs; `material.diffuse_color` is viewport-only
-    """
 
 # Main execution
 

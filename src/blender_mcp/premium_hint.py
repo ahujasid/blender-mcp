@@ -39,3 +39,30 @@ def premium_hint_once(ctx: Any, status: Any) -> str:
             return ""
         _hinted_sessions.add(session_key)
     return PREMIUM_HINT
+
+
+_GENERATOR_TOOLS = {
+    "tripo": "Tripo (generate_tripo_model)",
+    "hunyuan3d": "Hunyuan3D (generate_hunyuan3d_model)",
+    "hyper3d": "Hyper3D Rodin (generate_hyper3d_model_via_text / _via_images)",
+}
+
+
+def premium_generation_guidance(generators: Any) -> str:
+    """Steer the agent toward the generators the user pays for.
+
+    `generators` is the addon's `premium_generators` handshake field: the
+    generators Premium has switched on. Returns "" when there are none, so
+    own-key users see no change.
+    """
+    names = [_GENERATOR_TOOLS[g] for g in (generators or []) if g in _GENERATOR_TOOLS]
+    if not names:
+        return ""
+    return (
+        "\n\nMCP for Blender Premium is on, with " + ", ".join(names) + ". Generate the main "
+        "objects of the scene and anything custom or unusual with these instead of searching "
+        "Sketchfab, Poly Pizza or Poly Haven models. Keep using the libraries for generic filler "
+        "props and for specific real-world objects (a named car, a landmark), and Poly Haven for "
+        "HDRIs and textures. Each generation uses one of the user's monthly generations, so "
+        "duplicate an object already generated rather than generating it again."
+    )
