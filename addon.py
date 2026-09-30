@@ -30,7 +30,7 @@ from bpy.app.handlers import persistent
 bl_info = {
     "name": "MCP for Blender",
     "author": "Siddharth Ahuja",
-    "version": (1, 7),
+    "version": (1, 8),
     "blender": (3, 0, 0),
     "location": "View3D > Sidebar > MCP for Blender",
     "description": "Connect Blender to Claude via MCP",
@@ -39,7 +39,7 @@ bl_info = {
 }
 
 # Keep in sync with blender_mcp.addon_manager.EXPECTED_ADDON_PROTOCOL_VERSION.
-ADDON_PROTOCOL_VERSION = 11
+ADDON_PROTOCOL_VERSION = 13
 
 # Per-snapshot object cap for get_world_state_snapshot. Keep in sync with
 # blender_mcp.trajectory.MAX_SNAPSHOT_OBJECTS.
@@ -642,7 +642,7 @@ def _polyhaven_summarize_asset(slug, record):
         "downloads": record.get("download_count"),
     }
 
-    for key in ("description", "category", "tags", "attributes", "max_resolution"):
+    for key in ("description", "category", "tags", "attributes", "max_resolution", "thumbnail_url"):
         value = record.get(key)
         if value:
             summary[key] = value
@@ -1166,6 +1166,20 @@ def hunyuan_api_profile(international_pro: bool) -> dict:
     return {**profile, "submit_body": dict(profile["submit_body"])}
 
 
+# Object types with no surface for a ray to hit, picked by their origin instead.
+_PICK_BY_ORIGIN = {"LIGHT", "CAMERA", "EMPTY", "LIGHT_PROBE", "SPEAKER", "FORCE_FIELD"}
+# How close, in image pixels, a click must land to one of those origins.
+_PICK_RADIUS_PX = 16
+
+
+def _object_detail(obj):
+    """'Mesh object in collection 'Props'', as mentions and viewport picks show it."""
+    detail = f"{obj.type.title()} object"
+    if obj.users_collection:
+        detail += f" in collection '{obj.users_collection[0].name}'"
+    return detail
+
+
 class BlenderMCPServer:
     def __init__(self, host='localhost', port=9876):
         self.host = host
@@ -1489,7 +1503,9 @@ class BlenderMCPServer:
             "get_world_state_snapshot": self.get_world_state_snapshot,
             "get_addon_info": self.get_addon_info,
             "get_object_info": self.get_object_info,
+            "list_scene_items": self.list_scene_items,
             "get_viewport_screenshot": self.get_viewport_screenshot,
+            "pick_viewport_object": self.pick_viewport_object,
             "execute_code": self.execute_code,
             "describe_node_type": self.describe_node_type,
             "bpy_api_lookup": self.bpy_api_lookup,
@@ -1581,7 +1597,9 @@ class BlenderMCPServer:
                 "get_world_state_snapshot",
                 "get_addon_info",
                 "get_object_info",
+                "list_scene_items",
                 "get_viewport_screenshot",
+                "pick_viewport_object",
                 "execute_code",
                 "describe_node_type",
                 "bpy_api_lookup",
@@ -1626,6 +1644,46 @@ class BlenderMCPServer:
             print(f"Error in get_scene_info: {str(e)}")
             traceback.print_exc()
             return {"error": str(e)}
+
+    def list_scene_items(self, query="", limit=30):
+        """Objects, materials and collections whose names match `query`.
+
+        Backs composer @-mentions, which call this on every keystroke, so it
+        reads names and cheap counts only. Name matches that start with the
+        query rank before ones that merely contain it.
+        """
+        needle = (query or "").strip().lower()
+        limit = max(1, min(int(limit or 30), 100))
+
+        material_users = {}
+        for obj in bpy.context.scene.objects:
+            for slot in getattr(obj, "material_slots", None) or []:
+                if slot.material:
+                    material_users.setdefault(slot.material.name, []).append(obj.name)
+
+        candidates = []
+        for obj in bpy.context.scene.objects:
+            candidates.append(("object", obj.name, _object_detail(obj)))
+        for mat in bpy.data.materials:
+            users = material_users.get(mat.name, [])
+            if users:
+                shown = ", ".join(users[:3]) + (f" and {len(users) - 3} more" if len(users) > 3 else "")
+                detail = f"Material on {shown}"
+            else:
+                detail = "Material not used by any object in this scene"
+            candidates.append(("material", mat.name, detail))
+        for coll in bpy.data.collections:
+            candidates.append(("collection", coll.name, f"Collection with {len(coll.all_objects)} objects"))
+
+        matches = []
+        for order, (kind, name, detail) in enumerate(candidates):
+            lowered = name.lower()
+            if needle and needle not in lowered:
+                continue
+            rank = 0 if not needle or lowered.startswith(needle) else 1
+            matches.append((rank, order, {"kind": kind, "name": name, "detail": detail}))
+        matches.sort(key=lambda m: (m[0], m[1]))
+        return {"items": [m[2] for m in matches[:limit]], "total": len(matches)}
 
     def drain_human_activity(self):
         """Return human-originated events buffered since the last drain.
@@ -2040,6 +2098,10 @@ class BlenderMCPServer:
                 return {"error": "No 3D viewport found"}
 
             method = "offscreen"
+            view = None
+            # Which file and scene this shows, so the app can label it and a
+            # click on it isn't cast into a different one.
+            origin = {"file": bpy.data.filepath, "scene": bpy.context.scene.name}
             try:
                 import gpu
                 import numpy as np
@@ -2071,6 +2133,15 @@ class BlenderMCPServer:
                 image.file_format = format.upper()
                 image.save()
                 bpy.data.images.remove(image)
+                # The camera this image was drawn with, so a click on it can
+                # be turned back into a ray (pick_viewport_object).
+                view = {
+                    **origin,
+                    "view_matrix": [list(row) for row in r3d.view_matrix],
+                    "window_matrix": [list(row) for row in r3d.window_matrix],
+                    "width": width,
+                    "height": height,
+                }
 
             except Exception as offscreen_err:
                 print(f"[BlenderMCP] offscreen capture failed ({offscreen_err}); "
@@ -2088,16 +2159,81 @@ class BlenderMCPServer:
                     img.save()
                 bpy.data.images.remove(img)
 
-            return {
+            result = {
                 "success": True,
                 "width": width,
                 "height": height,
                 "filepath": filepath,
                 "method": method,
+                **origin,
+                "scene_count": len(bpy.data.scenes),
             }
+            if view:
+                result["view"] = view
+            return result
 
         except Exception as e:
             return {"error": str(e)}
+
+    def pick_viewport_object(self, view_matrix, window_matrix, width, height, x, y, file=None, scene=None):
+        """The object under a click on a viewport capture.
+
+        The matrices are the ones the capture was drawn with, and x, y run 0..1
+        from the image's top-left, so this works after the view has moved.
+        Meshes are hit by a ray; lights, cameras and empties have no surface,
+        so they're picked when the click lands near their origin on screen.
+        `file` and `scene` are where the capture came from: a click is only
+        cast into that same scene, never into whatever is open now.
+        """
+        from mathutils import Matrix, Vector
+
+        if file is not None and file != bpy.data.filepath:
+            return {"object": None, "mismatch": "file", "current": bpy.data.filepath}
+        if scene is not None and scene != bpy.context.scene.name:
+            return {"object": None, "mismatch": "scene", "current": bpy.context.scene.name}
+        scene = bpy.context.scene
+        projection = Matrix(window_matrix) @ Matrix(view_matrix)
+        unproject = projection.inverted()
+        ndc_x, ndc_y = 2.0 * float(x) - 1.0, 1.0 - 2.0 * float(y)
+
+        def at_depth(z):
+            p = unproject @ Vector((ndc_x, ndc_y, z, 1.0))
+            return p.xyz / p.w
+
+        origin = at_depth(-1.0)
+        direction = (at_depth(1.0) - origin).normalized()
+
+        picked, picked_depth = None, float("inf")
+        hit, location, _normal, _index, hit_obj, _matrix = scene.ray_cast(
+            bpy.context.evaluated_depsgraph_get(), origin, direction)
+        if hit and hit_obj is not None:
+            picked = getattr(hit_obj, "original", hit_obj)
+            picked_depth = (location - origin).length
+
+        click_x, click_y = float(x) * width, float(y) * height
+        nearest = _PICK_RADIUS_PX
+        for obj in scene.objects:
+            if obj.type not in _PICK_BY_ORIGIN or not obj.visible_get():
+                continue
+            p = projection @ obj.matrix_world.translation.to_4d()
+            if p.w <= 0:
+                continue  # behind the camera
+            screen_x = (p.x / p.w + 1.0) / 2.0 * width
+            screen_y = (1.0 - p.y / p.w) / 2.0 * height
+            distance = ((screen_x - click_x) ** 2 + (screen_y - click_y) ** 2) ** 0.5
+            depth = (obj.matrix_world.translation - origin).length
+            # An origin in front of the hit surface wins, as it's drawn on top.
+            if distance <= nearest and depth < picked_depth:
+                picked, nearest = obj, distance
+
+        if picked is None:
+            return {"object": None}
+        return {"object": {
+            "name": picked.name,
+            "type": picked.type,
+            "detail": _object_detail(picked),
+            "location": list(picked.matrix_world.translation),
+        }}
 
     def execute_code(self, code):
         """Execute arbitrary Blender Python code"""
@@ -5842,6 +5978,9 @@ class BLENDERMCP_PT_Panel(bpy.types.Panel):
         row.scale_y = 1.3
         row.operator("wm.url_open", text="Join Discord", icon='URL').url = DISCORD_URL
 
+        layout.separator()
+        draw_addon_update(layout)
+
 # Operator to set Hyper3D API Key
 class BLENDERMCP_OT_SetFreeTrialHyper3DAPIKey(bpy.types.Operator):
     bl_idname = "blendermcp.set_hyper3d_free_trial_api_key"
@@ -5902,6 +6041,157 @@ class BLENDERMCP_OT_StopServer(bpy.types.Operator):
         scene.blendermcp_server_running = False
 
         return {'FINISHED'}
+
+#region Addon updates
+
+# The addon updates itself from the open-source repo. An update is offered only
+# when main carries a strictly newer (version, protocol), so a local build that
+# is ahead of main is never "updated" backwards.
+ADDON_UPDATE_URL = "https://raw.githubusercontent.com/ahujasid/blender-mcp/main/addon.py"
+ADDON_CHANGES_URL = "https://github.com/ahujasid/blender-mcp/commits/main/addon.py"
+ADDON_UPDATE_CHECK_ENV = "BLENDERMCP_NO_UPDATE_CHECK"
+
+_ADDON_VERSION_RE = re.compile(r'"version":\s*\((\d+)\s*,\s*(\d+)(?:\s*,\s*(\d+))?\s*\)')
+_ADDON_PROTOCOL_RE = re.compile(r"^ADDON_PROTOCOL_VERSION\s*=\s*(\d+)", re.MULTILINE)
+
+# status: idle | checking | current | available | installed | error
+_addon_update = {"status": "idle", "version": None, "source": None, "error": None}
+
+
+def addon_release_key(source):
+    """(major, minor, patch, protocol) of an addon.py's text, or None if it isn't one."""
+    bl_info_at = source.find("bl_info = {")
+    if bl_info_at < 0 or '"name": "MCP for Blender"' not in source[bl_info_at:bl_info_at + 200]:
+        return None
+    version = _ADDON_VERSION_RE.search(source, bl_info_at)
+    protocol = _ADDON_PROTOCOL_RE.search(source)
+    if not version or not protocol:
+        return None
+    return (int(version.group(1)), int(version.group(2)), int(version.group(3) or 0), int(protocol.group(1)))
+
+
+def addon_version_label(key):
+    major, minor, patch, _protocol = key
+    return f"{major}.{minor}.{patch}" if patch else f"{major}.{minor}"
+
+
+def _local_release_key():
+    return tuple(bl_info["version"]) + (0,) * (3 - len(bl_info["version"])) + (ADDON_PROTOCOL_VERSION,)
+
+
+def check_for_addon_update():
+    """Fetch addon.py from main and record whether it is newer. Runs off the main thread."""
+    _addon_update.update(status="checking", error=None)
+    try:
+        response = requests.get(ADDON_UPDATE_URL, timeout=15)
+        if response.status_code != 200:
+            raise RuntimeError(f"GitHub returned HTTP {response.status_code}")
+        source = response.text
+        remote = addon_release_key(source)
+        if remote is None:
+            raise RuntimeError("the file on GitHub is not an MCP for Blender addon")
+        compile(source, "addon.py", "exec")
+        if remote > _local_release_key():
+            _addon_update.update(status="available", version=remote, source=source)
+        else:
+            _addon_update.update(status="current", version=remote, source=None)
+    except Exception as e:
+        _addon_update.update(status="error", error=str(e), source=None)
+
+
+def _redraw_when_update_checked():
+    if _addon_update["status"] == "checking":
+        return 0.5
+    for window in bpy.context.window_manager.windows:
+        for area in window.screen.areas:
+            if area.type == 'VIEW_3D':
+                area.tag_redraw()
+    return None
+
+
+def _start_addon_update_check():
+    """Start a check from the main thread; the sidebar redraws when it lands."""
+    if _addon_update["status"] == "checking":
+        return
+    _addon_update["status"] = "checking"
+    threading.Thread(target=check_for_addon_update, name="blendermcp-update-check", daemon=True).start()
+    bpy.app.timers.register(_redraw_when_update_checked, first_interval=0.5)
+
+
+def _addon_update_check_on_startup():
+    if not bpy.app.background and not os.environ.get(ADDON_UPDATE_CHECK_ENV):
+        _start_addon_update_check()
+    return None  # one-shot timer
+
+
+def install_addon_update(target_path, source):
+    """Replace the addon file, keeping the old one beside it as .bak."""
+    if addon_release_key(source) is None:
+        raise ValueError("Refusing to install: not an MCP for Blender addon")
+    compile(source, "addon.py", "exec")
+    staged = target_path + ".new"
+    with open(staged, "w", encoding="utf-8", newline="") as f:
+        f.write(source)
+    shutil.copy2(target_path, target_path + ".bak")
+    os.replace(staged, target_path)
+
+
+def draw_addon_update(layout):
+    status = _addon_update["status"]
+    version = _addon_update["version"]
+    here = addon_version_label(_local_release_key())
+    if status == "available":
+        box = layout.box()
+        box.label(text=f"Update available: {addon_version_label(version)}", icon='IMPORT')
+        row = box.row()
+        row.scale_y = 1.3
+        row.operator("blendermcp.update_addon", text="Update addon", icon='FILE_REFRESH')
+        box.operator("wm.url_open", text="What's new", icon='URL').url = ADDON_CHANGES_URL
+    elif status == "installed":
+        box = layout.box()
+        box.label(text=f"Updated to {addon_version_label(version)}", icon='CHECKMARK')
+        box.label(text="Restart Blender to finish.", icon='BLANK1')
+    else:
+        row = layout.row(align=True)
+        text = {
+            "checking": f"Addon {here} · checking for updates…",
+            "current": f"Addon {here} · up to date",
+            "error": f"Addon {here} · couldn't check for updates",
+        }.get(status, f"Addon {here}")
+        row.label(text=text)
+        row.operator("blendermcp.check_addon_update", text="", icon='FILE_REFRESH')
+
+
+class BLENDERMCP_OT_CheckAddonUpdate(bpy.types.Operator):
+    bl_idname = "blendermcp.check_addon_update"
+    bl_label = "Check for Updates"
+    bl_description = "Check GitHub for a newer version of this addon"
+
+    def execute(self, context):
+        _start_addon_update_check()
+        return {'FINISHED'}
+
+
+class BLENDERMCP_OT_UpdateAddon(bpy.types.Operator):
+    bl_idname = "blendermcp.update_addon"
+    bl_label = "Update Addon"
+    bl_description = "Download the latest addon from GitHub and install it. Takes effect after a restart"
+
+    def execute(self, context):
+        source = _addon_update["source"]
+        if _addon_update["status"] != "available" or not source:
+            self.report({'WARNING'}, "No update is ready to install")
+            return {'CANCELLED'}
+        try:
+            install_addon_update(os.path.abspath(__file__), source)
+        except Exception as e:
+            self.report({'ERROR'}, f"Update failed, nothing was changed: {e}")
+            return {'CANCELLED'}
+        _addon_update.update(status="installed", source=None)
+        self.report({'INFO'}, "MCP for Blender updated. Restart Blender to finish.")
+        return {'FINISHED'}
+
+#endregion
 
 # Operator to open Terms and Conditions
 class BLENDERMCP_OT_OpenTerms(bpy.types.Operator):
@@ -6084,8 +6374,13 @@ def register():
     bpy.utils.register_class(BLENDERMCP_OT_StartServer)
     bpy.utils.register_class(BLENDERMCP_OT_StopServer)
     bpy.utils.register_class(BLENDERMCP_OT_OpenTerms)
+    bpy.utils.register_class(BLENDERMCP_OT_CheckAddonUpdate)
+    bpy.utils.register_class(BLENDERMCP_OT_UpdateAddon)
     for cls in PREMIUM_CLASSES:
         bpy.utils.register_class(cls)
+
+    # Off the register path: no network until Blender has finished starting.
+    bpy.app.timers.register(_addon_update_check_on_startup, first_interval=5.0)
 
     # Add-on registration can run before Blender has a stable UI/scene context.
     # Defer socket startup and retry after startup-file or .blend loads.
@@ -6108,6 +6403,11 @@ def unregister():
     bpy.utils.unregister_class(BLENDERMCP_OT_StartServer)
     bpy.utils.unregister_class(BLENDERMCP_OT_StopServer)
     bpy.utils.unregister_class(BLENDERMCP_OT_OpenTerms)
+    bpy.utils.unregister_class(BLENDERMCP_OT_CheckAddonUpdate)
+    bpy.utils.unregister_class(BLENDERMCP_OT_UpdateAddon)
+    for timer in (_addon_update_check_on_startup, _redraw_when_update_checked):
+        if bpy.app.timers.is_registered(timer):
+            bpy.app.timers.unregister(timer)
     for cls in PREMIUM_CLASSES:
         bpy.utils.unregister_class(cls)
     bpy.utils.unregister_class(BLENDERMCP_AddonPreferences)

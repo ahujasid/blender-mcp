@@ -30,6 +30,24 @@ from .addon_manager import (
 from .consent_prompt import maybe_prompt_for_consent
 from .premium_hint import premium_hint_once, premium_generation_guidance
 from .safe_mode import safe_mode_enabled, validate_code, SandboxViolation, SAFE_MODE_ENV
+from .openai_apps import (
+    APP_MIME_TYPE,
+    VIEWPORT_STATE_META,
+    VIEWPORT_TITLE,
+    VIEWPORT_URI,
+    PickerOption,
+    client_extensions,
+    is_app_only,
+    pick_asset,
+    picked_reply,
+    supports_apps,
+    supports_openai_forms,
+    viewport_html,
+    viewport_icon,
+    viewport_store,
+)
+from mcp.types import CallToolResult, ImageContent, ResourceLink, TextContent, ToolAnnotations
+from urllib.parse import quote, unquote
 
 # Configure logging
 logging.basicConfig(level=logging.INFO,
@@ -184,7 +202,12 @@ class BlenderConnection:
         # command purely by ordering on the stream, so overlapping calls would
         # hand each other's responses back.
         with self._lock:
-            return self._send_command_locked(command_type, params)
+            # The Viewport app watches these to recapture once Blender goes quiet.
+            viewport_store.command_started()
+            try:
+                return self._send_command_locked(command_type, params)
+            finally:
+                viewport_store.command_finished(command_type)
 
     def _send_command_locked(self, command_type: str, params: Dict[str, Any] = None) -> Dict[str, Any]:
         if not self.sock and not self.connect():
@@ -336,7 +359,7 @@ correctly and don't clip."""
 
 # Create the MCP server with lifespan support
 mcp = FastMCP(
-    "BlenderMCP",
+    "MCP for Blender",
     lifespan=server_lifespan,
     instructions=SERVER_INSTRUCTIONS,
 )
@@ -566,8 +589,45 @@ async def get_object_info(ctx: Context, object_name: str, user_prompt: str = "")
         except Exception:
             pass
 
-@mcp.tool()
-def get_viewport_screenshot(ctx: Context, max_size: int = 1000, user_prompt: str = "") -> Image:
+def _capture_viewport(max_size: int) -> tuple[bytes, dict]:
+    """Have the addon render the viewport to a temp file.
+
+    Returns the PNG bytes and what newer addons report about it: the camera it
+    was rendered with (`view`, for clicking on objects in the image) and the
+    file and scene it shows.
+    """
+    blender = get_blender_connection()
+    temp_path = os.path.join(tempfile.gettempdir(), f"blender_screenshot_{os.getpid()}.png")
+
+    result = blender.send_command("get_viewport_screenshot", {
+        "max_size": max_size,
+        "filepath": temp_path,
+        "format": "png"
+    })
+
+    if "error" in result:
+        raise Exception(result["error"])
+
+    if not os.path.exists(temp_path):
+        raise Exception("Screenshot file was not created")
+
+    with open(temp_path, 'rb') as f:
+        image_bytes = f.read()
+    os.remove(temp_path)
+    return image_bytes, result
+
+
+def _store_capture(max_size: int, source: str) -> None:
+    # Read the version first: an edit that lands mid-capture isn't in the image.
+    scene_version = viewport_store.scene_version
+    png, info = _capture_viewport(max_size)
+    origin = {key: info[key] for key in ("file", "scene", "scene_count") if key in info}
+    viewport_store.put(png, source, view=info.get("view"), scene_version=scene_version, origin=origin)
+
+
+# In MCP Apps hosts the result also shows in the fullscreen Viewport app.
+@mcp.tool(meta={"ui": {"resourceUri": VIEWPORT_URI}})
+def get_viewport_screenshot(ctx: Context, max_size: int = 1000, user_prompt: str = "") -> CallToolResult:
     """
     Capture a screenshot of the current Blender 3D viewport.
 
@@ -583,31 +643,9 @@ def get_viewport_screenshot(ctx: Context, max_size: int = 1000, user_prompt: str
     error_msg = None
     
     try:
-        blender = get_blender_connection()
-        
-        # Create temp file path
-        temp_dir = tempfile.gettempdir()
-        temp_path = os.path.join(temp_dir, f"blender_screenshot_{os.getpid()}.png")
-        
-        result = blender.send_command("get_viewport_screenshot", {
-            "max_size": max_size,
-            "filepath": temp_path,
-            "format": "png"
-        })
-        
-        if "error" in result:
-            raise Exception(result["error"])
-        
-        if not os.path.exists(temp_path):
-            raise Exception("Screenshot file was not created")
-        
-        # Read the file
-        with open(temp_path, 'rb') as f:
-            image_bytes = f.read()
-        
-        # Delete the temp file
-        os.remove(temp_path)
-        
+        _store_capture(max_size, "model")
+        state, image_bytes = _viewport_snapshot()
+
         # Upload to storage for telemetry
         try:
             telemetry = get_telemetry()
@@ -617,7 +655,12 @@ def get_viewport_screenshot(ctx: Context, max_size: int = 1000, user_prompt: str
             pass  # Silently fail - don't break screenshot for telemetry issues
         
         success = True
-        return Image(data=image_bytes, format="png")
+        # The state rides in _meta, which only the Viewport app reads, so the
+        # model sees exactly the image it always did.
+        return CallToolResult(
+            content=[_png_content(image_bytes)],
+            _meta={VIEWPORT_STATE_META: state},
+        )
         
     except Exception as e:
         error_msg = str(e)
@@ -806,6 +849,14 @@ def _polyhaven_scale_note(result):
     )
 
 
+def _polyhaven_thumbnail(asset: dict) -> str:
+    # Addons before protocol 12 don't pass thumbnail_url on. The hand-built URL
+    # lacks the cache-busting `v`, which only risks a stale image in a picker.
+    return asset.get("thumbnail_url") or (
+        f"https://cdn.polyhaven.com/asset_img/thumbs/{asset['id']}.png?width=256&height=256"
+    )
+
+
 @mcp.tool()
 @telemetry_tool("get_polyhaven_categories")
 async def get_polyhaven_categories(ctx: Context, asset_type: str = "hdris", user_prompt: str = "") -> str:
@@ -945,36 +996,49 @@ async def search_polyhaven_assets(
         if result.get("note"):
             lines.insert(1, result["note"])
 
+        credit = "Assets from Poly Haven (https://polyhaven.com), free and CC0."
+        blocks = {}
+        options = []
         for asset in assets:
-            lines.append(f"- {asset['name']} (ID: {asset['id']})")
-            lines.append(f"  Type: {asset['type']}  |  {asset['url']}")
+            block = [f"- {asset['name']} (ID: {asset['id']})"]
+            block.append(f"  Type: {asset['type']}  |  {asset['url']}")
             if asset.get("authors"):
-                lines.append(f"  By: {', '.join(asset['authors'])}")
+                block.append(f"  By: {', '.join(asset['authors'])}")
             if asset.get("category"):
-                lines.append(f"  Category: {asset['category']}")
+                block.append(f"  Category: {asset['category']}")
             if asset.get("tags"):
-                lines.append(f"  Tags: {', '.join(asset['tags'])}")
+                block.append(f"  Tags: {', '.join(asset['tags'])}")
             if asset.get("attributes"):
                 attributes = ", ".join(
                     f"{k}={v if not isinstance(v, list) else '/'.join(v)}"
                     for k, v in asset["attributes"].items()
                 )
-                lines.append(f"  Attributes: {attributes}")
+                block.append(f"  Attributes: {attributes}")
             size = asset.get("dimensions_mm")
             if size:
                 metres = " x ".join(f"{v / 1000:g}m" for v in size)
                 axes = " (W x D x H)" if len(size) == 3 else ""
-                lines.append(f"  Real-world size: {metres}{axes}")
+                block.append(f"  Real-world size: {metres}{axes}")
             if asset.get("max_resolution"):
-                lines.append(f"  Up to: {'x'.join(str(v) for v in asset['max_resolution'])}")
+                block.append(f"  Up to: {'x'.join(str(v) for v in asset['max_resolution'])}")
             if asset.get("downloads") is not None:
-                lines.append(f"  Downloads: {asset['downloads']}")
+                block.append(f"  Downloads: {asset['downloads']}")
             if asset.get("description"):
-                lines.append(f"  {asset['description']}")
+                block.append(f"  {asset['description']}")
+            lines.extend(block)
             lines.append("")
+            blocks[asset["id"]] = "\n".join(block) + f"\n\n{credit}"
+            options.append(PickerOption(
+                id=asset["id"],
+                title=asset["name"],
+                description=" · ".join(filter(None, [asset.get("type"), asset.get("category")])) or None,
+                thumbnail=_polyhaven_thumbnail(asset),
+            ))
 
-        lines.append("Assets from Poly Haven (https://polyhaven.com), free and CC0.")
-        return "\n".join(lines)
+        lines.append(credit)
+        listing = "\n".join(lines)
+        picked = await pick_asset(ctx, f"Pick a Poly Haven asset for: {query or 'your scene'}", "Asset", options)
+        return picked_reply("Poly Haven", picked, blocks, listing) if picked else listing
     except Exception as e:
         logger.error(f"Error searching Polyhaven assets: {str(e)}")
         return f"Error searching Polyhaven assets: {str(e)}"
@@ -1214,6 +1278,19 @@ async def get_sketchfab_status(ctx: Context, user_prompt: str = "") -> str:
         logger.error(f"Error checking Sketchfab status: {str(e)}")
         return f"Error checking Sketchfab status: {str(e)}"
 
+def _sketchfab_thumbnail(model: dict) -> str | None:
+    """The smallest thumbnail at least 256px wide, else the largest there is."""
+    images = [
+        i for i in ((model.get("thumbnails") or {}).get("images") or [])
+        if isinstance(i, dict) and str(i.get("url", "")).startswith("https://")
+    ]
+    if not images:
+        return None
+    width = lambda i: i.get("width") or 0
+    big_enough = [i for i in images if width(i) >= 256]
+    return (min(big_enough, key=width) if big_enough else max(images, key=width))["url"]
+
+
 @mcp.tool()
 @telemetry_tool("search_sketchfab_models")
 async def search_sketchfab_models(
@@ -1259,32 +1336,43 @@ async def search_sketchfab_models(
             return f"No models found matching '{query}'"
             
         formatted_output = f"Found {len(models)} models matching '{query}':\n\n"
-        
+        blocks = {}
+        options = []
+
         for model in models:
             if model is None:
                 continue
-                
+
             model_name = model.get("name", "Unnamed model")
             model_uid = model.get("uid", "Unknown ID")
-            formatted_output += f"- {model_name} (UID: {model_uid})\n"
-            
+            block = f"- {model_name} (UID: {model_uid})\n"
+
             # Get user info with safety checks
             user = model.get("user") or {}
             username = user.get("username", "Unknown author") if isinstance(user, dict) else "Unknown author"
-            formatted_output += f"  Author: {username}\n"
-            
+            block += f"  Author: {username}\n"
+
             # Get license info with safety checks
             license_data = model.get("license") or {}
             license_label = license_data.get("label", "Unknown") if isinstance(license_data, dict) else "Unknown"
-            formatted_output += f"  License: {license_label}\n"
-            
+            block += f"  License: {license_label}\n"
+
             # Add face count and downloadable status
             face_count = model.get("faceCount", "Unknown")
             is_downloadable = "Yes" if model.get("isDownloadable") else "No"
-            formatted_output += f"  Face count: {face_count}\n"
-            formatted_output += f"  Downloadable: {is_downloadable}\n\n"
-        
-        return formatted_output
+            block += f"  Face count: {face_count}\n"
+            block += f"  Downloadable: {is_downloadable}\n"
+            formatted_output += block + "\n"
+            blocks[model_uid] = block
+            options.append(PickerOption(
+                id=model_uid,
+                title=model_name,
+                description=f"{username} · {license_label} · {face_count} faces",
+                thumbnail=_sketchfab_thumbnail(model),
+            ))
+
+        picked = await pick_asset(ctx, f"Pick a Sketchfab model for: {query}", "Model", options)
+        return picked_reply("Sketchfab", picked, blocks, formatted_output) if picked else formatted_output
     except Exception as e:
         logger.error(f"Error searching Sketchfab models: {str(e)}")
         import traceback
@@ -1582,6 +1670,12 @@ async def search_polypizza_models(
 
         total = result.get("total", len(models))
         formatted_output = f"Found {len(models)} models (of {total} total) matching '{query or 'the given filters'}':\n\n"
+        credit_note = (
+            "CC-BY models must be credited. download_polypizza_model() stores the required "
+            "attribution string on the imported object as a custom property.\n"
+        )
+        blocks = {}
+        options = []
 
         for model in models:
             if model is None:
@@ -1589,20 +1683,31 @@ async def search_polypizza_models(
 
             model_name = model.get("Title", "Unnamed model")
             model_id = model.get("ID", "Unknown ID")
-            formatted_output += f"- {model_name} (ID: {model_id})\n"
-            formatted_output += f"  Author: {model.get('Creator') or 'Unknown author'}\n"
-            formatted_output += f"  Licence: {model.get('Licence') or 'Unknown'}\n"
+            licence_label = model.get("Licence") or "Unknown"
             tri_count = model.get("Tri Count")
-            formatted_output += f"  Tri count: {tri_count if tri_count else 'Unknown'}\n"
-            formatted_output += f"  Category: {model.get('Category') or 'Unknown'}\n"
-            formatted_output += f"  Animated: {'Yes' if model.get('Animated') else 'No'}\n\n"
+            block = f"- {model_name} (ID: {model_id})\n"
+            block += f"  Author: {model.get('Creator') or 'Unknown author'}\n"
+            block += f"  Licence: {licence_label}\n"
+            block += f"  Tri count: {tri_count if tri_count else 'Unknown'}\n"
+            block += f"  Category: {model.get('Category') or 'Unknown'}\n"
+            block += f"  Animated: {'Yes' if model.get('Animated') else 'No'}\n"
+            formatted_output += block + "\n"
+            blocks[model_id] = f"{block}\n{credit_note}"
+            thumbnail = model.get("Thumbnail")
+            options.append(PickerOption(
+                id=model_id,
+                title=model_name,
+                description=" · ".join(filter(None, [
+                    model.get("Creator"), licence_label, f"{tri_count} tris" if tri_count else None,
+                ])),
+                thumbnail=thumbnail if isinstance(thumbnail, str) and thumbnail.startswith("https://") else None,
+            ))
 
-        formatted_output += (
-            "CC-BY models must be credited. download_polypizza_model() stores the required "
-            "attribution string on the imported object as a custom property.\n"
-        )
+        formatted_output += credit_note
 
-        return formatted_output
+        described = query or category or "your scene"
+        picked = await pick_asset(ctx, f"Pick a Poly Pizza model for: {described}", "Model", options)
+        return picked_reply("Poly Pizza", picked, blocks, formatted_output) if picked else formatted_output
     except Exception as e:
         logger.error(f"Error searching Poly Pizza models: {str(e)}")
         import traceback
@@ -2209,6 +2314,232 @@ def record_trajectory_feedback(
     except Exception as e:
         logger.debug(f"record_trajectory_feedback failed: {e}")
         return f"Trajectory feedback skipped: {e}"
+
+
+# MCP Apps and OpenAI extensions. Tools marked visibility ["app"] are called by
+# the host UI, never by the model, and are hidden from clients without MCP Apps.
+
+_APP_ONLY = {"ui": {"visibility": ["app"]}}
+_READ_ONLY = ToolAnnotations(readOnlyHint=True)
+_SCENE_ITEM_KINDS = ("object", "material", "collection")
+
+
+def _scene_items(query: str, limit: int = 30) -> list[dict]:
+    blender = get_blender_connection()
+    if (_addon_protocol() or 0) >= 12:
+        result = blender.send_command("list_scene_items", {"query": query, "limit": limit})
+        return result.get("items", []) if isinstance(result, dict) else []
+    # Older addons only list the first ten objects, and no materials.
+    result = blender.send_command("get_scene_info")
+    needle = query.strip().lower()
+    return [
+        {"kind": "object", "name": o["name"], "detail": f"{o.get('type', '').title()} object"}
+        for o in (result.get("objects") or [])
+        if needle in o["name"].lower()
+    ]
+
+
+def _scene_item_uri(kind: str, name: str) -> str:
+    return f"blender://{kind}/{quote(name, safe='')}"
+
+
+@mcp.tool(
+    title="Mention Blender items",
+    annotations=_READ_ONLY,
+    meta={"openai/extensions": {"mentions/search": {}}, **_APP_ONLY},
+)
+async def search_mentions(query: str = "") -> CallToolResult:
+    """Search scene objects, materials and collections to @-mention in the composer."""
+    try:
+        items = _scene_items(query)
+    except Exception as e:
+        logger.debug(f"Mention search failed: {e}")
+        items = []
+    links = [
+        ResourceLink(
+            type="resource_link",
+            uri=_scene_item_uri(item["kind"], item["name"]),
+            name=item["name"],
+            title=item["name"],
+            description=item.get("detail"),
+            mimeType="application/json",
+        ).model_dump(by_alias=True, exclude_none=True, mode="json")
+        for item in items
+        if item.get("kind") in _SCENE_ITEM_KINDS
+    ]
+    return CallToolResult(content=[], structuredContent={"items": links})
+
+
+@mcp.resource("blender://object/{name}", mime_type="application/json")
+def object_resource(name: str) -> str:
+    """A Blender object's transform, materials and mesh stats."""
+    return json.dumps(get_blender_connection().send_command("get_object_info", {"name": unquote(name)}))
+
+
+def _scene_item_resource(kind: str, name: str) -> str:
+    name = unquote(name)
+    for item in _scene_items(name, limit=100):
+        if item.get("kind") == kind and item.get("name") == name:
+            return json.dumps(item)
+    raise ValueError(f"No {kind} named {name!r} in the open Blender file")
+
+
+@mcp.resource("blender://material/{name}", mime_type="application/json")
+def material_resource(name: str) -> str:
+    """A Blender material and the objects that use it."""
+    return _scene_item_resource("material", name)
+
+
+@mcp.resource("blender://collection/{name}", mime_type="application/json")
+def collection_resource(name: str) -> str:
+    """A Blender collection and how many objects it holds."""
+    return _scene_item_resource("collection", name)
+
+
+@mcp.resource(
+    VIEWPORT_URI,
+    name="viewport",
+    title=VIEWPORT_TITLE,
+    mime_type=APP_MIME_TYPE,
+    meta={
+        "ui": {"prefersBorder": False},
+        # Fullscreen only: every screenshot updates the one live view rather
+        # than leaving a card in the thread.
+        "openai/ui": {"preferredDisplayMode": "fullscreen", "availableDisplayModes": ["fullscreen"]},
+    },
+)
+def viewport_app() -> str:
+    return viewport_html()
+
+
+def _png_content(png: bytes) -> ImageContent:
+    return ImageContent(type="image", data=base64.b64encode(png).decode("ascii"), mimeType="image/png")
+
+
+def _viewport_snapshot() -> tuple[dict, bytes | None]:
+    state, png = viewport_store.snapshot()
+    # An addon older than this server can't pick objects, so the app says to
+    # update it instead of quietly attaching only the image.
+    state["addon_outdated"] = _addon_handshake is not None and not _addon_handshake.up_to_date
+    return state, png
+
+
+def _viewport_result(since: int) -> CallToolResult:
+    """The viewport state, with the image only when it is newer than `since`."""
+    state, png = _viewport_snapshot()
+    content = []
+    if png is not None and state["seq"] > since:
+        content.append(_png_content(png))
+    return CallToolResult(content=content, structuredContent=state)
+
+
+@mcp.tool(
+    title=VIEWPORT_TITLE,
+    annotations=_READ_ONLY,
+    icons=[viewport_icon()],
+    meta={
+        "ui": {"resourceUri": VIEWPORT_URI, "visibility": ["app"]},
+        "openai/ui": {"entrypoints": [{"type": "thread"}]},
+    },
+)
+def open_viewport() -> CallToolResult:
+    """Show the latest Blender viewport screenshot beside the conversation."""
+    return _viewport_result(since=0)
+
+
+@mcp.tool(annotations=_READ_ONLY, meta=_APP_ONLY)
+def viewport_latest(since: int = 0) -> CallToolResult:
+    """The latest viewport screenshot, if newer than `since`. Never touches Blender."""
+    return _viewport_result(since)
+
+
+@mcp.tool(meta=_APP_ONLY)
+def viewport_capture(max_size: int = 1000, auto: bool = False) -> CallToolResult:
+    """Capture a fresh viewport screenshot for the Viewport app.
+
+    `auto` marks a capture the app took on its own after the scene changed,
+    rather than one the user asked for with Refresh.
+    """
+    try:
+        _store_capture(max_size, "auto" if auto else "user")
+    except Exception as e:
+        return _app_error(f"Couldn't capture the viewport: {e}")
+    return _viewport_result(since=0)
+
+
+def _app_error(text: str) -> CallToolResult:
+    return CallToolResult(content=[TextContent(type="text", text=text)], isError=True)
+
+
+@mcp.tool(annotations=_READ_ONLY, meta=_APP_ONLY)
+def viewport_pick(seq: int, x: float, y: float) -> CallToolResult:
+    """The object under a click on viewport capture `seq`.
+
+    `x` and `y` run 0..1 from the image's top-left corner. The ray uses the
+    camera that capture was rendered with, so it works after the user has
+    orbited the view, against the scene as it is now.
+    """
+    view = viewport_store.view(seq)
+    if view is None:
+        return _app_error("This screenshot can't be clicked on. Press Refresh for a new one.")
+    try:
+        hit = get_blender_connection().send_command("pick_viewport_object", {**view, "x": x, "y": y})
+    except Exception as e:
+        return _app_error(f"Couldn't reach Blender: {e}")
+    hit = hit if isinstance(hit, dict) else {}
+    if hit.get("mismatch") == "file":
+        name = os.path.basename(view.get("file") or "") or "an unsaved file"
+        return _app_error(f"This screenshot is of {name}, which isn't open in Blender now. Press Refresh for a new one.")
+    if hit.get("mismatch") == "scene":
+        return _app_error(
+            f"This screenshot is of the scene '{view.get('scene')}', but Blender is showing "
+            f"'{hit.get('current')}'. Switch back to it, or press Refresh."
+        )
+    obj = hit.get("object")
+    if not obj:
+        return CallToolResult(content=[], structuredContent={"object": None})
+    link = ResourceLink(
+        type="resource_link",
+        uri=_scene_item_uri("object", obj["name"]),
+        name=obj["name"],
+        title=obj["name"],
+        description=obj.get("detail"),
+        mimeType="application/json",
+    ).model_dump(by_alias=True, exclude_none=True, mode="json")
+    return CallToolResult(content=[], structuredContent={"object": {**obj, "link": link}})
+
+
+_client_features_logged = False
+
+
+def _log_client_features(session) -> None:
+    """Log once what the client advertised, since that decides which UI features it gets."""
+    global _client_features_logged
+    if _client_features_logged:
+        return
+    _client_features_logged = True
+    params = getattr(session, "client_params", None)
+    info = getattr(params, "clientInfo", None)
+    logger.info(
+        f"MCP client {getattr(info, 'name', '?')} {getattr(info, 'version', '')}: "
+        f"extensions={sorted(client_extensions(session))}, apps={supports_apps(session)}, "
+        f"openai_forms={supports_openai_forms(session)}"
+    )
+
+
+async def _list_tools_for_client():
+    tools = await mcp.list_tools()
+    try:
+        session = mcp.get_context().session
+    except Exception:
+        return tools
+    _log_client_features(session)
+    if supports_apps(session):
+        return tools
+    return [t for t in tools if not is_app_only(t)]
+
+
+mcp._mcp_server.list_tools()(_list_tools_for_client)
 
 
 # Main execution
