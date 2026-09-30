@@ -313,6 +313,8 @@ The following environment variables can be used to configure the Blender connect
 | `BLENDER_HOST` | `localhost` | Host address for Blender socket server |
 | `BLENDER_PORT` | `9876` | Port number for Blender socket server |
 | `BLENDER_MCP_SAFE_MODE` | off | Set to `1` to validate scripts before they run in Blender (see below) |
+| `BLENDER_MCP_APPS` | auto | Set to `1` to force the inline viewport app on for clients that support MCP Apps without advertising it (the Codex plugin sets this) |
+| `BLENDER_MCP_OPENAI_FORMS` | auto | Set to `1` to force the thumbnail asset pickers on (the Codex plugin sets this) |
 
 Example:
 
@@ -388,6 +390,19 @@ claude mcp add blender uvx mcp-for-blender
 ### Codex
 
 The Codex CLI, desktop app, and IDE extension all share the same config file (`~/.codex/config.toml`), so setting the server up once covers all three.
+
+#### Codex plugin (recommended)
+
+The plugin adds a live viewport inline in the chat (click an object to attach it to your next message), thumbnail pickers for Poly Haven, Sketchfab and Poly Pizza, and `@`-mentions for scene objects, materials and collections. It isn't in the Codex plugin directory yet, so add it from this repo:
+
+```bash
+git clone https://github.com/ahujasid/blender-mcp.git
+codex plugin marketplace add ./blender-mcp/integrations/codex
+```
+
+Then restart Codex, install **MCP for Blender** from the plugins directory, and ask it to use MCP for Blender in chat.
+
+#### Plain MCP server
 
 Register the server with the [Codex CLI](https://github.com/openai/codex):
 
