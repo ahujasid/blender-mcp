@@ -146,6 +146,7 @@ The addon starts its server when Blender opens. To check, press `N` in the 3D vi
 - [Premium](#premium)
 - [Components](#components)
 - [Installation](#installation)
+  - [Automatic setup](#automatic-setup)
   - [Prerequisites](#prerequisites)
   - [Make your client find uvx](#make-your-client-find-uvx)
   - [Pin the Python version](#pin-the-python-version)
@@ -203,6 +204,22 @@ The system consists of two main components:
 ---
 
 ## Installation
+
+### Automatic setup
+
+The quickest way is the one-line installer. It installs uv, configures your MCP clients, and installs and enables the Blender addon:
+
+```bash
+# macOS / Linux
+curl -LsSf https://www.mcp-for-blender.com/install.sh | sh
+```
+
+```powershell
+# Windows (PowerShell)
+powershell -ExecutionPolicy ByPass -c "irm https://www.mcp-for-blender.com/install.ps1 | iex"
+```
+
+Already have uv? Run `uvx mcp-for-blender setup` instead. See [Quickstart](#quickstart) for what it changes. The rest of this section covers manual setup.
 
 ### Prerequisites
 
@@ -426,7 +443,9 @@ git clone https://github.com/ahujasid/blender-mcp.git
 codex plugin marketplace add ./blender-mcp/integrations/codex
 ```
 
-Then restart Codex, install **MCP for Blender** from the plugins directory, and ask it to use MCP for Blender in chat.
+Then restart Codex, install **MCP for Blender** from the plugins directory, and ask it to use MCP for Blender in chat. Once it's running, the viewport opens in a side panel next to the conversation:
+
+![MCP for Blender plugin in the Codex app, showing the live viewport beside the chat](assets/codex-screenshot.png)
 
 #### Plain MCP server
 
