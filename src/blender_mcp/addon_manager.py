@@ -188,18 +188,21 @@ def get_bundled_addon_path() -> Path:
     )
 
 
+def blender_config_base() -> Path | None:
+    """Blender's per-user folder, which holds one subfolder per version (4.2, 4.3, ...)."""
+    home = Path.home()
+    if sys.platform == "darwin":
+        return home / "Library" / "Application Support" / "Blender"
+    if sys.platform == "win32":
+        appdata = os.environ.get("APPDATA")
+        return Path(appdata) / "Blender Foundation" / "Blender" if appdata else None
+    return home / ".config" / "blender"
+
+
 def discover_blender_addon_dirs() -> list[Path]:
     """Find Blender user scripts/addons directories across versions."""
     dirs: list[Path] = []
-    home = Path.home()
-
-    if sys.platform == "darwin":
-        base = home / "Library" / "Application Support" / "Blender"
-    elif sys.platform == "win32":
-        appdata = os.environ.get("APPDATA")
-        base = Path(appdata) / "Blender Foundation" / "Blender" if appdata else None
-    else:
-        base = home / ".config" / "blender"
+    base = blender_config_base()
 
     if base and base.is_dir():
         for child in sorted(base.iterdir(), reverse=True):
@@ -449,7 +452,7 @@ def format_handshake_log(result: AddonHandshake) -> str:
 
 
 def run_cli(argv: list[str] | None = None) -> int:
-    """CLI entry for install-addon / addon-status. Returns process exit code."""
+    """CLI entry for install-addon / addon-paths / setup. Returns process exit code."""
     import argparse
 
     parser = argparse.ArgumentParser(
@@ -490,7 +493,20 @@ def run_cli(argv: list[str] | None = None) -> int:
         help="List discovered Blender user addons directories",
     )
 
+    setup_p = sub.add_parser(
+        "setup",
+        help="Configure your MCP clients and install and enable the Blender addon",
+    )
+    setup_p.add_argument("--dry-run", action="store_true", help="Show what would change without changing anything")
+    setup_p.add_argument("--yes", "-y", action="store_true", help="Configure every client found without asking")
+    setup_p.add_argument("--skip-addon", action="store_true", help="Configure clients only; leave Blender alone")
+
     args = parser.parse_args(argv)
+
+    if args.command == "setup":
+        from .setup_cli import run_setup
+
+        return run_setup(dry_run=args.dry_run, assume_yes=args.yes, skip_addon=args.skip_addon)
 
     if args.command == "install-addon":
         result = install_addon(
