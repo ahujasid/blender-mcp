@@ -1,7 +1,7 @@
 #!/bin/sh
 # MCP for Blender installer for macOS and Linux.
 #
-#   curl -LsSf https://raw.githubusercontent.com/ahujasid/mcp-for-blender/main/install.sh | sh
+#   curl -LsSf https://www.mcp-for-blender.com/install.sh | sh
 #
 # Installs uv (with its official installer) if it's missing, then runs
 # `uvx mcp-for-blender setup`, which configures your MCP clients and the
@@ -25,8 +25,10 @@ find_uvx() {
     return 1
 }
 
+echo "MCP for Blender installer"
+
 if ! UVX=$(find_uvx); then
-    echo "Installing uv (https://docs.astral.sh/uv/)..."
+    echo "Installing uv, which runs MCP for Blender (https://docs.astral.sh/uv/)..."
     if command -v curl >/dev/null 2>&1; then
         curl -LsSf https://astral.sh/uv/install.sh | sh
     elif command -v wget >/dev/null 2>&1; then
@@ -45,10 +47,15 @@ fi
 PATH="$(dirname "$UVX"):$PATH"
 export PATH
 
+# uvx shows nothing while it downloads the package, which can take a while.
+echo "Downloading MCP for Blender. The first run can take a minute..."
+
+# --refresh-package: check PyPI now, so a release from minutes ago isn't
+# missed because uv cached the package list.
 # Piped into sh, this script is stdin, so setup reads its answers from the
 # terminal instead. With no terminal at all, it configures everything it finds.
 if (: </dev/tty) 2>/dev/null; then
-    exec "$UVX" mcp-for-blender@latest setup "$@" </dev/tty
+    exec "$UVX" --refresh-package mcp-for-blender mcp-for-blender@latest setup "$@" </dev/tty
 else
-    exec "$UVX" mcp-for-blender@latest setup --yes "$@"
+    exec "$UVX" --refresh-package mcp-for-blender mcp-for-blender@latest setup --yes "$@"
 fi

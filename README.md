@@ -46,13 +46,13 @@ Prompt-assisted 3D modeling, scene creation, and manipulation — driven by AI.
 **macOS / Linux**
 
 ```bash
-curl -LsSf https://raw.githubusercontent.com/ahujasid/mcp-for-blender/main/install.sh | sh
+curl -LsSf https://www.mcp-for-blender.com/install.sh | sh
 ```
 
 **Windows** (PowerShell)
 
 ```powershell
-powershell -ExecutionPolicy ByPass -c "irm https://raw.githubusercontent.com/ahujasid/mcp-for-blender/main/install.ps1 | iex"
+powershell -ExecutionPolicy ByPass -c "irm https://www.mcp-for-blender.com/install.ps1 | iex"
 ```
 
 Already have uv? Run `uvx mcp-for-blender setup` instead.
