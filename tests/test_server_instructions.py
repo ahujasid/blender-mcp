@@ -32,9 +32,15 @@ def test_instructions_stay_small_enough_to_inject_every_turn():
 
 
 def test_instructions_carry_the_asset_workflow():
-    for name in ("get_*_status", "world_bounding_box", "premium_generators"):
+    for name in ("get_addon_status", "world_bounding_box", "premium_generators", "generate_3d", "search_assets"):
         assert name in SERVER_INSTRUCTIONS
 
 
 def test_instructions_do_not_point_at_an_unreachable_prompt():
     assert "asset_creation_strategy" not in SERVER_INSTRUCTIONS
+
+
+def test_instructions_send_the_model_to_look_and_the_guides():
+    # Visual verification and on-demand guides replace most of the old tool surface.
+    assert "look" in SERVER_INSTRUCTIONS
+    assert "get_guide" in SERVER_INSTRUCTIONS

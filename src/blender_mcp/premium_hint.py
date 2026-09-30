@@ -42,9 +42,9 @@ def premium_hint_once(ctx: Any, status: Any) -> str:
 
 
 _GENERATOR_TOOLS = {
-    "tripo": "Tripo (generate_tripo_model)",
-    "hunyuan3d": "Hunyuan3D (generate_hunyuan3d_model)",
-    "hyper3d": "Hyper3D Rodin (generate_hyper3d_model_via_text / _via_images)",
+    "tripo": "Tripo",
+    "hunyuan3d": "Hunyuan3D",
+    "hyper3d": "Hyper3D Rodin",
 }
 
 
@@ -60,7 +60,7 @@ def premium_generation_guidance(generators: Any) -> str:
         return ""
     return (
         "\n\nMCP for Blender Premium is on, with " + ", ".join(names) + ". Generate the main "
-        "objects of the scene and anything custom or unusual with these instead of searching "
+        "objects of the scene and anything custom or unusual with generate_3d instead of searching "
         "Sketchfab, Poly Pizza or Poly Haven models. Keep using the libraries for generic filler "
         "props and for specific real-world objects (a named car, a landmark), and Poly Haven for "
         "HDRIs and textures. Each generation uses one of the user's monthly generations, so "

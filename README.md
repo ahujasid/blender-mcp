@@ -186,9 +186,9 @@ The addon starts its server when Blender opens. To check, press `N` in the 3D vi
 | **Two-way communication** | Connect Claude AI to Blender through a socket-based server |
 | **Object manipulation** | Create, modify, and delete 3D objects in Blender |
 | **Material control** | Apply and modify materials and colors |
-| **Scene inspection** | Get detailed information about the current Blender scene |
-| **Code execution** | Run arbitrary Python code in Blender from Claude |
-| **Asset & model generation** | Poly Haven assets, Sketchfab models, Poly Pizza low-poly models, and AI-generated 3D models via Hyper3D Rodin and Hunyuan3D |
+| **Visual verification** | Multi-angle, camera, topology, rig and animation-strip views, so the AI checks its own work |
+| **Code execution** | The AI writes Blender Python directly, with on-demand guides for rigging, retopology, animation and level design |
+| **Asset & model generation** | Poly Haven assets, Sketchfab models, Poly Pizza low-poly models, and AI-generated 3D models via Tripo, Hyper3D Rodin and Hunyuan3D |
 
 ## Premium
 
@@ -625,16 +625,18 @@ Once the config file has been set on Claude, and the addon is running on Blender
 
 ### Capabilities
 
-- Get scene and object information
-- Create, delete and modify shapes
-- Apply or create materials for objects
-- Execute any Python code in Blender
-- Export the scene, the selection or named objects to GLB/FBX for other applications (`export_scene`)
-- Look up node schemas and the bpy API reference instead of guessing socket order or enum names
-- Search and download free CC0 HDRIs, textures and models from [Poly Haven](https://polyhaven.com/)
-- Search and download models from [Sketchfab](https://sketchfab.com/)
-- Search and download low-poly models from [Poly Pizza](https://poly.pizza/)
-- AI generated 3D models through [Hyper3D Rodin](https://hyper3d.ai/) and [Hunyuan3D](https://3d.hunyuan.tencent.com/)
+The AI writes Blender Python itself for modelling, layout, materials, animation, rigging and retopology. The MCP adds what Python can't do on its own, as ten tools:
+
+| Tool | What it's for |
+|---|---|
+| `execute_blender_code` | Run Python in your live Blender |
+| `look` | See the result. Modes: `viewport`, `angles` (auto-framed multi-view sheet), `camera`, `topology` (wireframe + mesh stats), `rig` (bones + weighting stats), `frames` (animation strip) |
+| `get_scene_info` | Compact scene summary, one line per object; drill in with `root` or `query` |
+| `generate_3d` | One call to generate and import a model with Tripo, Hunyuan3D or Hyper3D Rodin. Premium generators are preferred automatically |
+| `search_assets` / `import_asset` | [Poly Haven](https://polyhaven.com/) HDRIs, textures and models, [Sketchfab](https://sketchfab.com/) models, [Poly Pizza](https://poly.pizza/) low-poly models |
+| `get_guide` | Workflow guides loaded only when needed: `bpy`, `scene`, `level-design`, `animation`, `rigging`, `retopology`, `materials` (also exposed as `guide://` resources) |
+| `get_addon_status` | Blender version, addon version, and which libraries and generators are switched on |
+| `disable_telemetry`, `record_trajectory_feedback` | Data collection controls |
 
 #### Hunyuan3D on Tencent Cloud (Official API mode)
 
@@ -661,18 +663,15 @@ Worked example:
 
 > *"Light the scene with an overcast afternoon HDRI and put a rusty metal texture on the wall"*
 
-Claude calls `search_polyhaven_assets(query="overcast afternoon", asset_type="hdris")`,
+Claude calls `search_assets(source="polyhaven", query="overcast afternoon", asset_type="hdris")`,
 which understands the intent rather than matching keywords - "couch" finds sofas, and it
-works in any language. It can then check the thumbnail with
-`get_polyhaven_asset_preview(asset_id="...")` before spending the bandwidth, and import
-with `download_polyhaven_asset(...)`.
+works in any language. `previews=3` attaches thumbnails of the top results before spending
+the bandwidth, and `import_asset(source="polyhaven", id="...", asset_type="textures", apply_to=["Wall"])`
+downloads a texture and applies it in one call.
 
-`get_polyhaven_categories(asset_type="textures")` returns the category tree and every
-attribute that type can be filtered on, each with the values it accepts - weather and time
-of day for HDRIs, surface use and condition for textures, material and whether a model is
-rigged or ships level-of-detail variants. Pass a category path or those attributes to
-`search_polyhaven_assets`; matching on a category is inclusive, so a parent selects
-everything nested beneath it.
+Searches can also filter on a category path or on attributes such as weather and time of
+day for HDRIs, or surface use and condition for textures; an unknown attribute errors with
+the valid ones.
 
 Models are imported from the `.blend`, which is the file the artist authored - the glTF,
 FBX and USD versions are generated from it and lose material detail. Textures build a
@@ -705,9 +704,9 @@ Worked example:
 
 > *"Search Poly Pizza for a low-poly chair under a CC0 licence and import one at 1 metre tall"*
 
-Claude calls `search_polypizza_models(query="chair", licence="CC0")`, which returns each
+Claude calls `search_assets(source="polypizza", query="chair", licence="CC0")`, which returns each
 match with its licence and triangle count, then
-`download_polypizza_model(model_id="...", normalize_size=True, target_size=1.0)`.
+`import_asset(source="polypizza", id="...", target_size=1.0)`.
 
 You can also filter by category (`"Animals"`, `"Furniture & Decor"`, `"Transport"`,
 `"Nature"`, `"Buildings"`, `"People & Characters"`, `"Food & Drink"`, `"Weapons"`,

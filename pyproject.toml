@@ -32,7 +32,7 @@ build-backend = "setuptools.build_meta"
 package-dir = {"" = "src"}
 
 [tool.setuptools.package-data]
-blender_mcp = ["bundled/addon.py", "apps/*.html"]
+blender_mcp = ["bundled/addon.py", "apps/*.html", "guides/*.md"]
 
 [project.urls]
 "Homepage" = "https://github.com/ahujasid/blender-mcp"
