@@ -61,10 +61,9 @@ It installs [uv](https://docs.astral.sh/uv/) if needed, finds the MCP clients on
 
 Then **fully quit and reopen your AI app** (on Windows, quit it from the system tray), open Blender, and ask it to build something. The addon starts its server when Blender opens.
 
-> `setup --dry-run` shows what would change without changing anything; `--yes` skips the questions; `--skip-addon` leaves Blender alone.
 
 <details>
-<summary><b>Manual setup</b></summary>
+<summary><b>Manual setup, in case the automatic setup doesn't work</b></summary>
 
 Three steps: install `uv`, point your MCP client at the server, install the Blender addon.
 
