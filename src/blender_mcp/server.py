@@ -604,8 +604,8 @@ def _format_scene_summary(data: dict) -> str:
 async def get_scene_info(
     ctx: Context,
     user_prompt: str = "",
-    query: str = None,
-    root: str = None,
+    query: str | None = None,
+    root: str | None = None,
     limit: int = 50,
 ) -> str:
     """
@@ -868,11 +868,11 @@ def _polyhaven_thumbnail(asset: dict) -> str:
 @telemetry_tool("search_polyhaven_assets")
 async def _search_polyhaven(
     ctx: Context,
-    query: str = None,
+    query: str | None = None,
     asset_type: str = "all",
-    category: str = None,
-    attributes: dict = None,
-    min_size_m: float = None,
+    category: str | None = None,
+    attributes: dict | None = None,
+    min_size_m: float | None = None,
     limit: int = 20,
     user_prompt: str = ""
 ) -> str:
@@ -964,7 +964,7 @@ async def _download_polyhaven(
     asset_id: str,
     asset_type: str,
     resolution: str = "1k",
-    file_format: str = None,
+    file_format: str | None = None,
     user_prompt: str = ""
 ) -> str:
     """import_asset(source="polyhaven"): download an HDRI, texture or model and say where it came from."""
@@ -1075,7 +1075,7 @@ def _sketchfab_thumbnail(model: dict) -> str | None:
 async def _search_sketchfab(
     ctx: Context,
     query: str,
-    categories: str = None,
+    categories: str | None = None,
     count: int = 20,
     downloadable: bool = True, user_prompt: str = "") -> str:
     """search_assets(source="sketchfab"): matching models with author, licence and face count."""
@@ -1292,8 +1292,8 @@ def _polypizza_licence_id(licence):
 async def _search_polypizza(
     ctx: Context,
     query: str = "",
-    category: str = None,
-    licence: str = None,
+    category: str | None = None,
+    licence: str | None = None,
     animated: bool = False,
     limit: int = 20, user_prompt: str = "") -> str:
     """search_assets(source="polypizza"): matching models with licence and triangle count."""
@@ -1465,8 +1465,8 @@ TRIPO_UNAVAILABLE = generation.TRIPO_UNAVAILABLE
 def record_trajectory_feedback(
     ctx: Context,
     feedback: str,
-    correction_text: str = None,
-    step_index: int = None,
+    correction_text: str | None = None,
+    step_index: int | None = None,
     user_prompt: str = "",
 ) -> str:
     """
@@ -1550,12 +1550,12 @@ def _look_caption(info: dict) -> str:
 async def look(
     ctx: Context,
     mode: str = "viewport",
-    target: list[str] = None,
-    views: list[str] = None,
-    shading: str = None,
-    frames: list[int] = None,
+    target: list[str] | None = None,
+    views: list[str] | None = None,
+    shading: str | None = None,
+    frames: list[int] | None = None,
     frame_count: int = 6,
-    view: str = None,
+    view: str | None = None,
     max_size: int = 1000,
     user_prompt: str = "",
 ) -> CallToolResult:
@@ -1683,13 +1683,13 @@ async def _generation_reply(ctx: Context, job: "generation.Job", wait_seconds: f
 @trajectory_tool("generate_3d")
 async def generate_3d(
     ctx: Context,
-    prompt: str = None,
-    image: str = None,
-    name: str = None,
+    prompt: str | None = None,
+    image: str | None = None,
+    name: str | None = None,
     provider: str = "auto",
-    quality: str = None,
-    bbox_condition: list[float] = None,
-    job: str = None,
+    quality: str | None = None,
+    bbox_condition: list[float] | None = None,
+    job: str | None = None,
     wait_seconds: int = 50,
     user_prompt: str = "",
 ) -> str:
@@ -1776,10 +1776,10 @@ async def search_assets(
     source: str,
     query: str = "",
     asset_type: str = "all",
-    category: str = None,
-    attributes: dict = None,
-    min_size_m: float = None,
-    licence: str = None,
+    category: str | None = None,
+    attributes: dict | None = None,
+    min_size_m: float | None = None,
+    licence: str | None = None,
     animated: bool = False,
     limit: int = 20,
     previews: int = 0,
@@ -1846,11 +1846,11 @@ async def import_asset(
     ctx: Context,
     source: str,
     id: str,
-    asset_type: str = None,
-    target_size: float = None,
-    apply_to: list[str] = None,
+    asset_type: str | None = None,
+    target_size: float | None = None,
+    apply_to: list[str] | None = None,
     resolution: str = "1k",
-    file_format: str = None,
+    file_format: str | None = None,
     user_prompt: str = "",
 ) -> str:
     """
