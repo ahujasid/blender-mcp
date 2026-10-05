@@ -64,7 +64,7 @@ When you need an operator:
 
 ## Working style
 
-- Small steps. Run a chunk, `print` what you need to know, then `look` at the result.
+- Small steps. Run a chunk and `print` what you need to know.
 - Name everything you create; later steps and the user refer to it by name.
 - Keep the scene organized: one collection per logical group (`bpy.data.collections.new`, link
   to `scene.collection`).

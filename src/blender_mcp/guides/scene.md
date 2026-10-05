@@ -12,7 +12,7 @@ summary: Building a believable scene - scale, grounding, composition, choosing b
    `look(mode="camera")` or `look(mode="angles")` to check proportions before spending on assets.
 3. Replace blockout pieces with real assets, biggest and most visible first.
 4. Light, then set materials, then dress with small props.
-5. `look` after every meaningful change. Judge the image, not your intentions: is anything
+5. Judge the image, not your intentions: is anything
    floating, clipping, the wrong size, or hidden from camera?
 
 ## Getting assets

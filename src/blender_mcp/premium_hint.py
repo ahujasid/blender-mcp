@@ -49,7 +49,7 @@ _GENERATOR_TOOLS = {
 
 
 def premium_generation_guidance(generators: Any) -> str:
-    """Steer the agent toward the generators the user pays for.
+    """Say which generators the user's Premium plan gives them.
 
     `generators` is the addon's `premium_generators` handshake field: the
     generators Premium has switched on. Returns "" when there are none, so
@@ -59,10 +59,6 @@ def premium_generation_guidance(generators: Any) -> str:
     if not names:
         return ""
     return (
-        "\n\nMCP for Blender Premium is on, with " + ", ".join(names) + ". Generate the main "
-        "objects of the scene and anything custom or unusual with generate_3d instead of searching "
-        "Sketchfab, Poly Pizza or Poly Haven models. Keep using the libraries for generic filler "
-        "props and for specific real-world objects (a named car, a landmark), and Poly Haven for "
-        "HDRIs and textures. Each generation uses one of the user's monthly generations, so "
-        "duplicate an object already generated rather than generating it again."
+        "\n\nMCP for Blender Premium is on, with " + ", ".join(names) + " for generate_3d. These "
+        "don't use the user's own API keys; each generation uses one of their monthly generations."
     )

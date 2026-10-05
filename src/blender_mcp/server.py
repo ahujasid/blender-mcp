@@ -27,7 +27,7 @@ from .addon_manager import (
 )
 from .consent_prompt import maybe_prompt_for_consent
 from .premium_hint import premium_hint_once, premium_generation_guidance
-from . import blender_scripts, generation, guides
+from . import blender_scripts, context_log, generation
 from .safe_mode import safe_mode_enabled, validate_code, SandboxViolation, SAFE_MODE_ENV
 from .openai_apps import (
     APP_MIME_TYPE,
@@ -326,14 +326,11 @@ async def server_lifespan(server: FastMCP) -> AsyncIterator[Dict[str, Any]]:
 # model has no way to fetch one. Per-tool details belong in tool descriptions.
 # Kept short because instructions are injected into every conversation (see
 # #347 on context cost).
-SERVER_INSTRUCTIONS = """MCP for Blender drives the user's live Blender. You do the modelling, layout,
-materials, animation and rigging yourself in Python with execute_blender_code; the other tools
-give you what Python can't: eyes (look), 3D generation (generate_3d), asset libraries
-(search_assets, import_asset), and guides (get_guide).
+SERVER_INSTRUCTIONS = """MCP for Blender drives the user's live Blender. execute_blender_code runs Python there
+with the full bpy API, so anything Blender can do, you can do; look shows you the result.
 
-Start with get_addon_status (Blender version, available integrations) and get_scene_info.
-Before rigging, retopology, animation, level design, scene building or materials work, load
-the matching guide with get_guide; they carry the version pitfalls.
+Start with get_addon_status (Blender version, which libraries and generators are on) and
+get_scene_info.
 
 Scripts run in someone else's Blender:
 - Look shader nodes up by type, never by name (names are localized):
@@ -344,15 +341,14 @@ Scripts run in someone else's Blender:
   try/except TypeError, whose message lists the valid engines.
 - Material colors go on shader node inputs; material.diffuse_color only affects the viewport.
 
-Verify visually. After each meaningful change, look at it with the mode that answers the
-question (angles for shape and placement, camera for composition, topology, rig, frames for
-motion). Judge the image, not your intent: fix anything floating, clipping, mis-scaled or
-hidden before moving on.
+look is how you see your work; use it as much as you need. Images stay in the conversation, so
+a smaller max_size keeps long sessions cheap.
 
-Assets: generate hero and custom objects one at a time (never a whole scene, the ground, or
-parts to assemble) and duplicate for repeats; use libraries for HDRIs, textures and generic
-props. If get_addon_status lists premium_generators, follow its guidance. After any import,
-use the reported world_bounding_box to fix scale and put the object on the ground."""
+Objects can also come from existing libraries (search_assets, then import_asset: Poly Haven,
+Sketchfab, Poly Pizza) or be made to order (generate_3d: one new textured model from text or an
+image, 1-3 minutes, may cost the user a credit). A generation is one object, never a whole
+scene, the ground or parts to assemble. Imported and generated models arrive at arbitrary
+scale: use the reported world_bounding_box to size them and put them on the ground."""
 
 # Create the MCP server with lifespan support
 mcp = FastMCP(
@@ -430,9 +426,9 @@ def get_blender_connection():
 
 
 def _integrations(blender: BlenderConnection, premium_generators) -> dict:
-    """Which libraries and generators are on. Reads local settings only:
-    Premium generators come from the handshake rather than a status call,
-    which would ask the Premium server once per generator."""
+    """Which libraries (search_assets) and generators (generate_3d) are on. Reads
+    local settings only: Premium generators come from the handshake rather than a
+    status call, which would ask the Premium server once per generator."""
     status = {}
     for name in ("polyhaven", "sketchfab", "polypizza", "hunyuan3d", "hyper3d"):
         if name in (premium_generators or []):
@@ -444,7 +440,10 @@ def _integrations(blender: BlenderConnection, premium_generators) -> dict:
         except Exception as e:
             status[name] = "not in this addon version" if _addon_lacks(e) else "unknown"
     status["tripo"] = "on (Premium)" if "tripo" in (premium_generators or []) else "off (Premium only)"
-    return status
+    return {
+        "libraries": {k: status[k] for k in ("polyhaven", "sketchfab", "polypizza")},
+        "generators": {k: status[k] for k in ("tripo", "hunyuan3d", "hyper3d")},
+    }
 
 
 @mcp.tool()
@@ -453,9 +452,9 @@ async def get_addon_status(ctx: Context, user_prompt: str = "") -> str:
     Check the connected Blender: its version, whether the addon matches this server, and which
     asset libraries and 3D generators are switched on. Call it once at the start.
 
-    `integrations` says which search_assets sources and generate_3d providers are available.
-    `premium_generators` lists the 3D generators MCP for Blender Premium has on; when it is
-    non-empty the reply ends with guidance on when to generate instead of using libraries.
+    `libraries` are the search_assets sources and `generators` the generate_3d providers, each
+    on or off for this user. "(Premium)" ones come with MCP for Blender Premium and don't use the
+    user's own API keys.
 
     If outdated, tells the user how to update via `uvx mcp-for-blender install-addon`
     (then restart or re-enable the addon in Blender).
@@ -480,7 +479,7 @@ async def get_addon_status(ctx: Context, user_prompt: str = "") -> str:
             "capabilities": result.capabilities,
             "blender_version": result.blender_version,
             "premium_generators": result.premium_generators,
-            "integrations": _integrations(blender, result.premium_generators),
+            **_integrations(blender, result.premium_generators),
             "source": result.source,
             "warning": result.warning,
             "telemetry_consent": get_telemetry().check_user_consent(),
@@ -580,20 +579,23 @@ def _run_script(script: str, args: dict) -> dict:
     return blender_scripts.parse_result(result["result"])
 
 
-def _format_scene_summary(data: dict) -> str:
+def _format_scene_summary(data: dict, fields) -> str:
     h = data["header"]
     counts = ", ".join(f"{n} {kind}" for kind, n in sorted(h["object_counts"].items())) or "empty"
-    lines = [
-        f"Scene '{h['scene']}' in {h['file']} | Blender {h['blender']} | engine {h['engine']}",
-        f"Frames {h['frames'][0]}-{h['frames'][1]} (now {h['frames'][2]}) at {h['fps']} fps | "
-        f"{h['resolution'][0]}x{h['resolution'][1]} | camera {h['camera'] or 'none'} | "
-        f"HDRI {h['world_hdri'] or 'none'} | unit scale {h['unit_scale']}",
-        f"Objects: {counts} | active {h['active'] or 'none'} | selected "
-        f"{', '.join(h['selected']) or 'none'} | mode {h['mode']}",
-        "",
-        f"Showing {data['shown']} of {data['total']} (name | type | world location | world size | ...):",
-        *data["lines"],
-    ]
+    selected = ", ".join(h["selected"]) or "none"
+    extra = h.get("selected_count", len(h["selected"])) - len(h["selected"])
+    if extra > 0:
+        selected += f" +{extra} more"
+    lines = [f"Scene '{h['scene']}' | {counts} | active {h['active'] or 'none'} | selected {selected} | mode {h['mode']}"]
+    st = h.get("settings")
+    if st:
+        lines.append(
+            f"{st['file']} | engine {st['engine']} | frames {st['frames'][0]}-{st['frames'][1]} "
+            f"(now {st['frames'][2]}) at {st['fps']} fps | {st['resolution'][0]}x{st['resolution'][1]} | "
+            f"camera {st['camera'] or 'none'} | HDRI {st['world_hdri'] or 'none'} | unit scale {st['unit_scale']}"
+        )
+    columns = " | ".join(["name", "type", *(f for f in blender_scripts.SCENE_FIELDS if f in fields and f != "settings")])
+    lines += ["", f"Showing {data['shown']} of {data['total']} ({columns}):", *data["lines"]]
     if data["shown"] < data["total"]:
         lines.append(f"... {data['total'] - data['shown']} more. Narrow with query= or root=, or raise limit.")
     return "\n".join(lines)
@@ -606,30 +608,45 @@ async def get_scene_info(
     user_prompt: str = "",
     query: str | None = None,
     root: str | None = None,
-    limit: int = 50,
+    fields: list[str] | None = None,
+    limit: int = 20,
 ) -> str:
     """
-    Compact summary of the open scene: render/frame settings, then one line per object with world
-    location, world-space size, whether it sits on the ground, faces, materials, modifiers and
-    animation.
+    Facts about the scene as text: what's there, where, how big, and how healthy meshes and rigs
+    are. No image; to see the scene, use look.
 
-    By default lists top-level objects only. Pass root="Name" to list that object and its whole
-    hierarchy, or query="chair" to list every object whose name contains the text. For anything
-    deeper about one object, read it with execute_blender_code.
+    One header line (object counts, active, selection, mode), then one line per object with the
+    fields you ask for. Top-level objects by default; root="Name" lists that object's hierarchy,
+    query="chair" lists every object whose name contains the text. For anything else about an
+    object, read it with execute_blender_code.
 
     Parameters:
-    - query: Optional name filter across all objects.
-    - root: Optional object whose hierarchy to list.
-    - limit: Maximum object lines (default 50).
+    - fields: What to show per object (default: location, size, children, hidden).
+      placement: location (world), size (world bounding box), ground (on ground, floating or
+        below by), rotation (degrees), scale, parent
+      contents: children (count), hidden, details (faces, bones or light power), materials,
+        modifiers, animation
+      health: topology (quads, tris, ngons, non-manifold and boundary edges, loose verts,
+        poles), weights (vertices no deform bone moves, deform bones with no vertex group)
+      settings: adds a line with the file, engine, frame range, resolution, camera, HDRI and
+        unit scale
+    - query: Name filter across all objects.
+    - root: Object whose hierarchy to list.
+    - limit: Maximum object lines (default 20).
     - user_prompt: The user's own words describing what they want, quoted verbatim.
     """
+    fields = list(blender_scripts.SCENE_DEFAULT_FIELDS) if fields is None else list(dict.fromkeys(fields))
+    unknown = [f for f in fields if f not in blender_scripts.SCENE_FIELDS]
+    if unknown:
+        return f"Error: unknown fields {', '.join(unknown)}. Pick from: {', '.join(blender_scripts.SCENE_FIELDS)}"
     start_time = time.time()
     success = False
     error_msg = None
     data = None
     try:
         try:
-            data = _run_script(blender_scripts.SCENE_SUMMARY, {"query": query, "root": root, "limit": limit})
+            data = _run_script(blender_scripts.SCENE_SUMMARY,
+                               {"query": query, "root": root, "limit": limit, "fields": fields})
         except Exception as e:
             # Very old addons, or a Blender that can't run the script: the
             # addon's own summary still says what's there.
@@ -641,7 +658,7 @@ async def get_scene_info(
             error_msg = data["error"]
             return f"Error: {data['error']}"
         success = True
-        return _format_scene_summary(data)
+        return _format_scene_summary(data, fields)
     except Exception as e:
         error_msg = str(e)
         logger.error(f"Error getting scene info from Blender: {str(e)}")
@@ -774,7 +791,7 @@ async def execute_blender_code(ctx: Context, code: str, user_prompt: str = "") -
     """
     Run Python in the user's live Blender (bpy, bmesh, mathutils). Whatever it prints is returned.
 
-    Work in small steps and print what you need to know. Check the result with look.
+    Work in small steps and print what you need to know.
 
     Parameters:
     - code: The Python code to execute
@@ -1510,14 +1527,24 @@ def record_trajectory_feedback(
 # loads only when needed (get_guide). The per-provider functions above are
 # their building blocks and no longer registered as tools.
 
-LOOK_MODES = ("viewport", "angles", "camera", "topology", "rig", "frames")
-LOOK_SHADING = ("solid", "material", "rendered", "wireframe")
+LOOK_MODES = ("viewport", "camera", "angles", "frames")
+LOOK_ANGLES = ("front", "back", "left", "right", "top", "three_quarter")
+LOOK_SHADING = ("solid", "material", "rendered", "wireframe", "xray")
+# Modes before the shading/stats split, so a model trained on them gets pointed the right way.
+LOOK_RETIRED = {
+    "topology": 'Use shading="wireframe" to see edges, and get_scene_info(fields=["topology"]) for counts.',
+    "rig": 'Use shading="xray" to see bones, and get_scene_info(fields=["weights"]) for weighting.',
+    "image": 'Pass image= on its own, e.g. look(image="Render Result").',
+}
 
 
 def _look_caption(info: dict) -> str:
     mode = info["mode"]
+    if mode == "image":
+        w0, h0 = info["original_size"]
+        return f"Image '{info['image']}', {w0}x{h0}, shown at {info['width']}x{info['height']}."
     parts = []
-    if mode == "angles" or (mode in ("topology", "rig") and info.get("views")):
+    if mode == "angles":
         parts.append("Tiles left to right, top to bottom: " + ", ".join(info.get("views", [])) + ".")
     if mode == "frames":
         parts.append("Frames left to right, top to bottom: " + ", ".join(map(str, info.get("frames", []))) + ".")
@@ -1526,22 +1553,6 @@ def _look_caption(info: dict) -> str:
     if mode != "viewport":
         size = " x ".join(f"{v:g}" for v in info.get("size", []))
         parts.append(f"Framed {info.get('targets', 0)} objects, {size} m across, centred at {info.get('center')}.")
-    for s in info.get("mesh_stats", []):
-        parts.append(
-            f"{s['object']}: {s['verts']} verts, {s['faces']} faces ({s['quads']} quads, {s['tris']} tris, "
-            f"{s['ngons']} ngons), {s['non_manifold_edges']} non-manifold edges, {s['boundary_edges']} "
-            f"boundary edges, {s['loose_verts']} loose verts, {s['poles']} poles"
-            + (f", modifiers {', '.join(s['modifiers'])}" if s["modifiers"] else "") + "."
-        )
-    for r in info.get("rig_stats", []):
-        if "armature" in r and "mesh" not in r:
-            parts.append(f"Armature {r['armature']}: {r['bones']} bones ({r['deform_bones']} deform), roots {', '.join(r['roots'])}.")
-        else:
-            missing = r["deform_bones_without_group"]
-            parts.append(
-                f"Mesh {r['mesh']} on {r['armature']}: {r['unweighted_vertices']} of {r['vertices']} vertices unweighted"
-                + (f"; deform bones with no vertex group: {', '.join(missing)}" if missing else "") + "."
-            )
     return " ".join(parts)
 
 
@@ -1549,51 +1560,63 @@ def _look_caption(info: dict) -> str:
 @telemetry_tool("look")
 async def look(
     ctx: Context,
-    mode: str = "viewport",
+    mode: str | None = None,
     target: list[str] | None = None,
-    views: list[str] | None = None,
+    views: list[str | list[float]] | None = None,
+    distance: float | None = None,
     shading: str | None = None,
     frames: list[int] | None = None,
     frame_count: int = 6,
-    view: str | None = None,
-    max_size: int = 1000,
+    view: str | list[float] | None = None,
+    image: str | None = None,
+    max_size: int = 768,
     user_prompt: str = "",
 ) -> CallToolResult:
     """
-    See the scene. One image per call; pick the mode that answers your question.
+    See the scene as one image. For counts, sizes and positions, use get_scene_info.
 
-    Modes:
-    - viewport: exactly what the user's 3D viewport shows.
-    - angles: a contact sheet of the target from several sides (default front, right, top,
-      three_quarter), auto-framed. Best for checking shape, proportions, placement and clipping.
-    - camera: through the scene camera, at the render aspect ratio. Use for composition.
-    - topology: wireframe on matcap, plus per-mesh counts (tris/quads/ngons, non-manifold and
-      boundary edges, loose verts, poles). Use for retopo and cleanup.
-    - rig: X-ray with bones in front, plus armature stats and unweighted vertex counts.
-    - frames: a strip of animation frames (evenly spaced over the frame range, or `frames`), to
-      judge motion. Seen from the viewport, or `view="camera"` or an angle name.
+    Choose where from (mode) and how it's drawn (shading):
+    - mode: viewport (what the user sees; default), camera (through the scene camera, at the
+      render aspect), angles (the target from several sides, auto-framed; default front, right,
+      top, three_quarter), frames (a strip over the animation).
+    - shading: solid, material, rendered (EEVEE and Workbench only), wireframe (edges over a
+      plain surface), xray (see-through, bones in front). Default: the viewport's.
+    - image: Instead of the scene, show this image: "Render Result" after a render, another
+      image in the file, or a file path.
 
     Parameters:
     - target: Object names to frame (children included). Default: every visible object.
-    - views: For angles/topology/rig: any of front, back, left, right, top, three_quarter (max 6).
-      topology and rig default to a single three_quarter view of the target.
-    - shading: Override the viewport shading for this image: solid, material, rendered, wireframe.
-      Materials only show in material or rendered. Rendered can be slow in Cycles.
-    - frames / frame_count: For frames mode; explicit frame numbers, or how many to sample (2-12).
-    - view: For frames mode: "camera", an angle name, or omit for the user's viewport.
-    - max_size: Longest side of the image in pixels.
+    - views: For angles: up to 6 of front, back, left, right, top, three_quarter, or [x, y, z]
+      directions from the target towards the eye ([0, -1, 0.2] is front, slightly above).
+    - distance: Metres from the target's centre to the eye, for angles and frames views. Default:
+      far enough to fit it; closer for detail or to stand inside a room.
+    - frames / frame_count: For frames: explicit frame numbers, or how many to sample (2-12).
+    - view: For frames: "camera", an angle name or an [x, y, z] direction; default the viewport.
+    - max_size: Longest side in pixels (default 768). Images stay in the conversation, so go
+      smaller for quick checks and larger only to read fine detail.
     - user_prompt: The user's own words describing what they want, quoted verbatim.
 
     Every setting changed to take the picture is restored afterwards.
     """
-    if mode not in LOOK_MODES:
+    if mode in LOOK_RETIRED:
+        return _app_error(f"There is no {mode} mode. {LOOK_RETIRED[mode]}")
+    if mode is not None and mode not in LOOK_MODES:
         return _app_error(f"Unknown mode {mode!r}. Use one of: {', '.join(LOOK_MODES)}")
+    if image is not None:
+        if mode is not None:
+            return _app_error("image= shows an image instead of the scene; leave mode unset.")
+        mode = "image"
+    mode = mode or "viewport"
     if shading is not None and shading not in LOOK_SHADING:
         return _app_error(f"Unknown shading {shading!r}. Use one of: {', '.join(LOOK_SHADING)}")
-    if mode in ("topology", "rig") and not views:
-        views = ["three_quarter"]
-    args = {"mode": mode, "target": target, "views": views, "shading": shading, "frames": frames,
-            "frame_count": frame_count, "view": view, "max_size": max(200, min(int(max_size or 1000), 2000))}
+    for v in (views or []) + ([view] if view is not None and view != "camera" else []):
+        if isinstance(v, str) and v not in LOOK_ANGLES:
+            return _app_error(f"Unknown view {v!r}. Use one of {', '.join(LOOK_ANGLES)} or an [x, y, z] direction.")
+        if not isinstance(v, str) and (len(v) != 3 or not any(v)):
+            return _app_error(f"A view direction is three numbers, not all zero; got {v!r}.")
+    args = {"mode": mode, "target": target, "views": views, "distance": distance, "shading": shading,
+            "frames": frames, "frame_count": frame_count, "view": view, "image": image,
+            "max_size": max(200, min(int(max_size or 768), 2000))}
 
     def native():
         return _viewport_screenshot(ctx, max_size=max_size, user_prompt=user_prompt)
@@ -1610,6 +1633,10 @@ async def look(
         return _app_error(str(e))
     except Exception as e:
         reason = str(e)
+    if mode == "image":
+        # The viewport is no stand-in for the image that was asked for.
+        hint = f" {ADDON_UPDATE_HINT}" if _addon_outdated() and ADDON_UPDATE_HINT not in reason else ""
+        return _app_error(f"Couldn't show the image: {reason}{hint}")
     try:
         result = second()
     except Exception as e:
@@ -1694,11 +1721,11 @@ async def generate_3d(
     user_prompt: str = "",
 ) -> str:
     """
-    Generate one 3D object with textures from a text prompt or an image, and import it.
+    Make one new textured 3D model from a text prompt or an image, and import it.
 
-    Use it for hero objects and anything custom or specific. Never for a whole scene, the ground,
-    or parts to assemble; generate an object once and duplicate it for repeats. Each call can cost
-    the user money or a monthly generation.
+    One object per call: not a whole scene, the ground, or parts to assemble. It arrives at
+    arbitrary scale and facing. Each call can cost the user money or a monthly generation, so
+    duplicate a generated object for repeats.
 
     Waits up to wait_seconds, then imports. Generation usually takes 1-3 minutes: if it isn't done
     in time you get a job handle; call generate_3d(job=..., name=...) again to keep waiting.
@@ -1786,13 +1813,12 @@ async def search_assets(
     user_prompt: str = "",
 ):
     """
-    Search a free asset library. Pick the source by what you need:
-    - polyhaven: HDRIs (lighting), PBR textures for surfaces, generic realistic models. All CC0.
-      Search understands intent and synonyms, so describe the thing ("couch" finds sofas).
-    - sketchfab: specific real-world or realistic models (a named car, a landmark). Check licence
-      and face count.
-    - polypizza: stylised low-poly models, very light. CC0 or CC-BY (credit the creator).
-    For custom or unusual objects, generate_3d is usually better than any library.
+    Search a library of existing assets. The sources:
+    - polyhaven: HDRIs, PBR textures and realistic models, all CC0. Search understands intent and
+      synonyms ("couch" finds sofas).
+    - sketchfab: a large catalogue of user-made models, realistic and specific ones included;
+      licences and face counts vary per model.
+    - polypizza: stylised low-poly models, CC0 or CC-BY (credit the creator).
 
     Parameters:
     - source: polyhaven, sketchfab or polypizza.
@@ -1914,28 +1940,9 @@ async def _import_asset(ctx, source, id, asset_type, target_size, apply_to, reso
         return _unavailable(source, e, "import")
 
 
-def get_guide(topic: str) -> str:
-    return guides.get(topic)
-
-
-get_guide.__doc__ = f"""
-    Load a workflow guide before starting work in that area. Guides hold the know-how and
-    version pitfalls that aren't worth carrying in every conversation.
-
-    Topics:
-{guides.index()}
-    """
-mcp.tool()(get_guide)
-
-
-def _register_guide_resource(topic: str, title: str, summary: str) -> None:
-    @mcp.resource(f"guide://{topic}", name=topic, title=title, description=summary, mime_type="text/markdown")
-    def _guide() -> str:
-        return guides.get(topic)
-
-
-for _g in guides.all_guides().values():
-    _register_guide_resource(_g.topic, _g.title, _g.summary)
+# Guides (guides/, guides.py) are switched off while evals measure what the model
+# does without them. To bring them back, register get_guide and the guide://
+# resources here again.
 
 
 # MCP Apps and OpenAI extensions. Tools marked visibility ["app"] are called by
@@ -2194,6 +2201,7 @@ def main():
             "Setup guide: https://github.com/ahujasid/blender-mcp#installation "
             "(if the addon is outdated this logs how to update it: uvx mcp-for-blender install-addon)"
         )
+    context_log.install(mcp, SERVER_INSTRUCTIONS)
     mcp.run()
 
 if __name__ == "__main__":

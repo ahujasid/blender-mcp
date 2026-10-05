@@ -23,7 +23,7 @@ metarig = bpy.context.active_object
 ```
 
 1. Scale and move the metarig to fit the mesh (edit bones: `metarig.data.edit_bones["spine"].head`),
-   aligning joints with the mesh's joints. Check against the mesh with `look(mode="rig", views=["front","right"])`.
+   aligning joints with the mesh's joints. Check against the mesh with `look(mode="angles", shading="xray", views=["front","right"])`.
 2. Generate: with the metarig active, `bpy.ops.pose.rigify_generate()`. The result is `rig`
    (or `RIG-<name>`).
 3. Skin to the generated rig, not the metarig.
@@ -62,8 +62,8 @@ If Blender reports "Bone Heat Weighting: failed to find solution for one or more
 
 ## Verify
 
-`look(mode="rig")` reports unweighted vertices and deform bones with no vertex group — both should
-be zero for a skinned character. Then pose it and look:
+`get_scene_info(fields=["weights"], query="Body")` reports vertices no deform bone moves and deform
+bones with no vertex group — both should be zero for a skinned character. Then pose it and look:
 
 ```python
 pb = rig.pose.bones["upper_arm_fk.L"]; pb.rotation_mode = "XYZ"; pb.rotation_euler.x = 1.2

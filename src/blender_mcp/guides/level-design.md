@@ -46,7 +46,7 @@ Place a scale reference (a 1.8 m capsule named `PlayerScale`) and keep it in the
 - Name for the engine's conventions. Unreal: `SM_` meshes and `UCX_<mesh>` convex collision.
   Godot: `-col` / `-colonly` suffixes. Unity: separate low-poly collision meshes.
 - Keep collision simple: boxes and convex hulls, not the render mesh.
-- Triangle budgets depend on platform; report counts with `look(mode="topology")`.
+- Triangle budgets depend on platform; report counts with `get_scene_info(fields=["topology"])`.
 - Export with `bpy.ops.export_scene.gltf` (Godot, web, most engines) or `export_scene.fbx`
   (Unity, Unreal). Read each operator's arguments first; they change between versions.
 - Lightmap UVs go in a second UV map when the engine bakes lighting.

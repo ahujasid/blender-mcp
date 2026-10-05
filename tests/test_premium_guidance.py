@@ -1,4 +1,4 @@
-"""Premium steers the agent toward generation over the model libraries."""
+"""Premium tells the agent which generators the user's plan includes."""
 import types
 
 from blender_mcp import server

@@ -1,5 +1,5 @@
-"""The model-facing surface: a handful of tools, guides on demand, and
-observation scripts that run through execute_code."""
+"""The model-facing surface: a handful of tools and observation scripts that run
+through execute_code."""
 
 import ast
 import asyncio
@@ -9,7 +9,7 @@ from blender_mcp.openai_apps import is_app_only
 
 MODEL_TOOLS = {
     "get_addon_status", "disable_telemetry", "get_scene_info", "execute_blender_code",
-    "record_trajectory_feedback", "look", "generate_3d", "search_assets", "import_asset", "get_guide",
+    "record_trajectory_feedback", "look", "generate_3d", "search_assets", "import_asset",
 }
 
 
@@ -25,16 +25,10 @@ def test_every_guide_has_a_title_summary_and_body():
         assert guide.title and guide.summary and guide.body.startswith("# ")
 
 
-def test_get_guide_lists_topics_and_handles_unknown_ones():
-    tools = {t.name: t for t in asyncio.run(server.mcp.list_tools())}
-    assert "retopology:" in tools["get_guide"].description
-    assert guides.get("RIGGING").startswith("# Rigging")
-    assert "Available guides" in guides.get("nope")
-
-
-def test_guides_are_published_as_resources():
+def test_guides_are_off_for_now():
+    tools = {t.name for t in asyncio.run(server.mcp.list_tools())}
     uris = {str(r.uri) for r in asyncio.run(server.mcp.list_resources())}
-    assert "guide://rigging" in uris
+    assert "get_guide" not in tools and not any(u.startswith("guide://") for u in uris)
 
 
 def test_scripts_compile_and_never_raise_systemexit():
@@ -55,29 +49,56 @@ def test_script_arguments_round_trip_json_only_values():
     assert blender_scripts.parse_result("noise\n" + out.getvalue()) == {"a": True, "b": None, "c": ["x'y\"z"]}
 
 
-def test_look_caption_reports_mesh_and_rig_problems():
-    caption = server._look_caption({
-        "mode": "topology", "views": ["three_quarter"], "targets": 1, "center": [0, 0, 1], "size": [1, 1, 2],
-        "mesh_stats": [{"object": "Body", "verts": 8, "faces": 6, "tris": 0, "quads": 6, "ngons": 0,
-                        "non_manifold_edges": 2, "boundary_edges": 0, "loose_verts": 1, "poles": 8,
-                        "modifiers": []}],
-        "rig_stats": [{"mesh": "Body", "armature": "Rig", "vertices": 8, "unweighted_vertices": 3,
-                       "deform_bones_without_group": ["hand.L"]}],
-    })
-    assert "2 non-manifold edges" in caption
-    assert "3 of 8 vertices unweighted" in caption and "hand.L" in caption
+def test_retired_look_modes_point_to_their_replacements(monkeypatch):
+    monkeypatch.setattr(server, "_run_script", lambda *a: (_ for _ in ()).throw(AssertionError("ran")))
+    text = _look_text(asyncio.run(server.look(None, mode="topology")))
+    assert 'shading="wireframe"' in text and '"topology"' in text
+    text = _look_text(asyncio.run(server.look(None, mode="rig")))
+    assert 'shading="xray"' in text and '"weights"' in text
+    result = asyncio.run(server.look(None, mode="camera", image="Render Result"))
+    assert result.isError and "leave mode unset" in _look_text(result)
 
 
 def test_scene_summary_formatting():
     text = server._format_scene_summary({
-        "header": {"scene": "Scene", "file": "(unsaved)", "blender": "4.2.0", "engine": "CYCLES",
-                   "frames": [1, 250, 1], "fps": 24, "resolution": [1920, 1080], "camera": "Camera",
-                   "world_hdri": None, "unit_scale": 1.0, "object_counts": {"mesh": 60},
-                   "selected": [], "active": None, "mode": "OBJECT"},
+        "header": {"scene": "Scene", "object_counts": {"mesh": 60}, "selected": ["A", "B", "C", "D", "E"],
+                   "selected_count": 7, "active": None, "mode": "OBJECT"},
         "lines": ["Cube | mesh | at (0, 0, 1)"], "total": 60, "shown": 1,
-    })
+    }, ["location"])
     assert "Cube | mesh" in text
     assert "59 more" in text
+    assert "+2 more" in text
+    assert "(name | type | location)" in text
+    assert "engine" not in text
+
+
+def test_scene_summary_settings_line_is_opt_in():
+    text = server._format_scene_summary({
+        "header": {"scene": "Scene", "object_counts": {}, "selected": [], "active": None, "mode": "OBJECT",
+                   "settings": {"file": "(unsaved)", "engine": "CYCLES", "frames": [1, 250, 1], "fps": 24,
+                                "resolution": [1920, 1080], "camera": "Camera", "world_hdri": None,
+                                "unit_scale": 1.0}},
+        "lines": [], "total": 0, "shown": 0,
+    }, ["settings"])
+    assert "engine CYCLES" in text and "1920x1080" in text
+
+
+def test_scene_info_sends_only_the_requested_fields(monkeypatch):
+    sent = []
+
+    def fake_run(script, args):
+        sent.append(args)
+        return {"header": {"scene": "S", "object_counts": {}, "selected": [], "active": None, "mode": "OBJECT"},
+                "lines": [], "total": 0, "shown": 0}
+
+    monkeypatch.setattr(server, "_run_script", fake_run)
+    asyncio.run(server.get_scene_info(None))
+    assert sent[-1]["fields"] == list(blender_scripts.SCENE_DEFAULT_FIELDS)
+    assert sent[-1]["limit"] == 20
+    asyncio.run(server.get_scene_info(None, fields=["materials", "materials"]))
+    assert sent[-1]["fields"] == ["materials"]
+    reply = asyncio.run(server.get_scene_info(None, fields=["colour"]))
+    assert reply.startswith("Error") and "materials" in reply
 
 
 class _Blender:
@@ -126,3 +147,43 @@ def test_a_missing_library_command_means_switched_off_or_outdated(monkeypatch):
     monkeypatch.setattr(server, "_addon_handshake", behind)
     reply = asyncio.run(server.search_assets(None, source="sketchfab", query="car"))
     assert "install-addon" in reply
+
+
+def _look_text(result):
+    return " ".join(getattr(c, "text", "") for c in result.content)
+
+
+def test_look_rejects_bad_views_before_touching_blender(monkeypatch):
+    monkeypatch.setattr(server, "_run_script", lambda *a: (_ for _ in ()).throw(AssertionError("ran")))
+    result = asyncio.run(server.look(None, mode="angles", views=["sideways"]))
+    assert result.isError and "three_quarter" in _look_text(result)
+    result = asyncio.run(server.look(None, mode="angles", views=[[0, 0, 0]]))
+    assert result.isError and "not all zero" in _look_text(result)
+
+
+def test_look_passes_directions_and_distance_through(monkeypatch):
+    sent = []
+
+    def fake_run(script, args):
+        sent.append(args)
+        return {"error": "stop here"}
+
+    monkeypatch.setattr(server, "_run_script", fake_run)
+    asyncio.run(server.look(None, mode="angles", views=[[0, -1, 0.2], "top"], distance=3.0))
+    assert sent[-1]["views"] == [[0, -1, 0.2], "top"] and sent[-1]["distance"] == 3.0
+
+
+def test_image_mode_never_falls_back_to_the_viewport(monkeypatch):
+    def broken(*a):
+        raise RuntimeError("addon too old")
+
+    monkeypatch.setattr(server, "_run_script", broken)
+    monkeypatch.setattr(server, "_viewport_screenshot", lambda *a, **k: (_ for _ in ()).throw(AssertionError("fell back")))
+    result = asyncio.run(server.look(None, image="Render Result"))
+    assert result.isError and "Couldn't show the image" in _look_text(result)
+
+
+def test_look_caption_for_images():
+    assert server._look_caption({"mode": "image", "image": "Render Result", "original_size": [1920, 1080],
+                                 "width": 768, "height": 432}) == \
+        "Image 'Render Result', 1920x1080, shown at 768x432."

@@ -185,8 +185,8 @@ The addon starts its server when Blender opens. To check, press `N` in the 3D vi
 | **Two-way communication** | Connect Claude AI to Blender through a socket-based server |
 | **Object manipulation** | Create, modify, and delete 3D objects in Blender |
 | **Material control** | Apply and modify materials and colors |
-| **Visual verification** | Multi-angle, camera, topology, rig and animation-strip views, so the AI checks its own work |
-| **Code execution** | The AI writes Blender Python directly, with on-demand guides for rigging, retopology, animation and level design |
+| **Visual verification** | Multi-angle, camera, wireframe, X-ray and animation-strip views, plus renders, so the AI checks its own work |
+| **Code execution** | The AI writes Blender Python directly |
 | **Asset & model generation** | Poly Haven assets, Sketchfab models, Poly Pizza low-poly models, and AI-generated 3D models via Tripo, Hyper3D Rodin and Hunyuan3D |
 
 ## Premium
@@ -629,16 +629,15 @@ Once the config file has been set on Claude, and the addon is running on Blender
 
 ### Capabilities
 
-The AI writes Blender Python itself for modelling, layout, materials, animation, rigging and retopology. The MCP adds what Python can't do on its own, as ten tools:
+The AI writes Blender Python itself for modelling, layout, materials, animation, rigging and retopology. The MCP adds what Python can't do on its own, as nine tools:
 
 | Tool | What it's for |
 |---|---|
 | `execute_blender_code` | Run Python in your live Blender |
-| `look` | See the result. Modes: `viewport`, `angles` (auto-framed multi-view sheet), `camera`, `topology` (wireframe + mesh stats), `rig` (bones + weighting stats), `frames` (animation strip) |
-| `get_scene_info` | Compact scene summary, one line per object; drill in with `root` or `query` |
+| `look` | See the result from the `viewport`, `camera`, `angles` (auto-framed multi-view sheet, any direction) or `frames` (animation strip), drawn `solid`, `material`, `rendered`, `wireframe` or `xray`; or show a render or image file |
+| `get_scene_info` | Compact scene summary, one line per object with the fields you pick (placement, materials, topology, weights, ...); drill in with `root` or `query` |
 | `generate_3d` | One call to generate and import a model with Tripo, Hunyuan3D or Hyper3D Rodin. Premium generators are preferred automatically |
 | `search_assets` / `import_asset` | [Poly Haven](https://polyhaven.com/) HDRIs, textures and models, [Sketchfab](https://sketchfab.com/) models, [Poly Pizza](https://poly.pizza/) low-poly models |
-| `get_guide` | Workflow guides loaded only when needed: `bpy`, `scene`, `level-design`, `animation`, `rigging`, `retopology`, `materials` (also exposed as `guide://` resources) |
 | `get_addon_status` | Blender version, addon version, and which libraries and generators are switched on |
 | `disable_telemetry`, `record_trajectory_feedback` | Data collection controls |
 

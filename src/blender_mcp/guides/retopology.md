@@ -19,8 +19,9 @@ Always work on a copy and keep the original as the bake source: `low = src.copy(
 
 ## Diagnose
 
-`look(mode="topology", target=[name])` shows the wireframe and reports tris, quads, ngons,
-non-manifold edges, boundary edges, loose vertices and poles.
+`get_scene_info(fields=["topology"], query=name)` reports quads, tris, ngons, non-manifold edges,
+boundary edges, loose vertices and poles; `look(mode="angles", shading="wireframe", target=[name])`
+shows the edges.
 
 ## Clean up
 

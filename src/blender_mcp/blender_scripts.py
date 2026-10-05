@@ -35,16 +35,23 @@ def parse_result(output: str) -> dict:
     raise ValueError("Blender script finished without a result")
 
 
-# One line per object, so a scene of hundreds of objects still costs a few
-# hundred tokens. Dimensions come from the evaluated world bounding box, which
-# is what matters for placement (modifiers and parent scale included).
+# One line per object, carrying only the fields the caller asked for, so the
+# default listing stays a few tokens per object. Dimensions come from the
+# evaluated world bounding box, which is what matters for placement (modifiers
+# and parent scale included), and are only computed when asked for.
+# In the order they appear on a line.
+SCENE_FIELDS = ("location", "rotation", "scale", "size", "ground", "parent", "details", "materials",
+                "modifiers", "animation", "hidden", "children", "topology", "weights", "settings")
+SCENE_DEFAULT_FIELDS = ("location", "size", "children", "hidden")
+
 SCENE_SUMMARY = r'''
-import bpy
+import bpy, math
 from mathutils import Vector
 
 scene = bpy.context.scene
-depsgraph = bpy.context.evaluated_depsgraph_get()
-limit = max(1, min(int(ARGS.get("limit") or 50), 500))
+F = set(ARGS.get("fields") or ())
+depsgraph = bpy.context.evaluated_depsgraph_get() if F & {"size", "ground"} else None
+limit = max(1, min(int(ARGS.get("limit") or 20), 500))
 query = (ARGS.get("query") or "").strip().lower()
 root_name = ARGS.get("root")
 
@@ -52,12 +59,12 @@ def r(v):
     return round(float(v), 2)
 
 def bounds(obj):
+    if obj.type in {"EMPTY", "LIGHT", "CAMERA"}:
+        return None
     try:
         ev = obj.evaluated_get(depsgraph)
         pts = [ev.matrix_world @ Vector(c) for c in ev.bound_box]
     except Exception:
-        return None
-    if obj.type in {"EMPTY", "LIGHT", "CAMERA"}:
         return None
     lo = [min(p[i] for p in pts) for i in range(3)]
     hi = [max(p[i] for p in pts) for i in range(3)]
@@ -65,34 +72,81 @@ def bounds(obj):
 
 def line(obj, depth=0):
     parts = [("  " * depth) + obj.name, obj.type.lower()]
-    loc = obj.matrix_world.translation
-    parts.append(f"at ({r(loc.x)}, {r(loc.y)}, {r(loc.z)})")
-    b = bounds(obj)
-    if b:
-        size = [r(b[1][i] - b[0][i]) for i in range(3)]
-        parts.append(f"size {size[0]}x{size[1]}x{size[2]}")
+    if "location" in F:
+        loc = obj.matrix_world.translation
+        parts.append(f"at ({r(loc.x)}, {r(loc.y)}, {r(loc.z)})")
+    if "rotation" in F:
+        e = obj.matrix_world.to_euler()
+        parts.append(f"rot ({round(math.degrees(e.x))}, {round(math.degrees(e.y))}, {round(math.degrees(e.z))})")
+    if "scale" in F:
+        s = obj.matrix_world.to_scale()
+        parts.append(f"scale ({r(s.x)}, {r(s.y)}, {r(s.z)})")
+    b = bounds(obj) if F & {"size", "ground"} else None
+    if b and "size" in F:
+        parts.append(f"size {r(b[1][0] - b[0][0])}x{r(b[1][1] - b[0][1])}x{r(b[1][2] - b[0][2])}")
+    if b and "ground" in F:
         if abs(b[0][2]) < 0.005:
             parts.append("on ground")
         elif b[0][2] < -0.005:
             parts.append(f"below ground by {r(-b[0][2])}")
-    if obj.type == "MESH":
-        parts.append(f"{len(obj.data.polygons)} faces")
-        mats = [s.material.name for s in obj.material_slots if s.material]
+        else:
+            parts.append(f"floating {r(b[0][2])}")
+    if "parent" in F and obj.parent:
+        parts.append(f"parent {obj.parent.name}")
+    if "details" in F:
+        if obj.type == "MESH":
+            parts.append(f"{len(obj.data.polygons)} faces")
+        elif obj.type == "ARMATURE":
+            parts.append(f"{len(obj.data.bones)} bones")
+        elif obj.type == "LIGHT":
+            parts.append(f"{obj.data.type.lower()} {r(obj.data.energy)}W")
+    if "materials" in F:
+        mats = [s.material.name for s in getattr(obj, "material_slots", []) if s.material]
         if mats:
             parts.append("mat " + ", ".join(mats[:3]) + ("..." if len(mats) > 3 else ""))
-    elif obj.type == "ARMATURE":
-        parts.append(f"{len(obj.data.bones)} bones")
-    elif obj.type == "LIGHT":
-        parts.append(f"{obj.data.type.lower()} {r(obj.data.energy)}W")
-    if obj.modifiers:
+    if "modifiers" in F and obj.modifiers:
         parts.append("mods " + ", ".join(m.type.lower() for m in obj.modifiers))
-    if obj.animation_data and obj.animation_data.action:
+    if "animation" in F and obj.animation_data and obj.animation_data.action:
         parts.append(f"anim {obj.animation_data.action.name}")
-    if obj.hide_get() or obj.hide_render:
+    if "hidden" in F and (obj.hide_get() or obj.hide_render):
         parts.append("hidden")
-    if obj.children:
+    if "children" in F and obj.children:
         parts.append(f"{len(obj.children)} children")
+    if "topology" in F and obj.type == "MESH":
+        parts.append(topology(obj))
+    if "weights" in F and obj.type == "MESH":
+        w = weights(obj)
+        if w:
+            parts.append(w)
     return " | ".join(parts)
+
+def topology(obj):
+    import bmesh
+    if obj.mode == "EDIT":
+        obj.update_from_editmode()
+    bm = bmesh.new()
+    try:
+        bm.from_mesh(obj.data)
+        sides = [len(f.verts) for f in bm.faces]
+        non_manifold = sum(1 for e in bm.edges if not e.is_manifold and not e.is_boundary)
+        boundary = sum(1 for e in bm.edges if e.is_boundary)
+        loose = sum(1 for v in bm.verts if not v.link_edges)
+        poles = sum(1 for v in bm.verts if len(v.link_edges) not in (0, 2, 4) and not v.is_boundary)
+    finally:
+        bm.free()
+    return (f"{sides.count(4)} quads, {sides.count(3)} tris, {sum(1 for n in sides if n > 4)} ngons; "
+            f"{non_manifold} non-manifold, {boundary} boundary edges, {loose} loose verts, {poles} poles")
+
+def weights(obj):
+    arm = next((m.object for m in obj.modifiers if m.type == "ARMATURE" and m.object), None)
+    if arm is None:
+        return None
+    deform = {b.name for b in arm.data.bones if b.use_deform}
+    groups = {g.index for g in obj.vertex_groups if g.name in deform}
+    unweighted = sum(1 for v in obj.data.vertices if not any(g.group in groups and g.weight > 0 for g in v.groups))
+    missing = sorted(deform - {g.name for g in obj.vertex_groups})
+    return (f"{unweighted} of {len(obj.data.vertices)} verts unweighted by {arm.name}"
+            + (f"; deform bones with no group: {', '.join(missing[:10])}" + ("..." if len(missing) > 10 else "") if missing else ""))
 
 lines = []
 total = 0
@@ -120,30 +174,33 @@ counts = {}
 for o in scene.objects:
     counts[o.type.lower()] = counts.get(o.type.lower(), 0) + 1
 
-world = scene.world
-hdri = None
-if world and world.use_nodes:
-    for n in world.node_tree.nodes:
-        if n.type == "TEX_ENVIRONMENT" and n.image:
-            hdri = n.image.name
-
 active = bpy.context.view_layer.objects.active
+selected = [o.name for o in bpy.context.selected_objects]
 header = {
     "scene": scene.name,
-    "file": bpy.data.filepath or "(unsaved)",
-    "blender": bpy.app.version_string,
-    "engine": scene.render.engine,
-    "frames": [scene.frame_start, scene.frame_end, scene.frame_current],
-    "fps": scene.render.fps,
-    "resolution": [scene.render.resolution_x, scene.render.resolution_y],
-    "camera": scene.camera.name if scene.camera else None,
-    "world_hdri": hdri,
-    "unit_scale": scene.unit_settings.scale_length,
     "object_counts": counts,
-    "selected": [o.name for o in bpy.context.selected_objects][:20],
+    "selected": selected[:5],
+    "selected_count": len(selected),
     "active": active.name if active else None,
     "mode": bpy.context.mode,
 }
+if "settings" in F:
+    world = scene.world
+    hdri = None
+    if world and world.use_nodes:
+        for n in world.node_tree.nodes:
+            if n.type == "TEX_ENVIRONMENT" and n.image:
+                hdri = n.image.name
+    header["settings"] = {
+        "file": bpy.data.filepath or "(unsaved)",
+        "engine": scene.render.engine,
+        "frames": [scene.frame_start, scene.frame_end, scene.frame_current],
+        "fps": scene.render.fps,
+        "resolution": [scene.render.resolution_x, scene.render.resolution_y],
+        "camera": scene.camera.name if scene.camera else None,
+        "world_hdri": hdri,
+        "unit_scale": scene.unit_settings.scale_length,
+    }
 return {"header": header, "lines": lines, "total": total, "shown": len(lines)}
 '''
 
@@ -161,7 +218,66 @@ from mathutils import Vector, Matrix
 scene = bpy.context.scene
 depsgraph = bpy.context.evaluated_depsgraph_get()
 mode = ARGS["mode"]
-max_size = int(ARGS.get("max_size") or 1000)
+max_size = int(ARGS.get("max_size") or 768)
+
+if mode == "image":
+    # An image in the file ("Render Result", a texture) or on disk. Float images and
+    # render results go through save_render so the scene's view transform applies,
+    # as it would to the final render; byte images are shown as they are.
+    import os
+    ref = ARGS.get("image") or ""
+    src = bpy.data.images.get(ref)
+    temp = []  # images this look created, removed at the end
+    if src is None:
+        path = bpy.path.abspath(ref)
+        if not os.path.isfile(path):
+            return {"error": f"No image named {ref!r} in the file and no file at {path!r}"}
+        try:
+            src = bpy.data.images.load(path, check_existing=False)
+        except Exception as e:
+            return {"error": f"Couldn't load {path!r} as an image: {e}"}
+        temp.append(src)
+    out = ARGS["filepath"]
+    settings = scene.render.image_settings
+    saved_settings = [(a, getattr(settings, a)) for a in ("file_format", "color_mode", "color_depth")]
+    try:
+        if src.type == "RENDER_RESULT" or src.is_float:
+            settings.file_format = "PNG"
+            settings.color_mode = "RGBA"
+            settings.color_depth = "8"
+            try:
+                src.save_render(out, scene=scene)
+            except Exception as e:
+                return {"error": f"Couldn't read {src.name!r}" + (" (nothing rendered yet?)" if src.type == "RENDER_RESULT" else "") + f": {e}"}
+            img = bpy.data.images.load(out, check_existing=False)
+            temp.append(img)
+        elif src in temp:
+            img = src
+        else:
+            img = src.copy()  # never resize the user's own image
+            temp.append(img)
+        w0, h0 = img.size
+        if not w0 or not h0:
+            return {"error": f"{src.name!r} has no pixels"}
+        s = min(1.0, max_size / max(w0, h0))
+        if s < 1.0:
+            img.scale(max(1, int(w0 * s)), max(1, int(h0 * s)))
+        img.filepath_raw = out
+        img.file_format = "PNG"
+        img.save()
+        w, h = img.size
+    finally:
+        for attr, value in saved_settings:
+            try:
+                setattr(settings, attr, value)
+            except Exception:
+                pass
+        for im in temp:
+            try:
+                bpy.data.images.remove(im)
+            except Exception:
+                pass
+    return {"mode": "image", "image": ref, "original_size": [w0, h0], "width": w, "height": h}
 
 area = space = region = None
 for a in bpy.context.screen.areas:
@@ -221,7 +337,7 @@ def perspective(aspect, near, far):
 def orbit(direction, aspect):
     direction = Vector(direction).normalized()
     fit = FOV / 2 if aspect >= 1 else math.atan(math.tan(FOV / 2) * aspect)
-    dist = radius / math.sin(fit) * 1.1
+    dist = float(ARGS.get("distance") or 0) or radius / math.sin(fit) * 1.1
     eye = center + direction * dist
     # The camera looks down its local -Z with local Y up; to_track_quat keeps
     # that Y as close to world Z as the direction allows, so the horizon stays level.
@@ -234,6 +350,17 @@ ANGLES = {
     # Top is tilted a hair toward -Y so "up" in the image is +Y, as in Blender's top view.
     "top": (0, -0.001, 1), "three_quarter": (1, -1, 0.7),
 }
+
+def direction_of(v):
+    """A named angle, or any [x, y, z] direction from the target towards the eye."""
+    if isinstance(v, str):
+        return ANGLES.get(v)
+    if isinstance(v, (list, tuple)) and len(v) == 3 and any(v):
+        return tuple(float(c) for c in v)
+    return None
+
+def label(v):
+    return v if isinstance(v, str) else "(" + ", ".join(f"{float(c):g}" for c in v) + ")"
 
 def current_view():
     r3d = space.region_3d
@@ -285,70 +412,47 @@ def set_attr(obj, attr, value):
         saved.pop()
 
 requested = ARGS.get("shading")
-shading_types = {"solid": "SOLID", "material": "MATERIAL", "rendered": "RENDERED", "wireframe": "WIREFRAME"}
+shading_types = {"solid": "SOLID", "material": "MATERIAL", "rendered": "RENDERED", "wireframe": "SOLID", "xray": "SOLID"}
 if requested:
     set_attr(shading, "type", shading_types[requested])
 
-if mode != "viewport":
-    # The 3D cursor sits in the middle of generated views and reads as part of the scene.
-    set_attr(overlay, "show_cursor", False)
-
 info = {"mode": mode, "targets": len(targets), "center": [round(v, 2) for v in center],
         "size": [round(v, 2) for v in (hi - lo)]}
+
+if mode != "viewport":
+    # The 3D cursor, light and camera gizmos and parent lines sit across generated views
+    # and read as part of the scene.
+    set_attr(overlay, "show_cursor", False)
+    set_attr(overlay, "show_extras", False)
+    set_attr(overlay, "show_relationship_lines", False)
+    if mode == "camera" or ARGS.get("view") == "camera" or shading.type in {"RENDERED", "MATERIAL"}:
+        # Grid, light and camera gizmos aren't part of what's being judged.
+        set_attr(overlay, "show_overlays", False)
+    engine = scene.render.engine
+    if shading.type == "RENDERED" and "EEVEE" not in engine and engine != "BLENDER_WORKBENCH":
+        # Progressive engines like Cycles draw nothing into an offscreen view.
+        return {"error": f"Rendered shading can't be captured with {engine}. Render and look at "
+                         "image=\"Render Result\", use material shading, or switch the engine."}
 frame_before = scene.frame_current
 
 try:
-    if mode == "topology":
-        if not requested:
-            set_attr(shading, "type", "SOLID")
+    if requested == "wireframe":
+        # Edges over a plain matcap surface: topology and form in one picture.
         set_attr(shading, "light", "MATCAP")
         set_attr(shading, "color_type", "SINGLE")
         set_attr(overlay, "show_overlays", True)
         set_attr(overlay, "show_wireframes", True)
         set_attr(overlay, "wireframe_threshold", 1.0)
-        import bmesh
-        stats = []
-        for o in [t for t in targets if t.type == "MESH"][:10]:
-            bm = bmesh.new()
-            bm.from_mesh(o.data)
-            sides = [len(f.verts) for f in bm.faces]
-            poles = sum(1 for v in bm.verts if len(v.link_edges) not in (0, 2, 4) and not v.is_boundary)
-            stats.append({
-                "object": o.name, "verts": len(bm.verts), "faces": len(sides),
-                "tris": sides.count(3), "quads": sides.count(4), "ngons": sum(1 for s in sides if s > 4),
-                "non_manifold_edges": sum(1 for e in bm.edges if not e.is_manifold and not e.is_boundary),
-                "boundary_edges": sum(1 for e in bm.edges if e.is_boundary),
-                "loose_verts": sum(1 for v in bm.verts if not v.link_edges),
-                "poles": poles,
-                "modifiers": [m.type.lower() for m in o.modifiers],
-            })
-            bm.free()
-        info["mesh_stats"] = stats
-    elif mode == "rig":
+    elif requested == "xray":
         set_attr(shading, "show_xray", True)
         set_attr(shading, "xray_alpha", 0.35)
         set_attr(overlay, "show_overlays", True)
         set_attr(overlay, "show_bones", True)
-        rigs = []
-        for o in targets:
-            if o.type == "ARMATURE":
-                set_attr(o, "show_in_front", True)
-                bones = o.data.bones
-                rigs.append({"armature": o.name, "bones": len(bones),
-                             "deform_bones": sum(1 for b in bones if b.use_deform),
-                             "roots": [b.name for b in bones if b.parent is None][:5]})
-            elif o.type == "MESH":
-                arm = next((m.object for m in o.modifiers if m.type == "ARMATURE" and m.object), None)
-                if arm is None:
-                    continue
-                deform = {b.name for b in arm.data.bones if b.use_deform}
-                groups = {g.index: g.name for g in o.vertex_groups if g.name in deform}
-                unweighted = sum(1 for v in o.data.vertices
-                                 if not any(g.group in groups and g.weight > 0 for g in v.groups))
-                rigs.append({"mesh": o.name, "armature": arm.name, "vertices": len(o.data.vertices),
-                             "unweighted_vertices": unweighted,
-                             "deform_bones_without_group": sorted(deform - set(groups.values()))[:10]})
-        info["rig_stats"] = rigs
+        rigs = {o for o in targets if o.type == "ARMATURE"}
+        rigs |= {m.object for o in targets for m in getattr(o, "modifiers", [])
+                 if m.type == "ARMATURE" and m.object}
+        for o in rigs:
+            set_attr(o, "show_in_front", True)
 
     if mode == "viewport":
         w, h = region.width, region.height
@@ -381,8 +485,8 @@ try:
             scene.frame_set(int(f))
             if use_camera:
                 view, win = camera_view(w, h)
-            elif ARGS.get("view") in ANGLES:
-                view, win = orbit(ANGLES[ARGS["view"]], w / h)
+            elif direction_of(ARGS.get("view")):
+                view, win = orbit(direction_of(ARGS["view"]), w / h)
             else:
                 view, win = current_view()
             tiles.append(draw(view, win, w, h))
@@ -390,12 +494,12 @@ try:
         image = sheet(tiles, cols)
     else:
         views = ARGS.get("views") or ["front", "right", "top", "three_quarter"]
-        views = [v for v in views if v in ANGLES][:6] or ["three_quarter"]
+        views = [v for v in views if direction_of(v)][:6] or ["three_quarter"]
         cols = 1 if len(views) == 1 else (3 if len(views) > 4 else 2)
         w = max(64, max_size // cols)
         h = w
-        tiles = [draw(*orbit(ANGLES[v], 1.0), w, h) for v in views]
-        info["views"] = views
+        tiles = [draw(*orbit(direction_of(v), 1.0), w, h) for v in views]
+        info["views"] = [label(v) for v in views]
         image = sheet(tiles, cols)
 finally:
     if scene.frame_current != frame_before:

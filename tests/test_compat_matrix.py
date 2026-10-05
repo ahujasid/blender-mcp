@@ -203,7 +203,7 @@ def _text(result) -> str:
 
 # ------------------------------------------------------------ new server, any addon
 
-@pytest.mark.parametrize("mode", ["viewport", "angles", "topology", "frames"])
+@pytest.mark.parametrize("mode", ["viewport", "angles", "camera", "frames"])
 def test_look_always_shows_something_or_says_how_to_fix_it(addon, mode):
     result = _run(server.look(None, mode=mode))
     can_see = "get_viewport_screenshot" in addon.commands or addon.returns_output
