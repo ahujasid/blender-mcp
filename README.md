@@ -25,7 +25,6 @@ Prompt-assisted 3D modeling, scene creation, and manipulation — driven by AI.
 **Supporters**
 
 [CodeRabbit](https://www.coderabbit.ai/)
-[Kevin Guanche Darias](https://github.com/KevinGuancheDarias)
 [Guillermo Rauch](https://github.com/rauchg)
 
 **All supporters:** [Support this project](https://github.com/sponsors/ahujasid)
