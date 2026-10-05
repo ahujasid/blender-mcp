@@ -589,18 +589,23 @@ Then open the **MCP for Blender** tab in Blender's sidebar (press `N` in the 3D 
 
 > For newcomers, go straight to [Quickstart](#quickstart). For existing users, see below.
 
-**1.** Update the addon file by running:
+**1.** Run:
 
 ```bash
-uvx mcp-for-blender install-addon
-uvx mcp-for-blender addon-paths   # optional: list detected Blender addons folders
+uvx mcp-for-blender@latest update
 ```
 
-**2.** In Blender: **Preferences → Add-ons** → disable and re-enable **Interface: MCP for Blender** (or restart Blender), then click **Start MCP Server** again.
+This updates the MCP server (refreshing uv's cached copy, or upgrading a `uv tool install`) and every installed copy of the Blender addon, keeping a `.bak` of each file it replaces. It never downgrades an addon that's newer than the release, and leaves alone a copy you've edited locally. Add `--dry-run` to see what it would change first.
 
-**3.** Delete the MCP server from Claude and add it back again if the server package itself needs a refresh.
+> Use `@latest` the first time: releases older than 2.1.7 don't have the `update` command, and uvx may still have one of those cached.
 
-> **Note:** the MCP server never modifies your Blender addon files on its own. When it starts, it checks whether the installed addon is behind the bundled copy and logs how to update; `install-addon` is what actually writes, and it keeps a `.bak` of the file it replaces. Trajectory capture still works on older loaded addons via an `execute_code` fallback.
+**2.** Restart your MCP client (Claude Desktop, Cursor, ...) so it starts the new server.
+
+**3.** In Blender: restart it, or **Preferences → Add-ons** → disable and re-enable **Interface: MCP for Blender**, then click **Start MCP Server** again.
+
+If a client is still set up with the old `blender-mcp` package name, `update` says so; `uvx mcp-for-blender setup` switches it over.
+
+> **Note:** the MCP server never modifies your Blender addon files on its own. When it starts, it checks whether the installed addon is behind the bundled copy and logs how to update; `update` and `install-addon` are what actually write. Trajectory capture still works on older loaded addons via an `execute_code` fallback.
 
 ---
 

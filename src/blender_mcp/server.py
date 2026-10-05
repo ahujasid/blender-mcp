@@ -2170,7 +2170,7 @@ def main():
     """Run the MCP server, or addon install CLI subcommands."""
     global CLI_HOST, CLI_PORT
 
-    if len(sys.argv) > 1 and sys.argv[1] in {"install-addon", "addon-paths", "setup", "-h", "--help"}:
+    if len(sys.argv) > 1 and sys.argv[1] in {"install-addon", "addon-paths", "setup", "update", "-h", "--help"}:
         code = run_addon_cli(sys.argv[1:])
         if code >= 0:
             raise SystemExit(code)
