@@ -279,3 +279,19 @@ def test_run_setup_needs_uvx(monkeypatch, capsys):
     monkeypatch.setattr(setup_cli, "find_uvx", lambda: None)
     assert setup_cli.run_setup(assume_yes=True) == 1
     assert "Install uv" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("message, oem", [
+    ("INFO: Es werden keine Aufgaben mit den angegebenen Kriterien ausgeführt.", "cp850"),  # German
+    ("BİLGİ: Belirtilen ölçütlerle eşleşen çalışan görev yok.", "cp857"),  # Turkish
+])
+def test_blender_is_running_survives_localized_tasklist(monkeypatch, message, oem):
+    # Emulate Windows: tasklist writes the OEM code page, and subprocess decodes with the
+    # encoding it was given, else the ANSI code page (cp1252 here), which cannot read byte 0x81.
+    def fake_run(args, capture_output, text, timeout, encoding=None, errors="strict"):
+        codec = oem if encoding == "oem" else (encoding or "cp1252")
+        stdout = message.encode(oem).decode(codec, errors)
+        return setup_cli.subprocess.CompletedProcess(args, 0, stdout, "")
+
+    monkeypatch.setattr(setup_cli.subprocess, "run", fake_run)
+    assert setup_cli.blender_is_running("win32") is False
