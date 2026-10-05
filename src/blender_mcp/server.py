@@ -274,6 +274,20 @@ class BlenderConnection:
 
         return response.get("result", {})
 
+
+def _connect_on_startup():
+    """Try to connect to Blender on startup to verify it's available."""
+    try:
+        # This will initialize the global connection if needed
+        get_blender_connection()
+        logger.info("Successfully connected to Blender on startup")
+        if _addon_handshake and not _addon_handshake.up_to_date:
+            logger.warning(format_handshake_log(_addon_handshake))
+    except Exception as e:
+        logger.warning(f"Could not connect to Blender on startup: {str(e)}")
+        logger.warning("Make sure the Blender addon is running before using Blender resources or tools")
+
+
 @asynccontextmanager
 async def server_lifespan(server: FastMCP) -> AsyncIterator[Dict[str, Any]]:
     """Manage server startup and shutdown lifecycle"""
@@ -299,16 +313,12 @@ async def server_lifespan(server: FastMCP) -> AsyncIterator[Dict[str, Any]]:
         except Exception as e:
             logger.debug(f"Failed to record startup telemetry: {e}")
 
-        # Try to connect to Blender on startup to verify it's available
-        try:
-            # This will initialize the global connection if needed
-            blender = get_blender_connection()
-            logger.info("Successfully connected to Blender on startup")
-            if _addon_handshake and not _addon_handshake.up_to_date:
-                logger.warning(format_handshake_log(_addon_handshake))
-        except Exception as e:
-            logger.warning(f"Could not connect to Blender on startup: {str(e)}")
-            logger.warning("Make sure the Blender addon is running before using Blender resources or tools")
+        # In the background: the handshake is answered on Blender's main
+        # thread, so while Blender is busy (another session's long command, a
+        # heavy script) connecting inline held the MCP initialize reply past
+        # the client's startup timeout, and the server showed as failed with
+        # no tools for the rest of the session.
+        threading.Thread(target=_connect_on_startup, name="blender-connect", daemon=True).start()
 
         # Return an empty context - we're using the global connection
         yield {}

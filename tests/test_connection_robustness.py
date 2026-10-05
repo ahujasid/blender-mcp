@@ -196,3 +196,28 @@ def test_second_blender_cannot_share_the_port():
     finally:
         second.stop()
         first.stop()
+
+
+def test_startup_does_not_wait_for_a_busy_blender(monkeypatch):
+    """A busy Blender used to hold the initialize reply past the client's
+    startup timeout, so the server showed as failed for the whole session."""
+    import asyncio
+
+    port = _free_port()
+    busy = BlenderMCPServer(port=port)  # accepts connections, never drains
+    busy.execute_command = lambda command: {"status": "success", "result": {}}
+    busy.start()
+    monkeypatch.setattr(mcp_server, "CLI_PORT", port)
+    monkeypatch.setattr(mcp_server, "_blender_connection", None)
+    monkeypatch.setattr(mcp_server, "_addon_handshake_checked", False)
+    monkeypatch.setattr(mcp_server, "record_startup", lambda: None)
+
+    async def enter_lifespan():
+        start = time.time()
+        async with mcp_server.server_lifespan(mcp_server.mcp):
+            return time.time() - start
+
+    try:
+        assert asyncio.run(enter_lifespan()) < 2
+    finally:
+        busy.stop()
