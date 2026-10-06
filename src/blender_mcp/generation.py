@@ -11,6 +11,8 @@ commands it has always had, so this needs no addon update.
 
 import asyncio
 import base64
+import hashlib
+import json
 import logging
 import os
 import re
@@ -30,6 +32,13 @@ PREMIUM_ORDER = ("tripo", "hunyuan3d", "hyper3d")
 OWN_KEY_ORDER = ("hunyuan3d", "hyper3d")
 
 POLL_INTERVAL_S = 5.0
+# A whole generate_3d call, submit included, stays under this. MCP clients on
+# the TypeScript SDK cut tool calls off at 60 s by default, and a reply that
+# never arrives takes its job handle with it while the generation is charged.
+MAX_CALL_S = 45.0
+# Unfinished jobs older than this are dropped from the pending file: the
+# Premium sweeper fails jobs after 60 minutes, and provider results expire.
+PENDING_MAX_AGE_S = 2 * 3600
 
 TRIPO_UNAVAILABLE = ("Tripo is only available with MCP for Blender Premium. If Premium is on, update the Blender "
                      "addon: run `uvx mcp-for-blender install-addon`, then restart Blender.")
@@ -40,6 +49,10 @@ Progress = Callable[[float, float], Awaitable[None]]
 
 class GenerationError(Exception):
     """A failure to relay to the user as written, without retrying."""
+
+
+class Unsupported(GenerationError):
+    """The addon can't do this at all, so resuming the job won't help."""
 
 
 @dataclass
@@ -59,6 +72,73 @@ class Job:
         if provider not in PROVIDERS or not kind or not ident:
             raise GenerationError(f"Not a generation job handle: {handle!r}")
         return cls(provider, kind, ident, name)
+
+    @property
+    def resume_hint(self) -> str:
+        return (f'Call generate_3d(job="{self.handle}", name="{self.name}") to keep waiting; it imports the '
+                "model when it's ready. Don't start a new generation.")
+
+
+def request_key(provider: str, prompt: str | None, image: str | None,
+                quality: str | None, bbox_condition: list | None) -> str:
+    """Identifies a request, so a retry of one still running can be recognised."""
+    raw = json.dumps([provider, prompt, image, quality, bbox_condition])
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+class Pending:
+    """Generations submitted but not yet imported or failed, kept on disk.
+
+    A client timeout or a restart loses the job handle from the conversation,
+    and the usual next step is the same request again, which pays twice. With
+    the job written down here, that retry resumes it instead. Never raises:
+    a missing or unreadable file just means nothing is pending.
+    """
+
+    def __init__(self, path: Path | None, clock: Callable[[], float] = time.time):
+        self.path = path
+        self.clock = clock
+
+    def _load(self) -> list[dict]:
+        if not self.path:
+            return []
+        try:
+            entries = json.loads(self.path.read_text(encoding="utf-8"))
+        except Exception:
+            return []
+        if not isinstance(entries, list):
+            return []
+        oldest = self.clock() - PENDING_MAX_AGE_S
+        return [e for e in entries if isinstance(e, dict) and e.get("started_at", 0) >= oldest]
+
+    def _save(self, entries: list[dict]) -> None:
+        if not self.path:
+            return
+        try:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            self.path.write_text(json.dumps(entries), encoding="utf-8")
+        except Exception as e:
+            logger.debug(f"Pending generations write failed: {e}")
+
+    def find(self, key: str) -> Job | None:
+        for entry in self._load():
+            if entry.get("key") == key:
+                try:
+                    return Job.parse(entry["handle"], entry.get("name") or "Generated")
+                except (GenerationError, KeyError):
+                    return None
+        return None
+
+    def add(self, key: str, job: Job) -> None:
+        entries = [e for e in self._load() if e.get("handle") != job.handle]
+        entries.append({"key": key, "handle": job.handle, "name": job.name, "started_at": self.clock()})
+        self._save(entries)
+
+    def remove(self, job: Job) -> None:
+        entries = self._load()
+        kept = [e for e in entries if e.get("handle") != job.handle]
+        if len(kept) != len(entries):
+            self._save(kept)
 
 
 def _relay(result: Any) -> None:
@@ -177,13 +257,15 @@ def poll(send: Send, job: Job) -> tuple[str, Any]:
     if job.provider == "tripo" or (job.provider == "hyper3d" and job.kind == "fal"):
         command = "poll_tripo_job_status" if job.provider == "tripo" else "poll_rodin_job_status"
         result = send(command, {"request_id": job.ident})
+        status = str(result.get("status", "")).upper() if isinstance(result, dict) else ""
+        # A failed job also carries "error"; read the status first so it counts
+        # as the provider's verdict, not as a lost connection.
+        if status not in ("COMPLETED", "IN_QUEUE", "IN_PROGRESS", ""):
+            return "failed", result.get("error") or status
         _relay(result)
-        status = str(result.get("status", "")).upper()
         if status == "COMPLETED":
             return "done", None
-        if status in ("IN_QUEUE", "IN_PROGRESS", ""):
-            return "running", status or "IN_QUEUE"
-        return "failed", result.get("error") or status
+        return "running", status or "IN_QUEUE"
 
     if job.provider == "hyper3d":
         result = send("poll_rodin_job_status", {"subscription_key": job.ident.split("|", 1)[1]})
@@ -229,16 +311,31 @@ def import_result(send: Send, job: Job, detail: Any) -> Any:
 async def wait_and_import(send: Send, job: Job, wait_seconds: float,
                           progress: Progress | None = None,
                           sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
-                          clock: Callable[[], float] = time.monotonic) -> tuple[bool, str]:
-    """Poll until done or `wait_seconds` pass. (imported, message)."""
+                          clock: Callable[[], float] = time.monotonic,
+                          pending: Pending | None = None) -> tuple[bool, str]:
+    """Poll until done or `wait_seconds` pass. (imported, message).
+
+    Once a job is submitted, any error short of the provider saying it failed
+    carries the job handle, since the generation may still finish and is paid.
+    """
     start = clock()
     while True:
-        state, detail = poll(send, job)
+        try:
+            state, detail = poll(send, job)
+            if state == "done":
+                import_result(send, job, detail)
+        except Unsupported:
+            raise
+        except Exception as e:
+            raise GenerationError(f"{e}. The generation may still be running or finished. {job.resume_hint}") from e
         if state == "done":
-            import_result(send, job, detail)
+            if pending:
+                pending.remove(job)
             return True, job.name
         if state == "failed":
-            raise GenerationError(f"Generation failed: {detail}. This attempt was not imported.")
+            if pending:
+                pending.remove(job)
+            raise GenerationError(f"Generation failed: {str(detail).rstrip('.')}. This attempt was not imported.")
         elapsed = clock() - start
         if elapsed + POLL_INTERVAL_S > wait_seconds:
             return False, str(detail)

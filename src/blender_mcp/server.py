@@ -1669,9 +1669,9 @@ def _generation_send(command: str, params: dict):
     except Exception as e:
         if _addon_lacks(e):
             if "tripo" in command:
-                raise generation.GenerationError(TRIPO_UNAVAILABLE)
+                raise generation.Unsupported(TRIPO_UNAVAILABLE)
             label = "Hunyuan3D" if "hunyuan" in command else "Hyper3D Rodin"
-            raise generation.GenerationError(missing_feature(label, label))
+            raise generation.Unsupported(missing_feature(label, label))
         raise
 
 
@@ -1685,14 +1685,18 @@ def _own_key_generators(blender: BlenderConnection) -> dict[str, bool]:
     return enabled
 
 
+def _pending_generations() -> "generation.Pending":
+    return generation.Pending(context_log.context_log_path().with_name("pending-generations.json"))
+
+
 async def _generation_reply(ctx: Context, job: "generation.Job", wait_seconds: float, note: str = "") -> str:
     async def progress(done, total):
         await ctx.report_progress(done, total)
 
-    imported, detail = await generation.wait_and_import(_generation_send, job, wait_seconds, progress)
+    imported, detail = await generation.wait_and_import(
+        _generation_send, job, wait_seconds, progress, pending=_pending_generations())
     if not imported:
-        return (f"Still generating ({detail}). Call generate_3d(job=\"{job.handle}\", name=\"{job.name}\") "
-                f"to keep waiting; it imports the model when it's ready. Don't start a new generation.{note}")
+        return f"Still generating ({detail}). {job.resume_hint}{note}"
     reply = f"Generated and imported '{job.name}' with {job.provider}."
     try:
         bounds = _run_script(blender_scripts.BOUNDS, {"names": [job.name]})
@@ -1727,8 +1731,10 @@ async def generate_3d(
     arbitrary scale and facing. Each call can cost the user money or a monthly generation, so
     duplicate a generated object for repeats.
 
-    Waits up to wait_seconds, then imports. Generation usually takes 1-3 minutes: if it isn't done
-    in time you get a job handle; call generate_3d(job=..., name=...) again to keep waiting.
+    Waits up to wait_seconds (at most 45), then imports. Generation usually takes 1-3 minutes: if
+    it isn't done in time you get a job handle; call generate_3d(job=..., name=...) again to keep
+    waiting. Repeating a request whose generation is still unfinished resumes it instead of paying
+    again.
 
     Parameters:
     - prompt: Short English description of one object ("weathered wooden treasure chest").
@@ -1745,7 +1751,8 @@ async def generate_3d(
     """
     if quality not in (None, "standard", "high"):
         return "Error: quality must be 'standard' or 'high'"
-    wait_seconds = max(10, min(int(wait_seconds or 50), 600))
+    call_start = time.monotonic()
+    wait_seconds = max(10, min(int(wait_seconds or 50), generation.MAX_CALL_S))
     try:
         if job:
             return await _generation_reply(ctx, generation.Job.parse(job, name or "Generated"), wait_seconds)
@@ -1756,12 +1763,22 @@ async def generate_3d(
         chosen, is_premium = generation.choose_provider(
             provider, premium, {} if premium else _own_key_generators(blender))
         note = "" if is_premium else premium_hint_once(ctx, {"mode": None})
-        started = generation.submit(
-            _generation_send, chosen, name or generation.default_name(prompt), prompt, image, quality,
-            bbox_condition, supports_quality=(_addon_protocol() or 0) >= 11)
-        if isinstance(started, str):
-            return started + note
-        return await _generation_reply(ctx, started, wait_seconds, note)
+        pending = _pending_generations()
+        key = generation.request_key(chosen, prompt, image, quality, bbox_condition)
+        started = pending.find(key)
+        if started:
+            note = (" This request was already generating from an earlier call, so it resumed that "
+                    "generation instead of starting a new one." + note)
+        else:
+            started = generation.submit(
+                _generation_send, chosen, name or generation.default_name(prompt), prompt, image, quality,
+                bbox_condition, supports_quality=(_addon_protocol() or 0) >= 11)
+            if isinstance(started, str):
+                return started + note
+            pending.add(key, started)
+        # Submitting (an image upload, say) spends the same client timeout as waiting.
+        remaining = wait_seconds - (time.monotonic() - call_start)
+        return await _generation_reply(ctx, started, remaining, note)
     except generation.GenerationError as e:
         return f"Error: {e}"
     except Exception as e:

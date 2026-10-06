@@ -158,3 +158,92 @@ def test_bad_handles_are_rejected():
 def test_default_name_comes_from_the_prompt():
     assert generation.default_name("a weathered wooden treasure chest") == "AWeatheredWooden"
     assert generation.default_name(None) == "Generated"
+
+
+# -------------------------------------------------------------- stranded jobs
+
+def test_errors_after_submit_keep_the_handle():
+    class FlakyAddon(FakeAddon):
+        def __call__(self, command, params):
+            raise ConnectionError("Socket timeout while waiting for response from Blender")
+
+    job = Job("tripo", "rid", "r7", "Chest")
+    with pytest.raises(GenerationError) as e:
+        _run(FlakyAddon({}), job)
+    assert job.handle in str(e.value) and "Socket timeout" in str(e.value)
+
+
+def test_pending_jobs_survive_on_disk_until_settled(tmp_path):
+    path = tmp_path / "pending-generations.json"
+    job = Job("tripo", "rid", "r1", "Robot")
+    key = generation.request_key("tripo", "a robot", None, "high", None)
+    generation.Pending(path).add(key, job)
+
+    # A fresh instance, as after a restart, still finds it; a different request doesn't.
+    assert generation.Pending(path).find(key) == job
+    assert generation.Pending(path).find(generation.request_key("tripo", "a robot", None, None, None)) is None
+
+    send = FakeAddon({"poll_tripo_job_status": {"status": "COMPLETED"},
+                      "import_generated_asset_tripo": {"succeed": True}})
+    asyncio.run(generation.wait_and_import(send, job, 100, sleep=lambda _: asyncio.sleep(0),
+                                           pending=generation.Pending(path)))
+    assert generation.Pending(path).find(key) is None
+
+
+def test_failed_jobs_leave_pending_but_interrupted_ones_stay(tmp_path):
+    path = tmp_path / "pending.json"
+    failed, cut = Job("tripo", "rid", "f1", "A"), Job("tripo", "rid", "c1", "B")
+    generation.Pending(path).add("kf", failed)
+    generation.Pending(path).add("kc", cut)
+
+    send = FakeAddon({"poll_tripo_job_status": {"status": "FAILED", "error": "bad input"}})
+    with pytest.raises(GenerationError):
+        asyncio.run(generation.wait_and_import(send, failed, 100, pending=generation.Pending(path)))
+    send = FakeAddon({"poll_tripo_job_status": {"status": "IN_PROGRESS"}})
+    asyncio.run(generation.wait_and_import(send, cut, 1, pending=generation.Pending(path)))
+
+    assert generation.Pending(path).find("kf") is None
+    assert generation.Pending(path).find("kc") == cut
+
+
+def test_old_or_unreadable_pending_entries_are_ignored(tmp_path):
+    path = tmp_path / "pending.json"
+    now = [1_000_000.0]
+    pending = generation.Pending(path, clock=lambda: now[0])
+    pending.add("k", Job("tripo", "rid", "r1", "A"))
+    now[0] += generation.PENDING_MAX_AGE_S + 1
+    assert pending.find("k") is None
+
+    path.write_text("not json")
+    assert generation.Pending(path).find("k") is None
+    generation.Pending(path).add("k2", Job("tripo", "rid", "r2", "B"))
+    assert generation.Pending(path).find("k2") is not None
+    assert generation.Pending(None).find("k2") is None
+
+
+def test_repeating_an_unfinished_request_resumes_instead_of_paying_again(tmp_path, monkeypatch):
+    from blender_mcp import server
+
+    send = FakeAddon({"create_tripo_job": {"request_id": "r1"},
+                      "poll_tripo_job_status": {"status": "IN_PROGRESS"}})
+    path = tmp_path / "pending.json"
+    monkeypatch.setattr(server, "get_blender_connection", lambda: None)
+    monkeypatch.setattr(server, "_premium_generators", lambda _: ["tripo"])
+    monkeypatch.setattr(server, "_addon_protocol", lambda: 13)
+    monkeypatch.setattr(server, "_generation_send", send)
+    monkeypatch.setattr(server, "_pending_generations", lambda: generation.Pending(path))
+    monkeypatch.setattr(generation, "POLL_INTERVAL_S", 0.0)
+
+    class Ctx:
+        async def report_progress(self, *_):
+            pass
+
+    async def call(**kw):
+        return await server.generate_3d(Ctx(), image="/tmp/ref.png", quality="high", wait_seconds=10, **kw)
+
+    monkeypatch.setattr(generation, "submit", lambda send_, *a, **k: Job("tripo", "rid", send_("create_tripo_job", {})["request_id"], "Ref"))
+    first = asyncio.run(call())
+    second = asyncio.run(call())
+    assert 'job="tripo:rid:r1"' in first and 'job="tripo:rid:r1"' in second
+    assert "resumed" in second
+    assert [c for c, _ in send.calls].count("create_tripo_job") == 1
