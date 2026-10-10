@@ -43,17 +43,23 @@ def test_auto_prefers_premium_generators():
 
 
 def test_auto_falls_back_to_own_keys():
-    assert choose_provider("auto", [], {"hunyuan3d": False, "hyper3d": True}) == ("hyper3d", False)
+    assert choose_provider("auto", [], {"tripo": False, "hunyuan3d": False, "hyper3d": True}) == ("hyper3d", False)
+    assert choose_provider("auto", [], {"tripo": True, "hunyuan3d": True, "hyper3d": True}) == ("hunyuan3d", False)
+    assert choose_provider("auto", [], {"tripo": True, "hunyuan3d": False, "hyper3d": False}) == ("tripo", False)
 
 
 def test_nothing_enabled_points_at_setup():
     with pytest.raises(GenerationError, match="No 3D generator"):
-        choose_provider("auto", [], {"hunyuan3d": False, "hyper3d": False})
+        choose_provider("auto", [], {"tripo": False, "hunyuan3d": False, "hyper3d": False})
 
 
-def test_tripo_needs_premium():
-    with pytest.raises(GenerationError, match="Premium"):
-        choose_provider("tripo", [], {"hunyuan3d": True})
+def test_tripo_own_key_when_enabled():
+    assert choose_provider("tripo", [], {"tripo": True}) == ("tripo", False)
+
+
+def test_tripo_needs_key_or_premium():
+    with pytest.raises(GenerationError, match="Tripo"):
+        choose_provider("tripo", [], {"hunyuan3d": True, "tripo": False})
 
 
 def test_explicit_provider_must_be_on_in_premium():
@@ -74,6 +80,25 @@ def test_tripo_submit_poll_import():
     assert send.calls[0] == ("create_tripo_job", {"text_prompt": "a chest", "image": None, "quality": "high"})
     assert _run(send, job) == (True, "Chest")
     assert send.calls[-1] == ("import_generated_asset_tripo", {"request_id": "r1", "name": "Chest"})
+
+
+def test_tripo_own_key_submit_poll_import():
+    send = FakeAddon({
+        "create_tripo_job": {"task_id": "t1", "model": "H3.1"},
+        "poll_tripo_job_status": [
+            {"status": "running", "progress": 10},
+            {"status": "success", "model_url": "https://cdn.example/model.glb"},
+        ],
+        "import_generated_asset_tripo": {"succeed": True},
+    })
+    job = generation.submit(send, "tripo", "Teapot", "a teapot", None, None, None, False)
+    assert job.handle == "tripo:task:t1"
+    assert send.calls[0] == ("create_tripo_job", {"text_prompt": "a teapot", "image": None})
+    assert _run(send, job) == (True, "Teapot")
+    assert send.calls[-1] == (
+        "import_generated_asset_tripo",
+        {"name": "Teapot", "model_url": "https://cdn.example/model.glb"},
+    )
 
 
 def test_premium_error_codes_are_relayed_not_retried():

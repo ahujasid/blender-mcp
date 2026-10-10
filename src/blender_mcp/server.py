@@ -430,7 +430,7 @@ def _integrations(blender: BlenderConnection, premium_generators) -> dict:
     local settings only: Premium generators come from the handshake rather than a
     status call, which would ask the Premium server once per generator."""
     status = {}
-    for name in ("polyhaven", "sketchfab", "polypizza", "hunyuan3d", "hyper3d"):
+    for name in ("polyhaven", "sketchfab", "polypizza", "tripo", "hunyuan3d", "hyper3d"):
         if name in (premium_generators or []):
             status[name] = "on (Premium)"
             continue
@@ -439,7 +439,6 @@ def _integrations(blender: BlenderConnection, premium_generators) -> dict:
             status[name] = "on" if reply.get("enabled") else "off"
         except Exception as e:
             status[name] = "not in this addon version" if _addon_lacks(e) else "unknown"
-    status["tripo"] = "on (Premium)" if "tripo" in (premium_generators or []) else "off (Premium only)"
     return {
         "libraries": {k: status[k] for k in ("polyhaven", "sketchfab", "polypizza")},
         "generators": {k: status[k] for k in ("tripo", "hunyuan3d", "hyper3d")},
@@ -1677,7 +1676,11 @@ def _generation_send(command: str, params: dict):
 
 def _own_key_generators(blender: BlenderConnection) -> dict[str, bool]:
     enabled = {}
-    for name, command in (("hunyuan3d", "get_hunyuan3d_status"), ("hyper3d", "get_hyper3d_status")):
+    for name, command in (
+        ("tripo", "get_tripo_status"),
+        ("hunyuan3d", "get_hunyuan3d_status"),
+        ("hyper3d", "get_hyper3d_status"),
+    ):
         try:
             enabled[name] = bool(blender.send_command(command).get("enabled"))
         except Exception:
