@@ -27,9 +27,9 @@ logger = logging.getLogger("BlenderMCPServer")
 PROVIDERS = ("tripo", "hunyuan3d", "hyper3d")
 
 # Auto-pick order. Premium generators come first because the user is paying
-# for them and they run the stronger models; among those Tripo is Premium-only.
+# for them and they run the stronger models.
 PREMIUM_ORDER = ("tripo", "hunyuan3d", "hyper3d")
-OWN_KEY_ORDER = ("hunyuan3d", "hyper3d")
+OWN_KEY_ORDER = ("hunyuan3d", "hyper3d", "tripo")
 
 POLL_INTERVAL_S = 5.0
 # A whole generate_3d call, submit included, stays under this. MCP clients on
@@ -40,8 +40,9 @@ MAX_CALL_S = 45.0
 # Premium sweeper fails jobs after 60 minutes, and provider results expire.
 PENDING_MAX_AGE_S = 2 * 3600
 
-TRIPO_UNAVAILABLE = ("Tripo is only available with MCP for Blender Premium. If Premium is on, update the Blender "
-                     "addon: run `uvx mcp-for-blender install-addon`, then restart Blender.")
+TRIPO_UNAVAILABLE = ("Tripo is not enabled. In the MCP for Blender sidebar, tick Tripo AI and add an API key, "
+                     "or use MCP for Blender Premium. If Premium is on, update the Blender addon: "
+                     "run `uvx mcp-for-blender install-addon`, then restart Blender.")
 
 Send = Callable[[str, dict], Any]
 Progress = Callable[[float, float], Awaitable[None]]
@@ -58,8 +59,8 @@ class Unsupported(GenerationError):
 @dataclass
 class Job:
     provider: str
-    kind: str   # tripo: "rid"; hyper3d: "fal" | "main"; hunyuan3d: "job"
-    ident: str  # request id, job id, or "<task_uuid>|<subscription_key>"
+    kind: str   # tripo: "rid" (Premium) | "task" (own key); hyper3d: "fal" | "main"; hunyuan3d: "job"
+    ident: str  # request id, task id, job id, or "<task_uuid>|<subscription_key>"
     name: str
 
     @property
@@ -170,10 +171,9 @@ def choose_provider(requested: str, premium: list[str], own_key_enabled: dict[st
                 raise GenerationError(f"{requested} is not switched on in MCP for Blender Premium. "
                                       f"On: {', '.join(premium)}. Tick it in the Blender sidebar.")
             return requested, True
-        if requested == "tripo":
-            # Also what an addon from before Premium looks like, so say how to update.
-            raise GenerationError(TRIPO_UNAVAILABLE)
         if not own_key_enabled.get(requested):
+            if requested == "tripo":
+                raise GenerationError(TRIPO_UNAVAILABLE)
             raise GenerationError(f"{requested} is not enabled. Turn it on and add an API key in the "
                                   "MCP for Blender sidebar in Blender (press N in the 3D Viewport).")
         return requested, False
@@ -184,8 +184,8 @@ def choose_provider(requested: str, premium: list[str], own_key_enabled: dict[st
         if own_key_enabled.get(name):
             return name, False
     raise GenerationError(
-        "No 3D generator is enabled. In Blender's MCP for Blender sidebar, turn on Hunyuan3D or Hyper3D "
-        "Rodin with an API key, or use MCP for Blender Premium (no keys needed): "
+        "No 3D generator is enabled. In Blender's MCP for Blender sidebar, turn on Tripo AI, Hunyuan3D or "
+        "Hyper3D Rodin with an API key, or use MCP for Blender Premium (no keys needed): "
         "https://mcp-for-blender.com/premium"
     )
 
@@ -219,9 +219,11 @@ def submit(send: Send, provider: str, name: str, prompt: str | None, image: str 
             params["quality"] = quality
         result = send("create_tripo_job", params)
         _relay(result)
-        if not result.get("request_id"):
-            raise GenerationError(f"Tripo returned no request id: {result}")
-        return Job("tripo", "rid", result["request_id"], name)
+        if result.get("request_id"):
+            return Job("tripo", "rid", result["request_id"], name)
+        if result.get("task_id"):
+            return Job("tripo", "task", result["task_id"], name)
+        raise GenerationError(f"Tripo returned no job id: {result}")
 
     if provider == "hunyuan3d":
         params = {"text_prompt": prompt, "image": image}
@@ -254,6 +256,19 @@ def submit(send: Send, provider: str, name: str, prompt: str | None, image: str 
 
 def poll(send: Send, job: Job) -> tuple[str, Any]:
     """("running" | "done" | "failed", detail) for one status check."""
+    if job.provider == "tripo" and job.kind == "task":
+        result = send("poll_tripo_job_status", {"task_id": job.ident})
+        _relay(result)
+        status = str(result.get("status", "")).lower() if isinstance(result, dict) else ""
+        if status == "success":
+            url = result.get("model_url")
+            if not url:
+                return "failed", "finished without a model URL"
+            return "done", url
+        if status in ("failed", "cancelled", "banned", "expired"):
+            return "failed", result.get("error") or status
+        return "running", status or "queued"
+
     if job.provider == "tripo" or (job.provider == "hyper3d" and job.kind == "fal"):
         command = "poll_tripo_job_status" if job.provider == "tripo" else "poll_rodin_job_status"
         result = send(command, {"request_id": job.ident})
@@ -294,7 +309,9 @@ def poll(send: Send, job: Job) -> tuple[str, Any]:
 
 
 def import_result(send: Send, job: Job, detail: Any) -> Any:
-    if job.provider == "tripo":
+    if job.provider == "tripo" and job.kind == "task":
+        result = send("import_generated_asset_tripo", {"name": job.name, "model_url": detail})
+    elif job.provider == "tripo":
         result = send("import_generated_asset_tripo", {"request_id": job.ident, "name": job.name})
     elif job.provider == "hyper3d" and job.kind == "fal":
         result = send("import_generated_asset", {"request_id": job.ident, "name": job.name})

@@ -654,6 +654,12 @@ International credentials sent to the mainland endpoint fail with `AuthFailure.S
 `ResourceUnavailable`, so tick the toggle when your SecretId/SecretKey come from tencentcloud.com.
 The toggle sits under **Tencent Hunyuan 3D → Official API** in the sidebar.
 
+#### Tripo AI
+
+[Tripo](https://www.tripo3d.ai/) generates textured 3D models from a text prompt or a reference image.
+With MCP for Blender Premium it runs through Premium; with your own key, tick **Tripo AI** under **AI Model Generation**, choose a **Model**, and paste the key.
+The toggle sits under **AI Model Generation → Tripo AI** in the sidebar.
+
 #### Poly Haven
 
 [Poly Haven](https://polyhaven.com/) publishes around 2,400 HDRIs, textures and models,
@@ -733,6 +739,7 @@ Here are some examples of what you can ask Claude to do:
 | Give a reference image, and create a Blender scene out of it | [Watch](https://www.youtube.com/watch?v=FDRb03XPiRo) |
 | *"Get information about the current scene, and make a threejs sketch from it"* | [Watch](https://www.youtube.com/watch?v=jxbNI5L7AH8) |
 | *"Generate a 3D model of a garden gnome through Hyper3D"* | |
+| *"Generate a ceramic teapot with Tripo"* | |
 | *"Fill this room with low-poly furniture from Poly Pizza"* | |
 | *"Make this car red and metallic"* | |
 | *"Create a sphere and place it above the cube"* | |
@@ -754,6 +761,7 @@ You can store these values there so they survive Blender restarts:
 - Hyper3D API Key
 - Hunyuan3D SecretId / SecretKey
 - Hunyuan3D API URL
+- Tripo AI API Key
 
 For headless setups or CI, credentials can also be injected by environment variables:
 
@@ -765,6 +773,7 @@ For headless setups or CI, credentials can also be injected by environment varia
 | `BLENDERMCP_HUNYUAN3D_SECRET_ID` |
 | `BLENDERMCP_HUNYUAN3D_SECRET_KEY` |
 | `BLENDERMCP_HUNYUAN3D_API_URL` |
+| `BLENDERMCP_TRIPO_API_KEY` |
 
 ---
 
